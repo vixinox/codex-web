@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "semi": false,
+  "singleQuote": true,
+  "jsxSingleQuote": false,
+  "ignorePatterns": [
+    ".data/**",
+    "archived/**",
+    "dist/**",
+    "docs/vendor/**",
+    "src/components/ui/**"
+  ],
+  "sortTailwindcss": {
+    "stylesheet": "src/index.css",
+    "functions": ["cn", "clsx", "cva", "tw"]
+  }
+}

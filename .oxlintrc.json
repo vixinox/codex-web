@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "oxc", "import", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn",
+    "pedantic": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "options": { "typeAware": true, "maxWarnings": 0 },
+  "rules": {
+    "no-underscore-dangle": ["warn", { "allow": ["__key", "__skill"] }],
+    "import/no-unassigned-import": ["warn", { "allow": ["dotenv/config", "**/*.css"] }]
+  },
+  "env": { "browser": true, "es2024": true },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**"],
+      "env": { "vitest": true },
+      "rules": { "no-console": "off" }
+    },
+    {
+      "files": ["scripts/**", "*.config.*"],
+      "env": { "node": true },
+      "rules": { "no-console": "off" }
+    }
+  ],
+  "ignorePatterns": [
+    ".data/**",
+    "archived/**",
+    "dist/**",
+    "docs/vendor/**",
+    "src/components/ui/**",
+    "*.test.*",
+    "*.integration.ts",
+  ],
+}

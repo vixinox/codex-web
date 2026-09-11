@@ -1,0 +1,442 @@
+import * as React from 'react'
+import {
+  AlertCircleIcon,
+  ChevronRightIcon,
+  ListCollapseIcon,
+  PencilIcon,
+  WifiIcon,
+} from 'lucide-react'
+import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { MessageContent } from '@/app/chat/content/message-content'
+import { ShikiCodeBlock } from '@/app/chat/content/shiki-code-block'
+import { detectShellLanguage, formatDisplayedCommand } from './activity-code'
+import { StreamingAssistant } from './streaming-assistant'
+import { countDiffLines } from '@/app/chat/native/diff-stats'
+import type { ChatActivity, ChatActivityKind, ChatBlock } from '@/app/chat/model/types'
+import { formatDuration } from './formatting'
+import { fileName, redactAbsoluteDiffHeaderPaths, shortestUniquePathSuffixes } from './file-paths'
+import { ActivityIcon } from './activity-icon'
+import { TranscriptCollapsibleContent } from './transcript-collapsible'
+
+export function ThreadBlock({
+  block,
+  streaming = false,
+  onAssistantSettled,
+}: {
+  block: ChatBlock
+  streaming?: boolean
+  onAssistantSettled?: () => void
+}) {
+  if (block.type === 'assistant')
+    return (
+      <div className="text-sm leading-6 text-foreground">
+        <StreamingAssistant
+          text={block.text}
+          flush={!streaming}
+          animate={streaming}
+          onSettled={onAssistantSettled}
+        />
+      </div>
+    )
+  if (block.type === 'article')
+    return (
+      <div className="flex items-center gap-2 text-sm text-app-text-subtle select-none">
+        <ListCollapseIcon className="size-3.5 shrink-0" />
+        <span>{block.title}</span>
+      </div>
+    )
+  if (block.type === 'unsupported')
+    return (
+      <div className="flex items-center gap-2 text-xs text-app-text-subtle">
+        <AlertCircleIcon className="size-3.5" />
+        Activity: {block.itemType}
+      </div>
+    )
+  if (block.type === 'error')
+    return (
+      <div className="flex items-start gap-2 text-xs text-destructive" role="alert">
+        <AlertCircleIcon className="mt-0.5 size-3.5 shrink-0" />
+        <span>{block.message}</span>
+      </div>
+    )
+  if (block.type === 'user')
+    return (
+      <div className="my-1 ml-auto max-w-[85%] rounded-2xl bg-app-surface-raised px-4 py-2 text-sm text-foreground">
+        <UserContent content={block.content} />
+      </div>
+    )
+  if (block.kind === 'file') return <FileActivityBlock block={block} />
+  if (block.activities.length > 1) return <ActivityBatch block={block} />
+  return (
+    <div className="flex flex-col gap-0.5">
+      {block.activities.map((item) => (
+        <ActivityRow key={item.id} item={item} />
+      ))}
+    </div>
+  )
+}
+
+function ActivityBatch({ block }: { block: Extract<ChatBlock, { type: 'activity' }> }) {
+  const hasRunningActivity = block.activities.some((item) => item.status === 'running')
+  const [open, setOpen] = React.useState(false)
+  React.useEffect(() => {
+    if (!hasRunningActivity) return
+    queueMicrotask(() => setOpen(true))
+  }, [hasRunningActivity])
+  const label =
+    block.kind === 'command'
+      ? 'Ran commands'
+      : block.kind === 'file'
+        ? 'Changed files'
+        : block.kind === 'search'
+          ? 'Searched the web'
+          : block.kind === 'agent'
+            ? 'Used agents'
+            : block.kind === 'tool'
+              ? 'Called tools'
+              : `${block.activities.length} activities`
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="min-w-0 text-xs">
+        <CollapsibleTrigger className="group inline-flex min-h-6 max-w-full items-center gap-2 text-app-text-muted hover:text-foreground">
+          <ActivityIcon kind={block.kind} />
+          <span className="truncate">{label}</span>
+          <ChevronRightIcon
+            className={`size-3.5 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          />
+        </CollapsibleTrigger>
+        <TranscriptCollapsibleContent>
+          <div className="min-h-0 overflow-hidden pl-5">
+            {block.activities.map((item) => (
+              <ActivityRow key={item.id} item={item} />
+            ))}
+          </div>
+        </TranscriptCollapsibleContent>
+      </div>
+    </Collapsible>
+  )
+}
+
+export function UserContent({
+  content,
+}: {
+  content: Extract<ChatBlock, { type: 'user' }>['content']
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      {content.map((item, index) =>
+        item.type === 'text' ? (
+          <MessageContent key={index} text={item.text} markdown={false} />
+        ) : (
+          <span key={index} className="text-xs text-app-text-muted">
+            {item.type === 'attachment'
+              ? `${item.kind === 'image' ? 'Image' : 'Audio'}: ${item.label}`
+              : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`}
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
+
+export function LiveRow({
+  label,
+  kind,
+  network,
+}: {
+  label: string
+  kind?: ChatActivityKind
+  network?: boolean
+}) {
+  return (
+    <div
+      className="inline-flex min-h-8 max-w-full items-center gap-2 text-xs text-app-text-muted select-none"
+      role="status"
+    >
+      {network ? (
+        <WifiIcon className="size-3.5 shrink-0" />
+      ) : kind ? (
+        <ActivityIcon kind={kind} />
+      ) : null}
+      <span className="thinking-shimmer truncate w-fit">{label}</span>
+    </div>
+  )
+}
+
+function ActivityRow({ item }: { item: ChatActivity }) {
+  const [open, setOpen] = React.useState(false)
+  const details = item.command || item.detail || item.meta || item.output || item.plan?.length
+  const command = item.command ? formatDisplayedCommand(item.command) : undefined
+  const label = formatActivityLabel(item, command)
+  const code = [command, item.output].filter(Boolean).join('\n')
+  const commandResult = formatCommandResult(item)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="group min-w-0 text-xs">
+        <CollapsibleTrigger
+          className="inline-flex min-h-6 max-w-full items-center gap-2 text-left text-app-text-muted hover:text-foreground"
+          disabled={!details}
+        >
+          <ActivityIcon kind={item.kind} />
+          <span className="truncate">{label}</span>
+          {details ? (
+            <ChevronRightIcon
+              className={`size-3.5 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            />
+          ) : null}
+        </CollapsibleTrigger>
+        {details ? (
+          <TranscriptCollapsibleContent>
+            <div className="min-h-0 overflow-hidden">
+              {code ? (
+                <ShikiCodeBlock
+                  code={code}
+                  language={command ? detectShellLanguage(command) : 'text'}
+                  copy={false}
+                  className="my-1"
+                  contentClassName="max-h-56"
+                  footer={
+                    commandResult ? (
+                      <span
+                        className={`rounded-sm border px-1.5 py-0.5 font-mono text-[11px] leading-4 ${commandResult.className}`}
+                      >
+                        {commandResult.label}
+                      </span>
+                    ) : undefined
+                  }
+                />
+              ) : null}
+              {item.detail ? <div className="text-app-text-subtle">{item.detail}</div> : null}
+              {item.meta ? <div className="text-app-text-subtle/75">{item.meta}</div> : null}
+              {item.plan?.length ? (
+                <ol className="flex flex-col gap-1 text-app-text-muted">
+                  {item.plan.map((step, index) => (
+                    <li key={`${step.step}-${index}`} className="flex gap-2">
+                      <span
+                        className={
+                          step.status === 'completed'
+                            ? 'text-success'
+                            : step.status === 'inProgress'
+                              ? 'text-warning'
+                              : 'text-app-text-subtle'
+                        }
+                      >
+                        {step.status === 'completed'
+                          ? '✓'
+                          : step.status === 'inProgress'
+                            ? '•'
+                            : '○'}
+                      </span>
+                      <span>{step.step}</span>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              {item.truncated ? (
+                <div className="text-app-text-subtle">Content was truncated.</div>
+              ) : null}
+            </div>
+          </TranscriptCollapsibleContent>
+        ) : null}
+      </div>
+    </Collapsible>
+  )
+}
+
+function FileActivityBlock({ block }: { block: Extract<ChatBlock, { type: 'activity' }> }) {
+  const fileChanges = block.activities.flatMap((activity) =>
+    (activity.changes ?? []).map((change, index) => ({
+      id: `${activity.id}-${change.path}-${index}`,
+      change,
+    })),
+  )
+  const displayPaths = shortestUniquePathSuffixes(
+    fileChanges.flatMap(({ change }) => [
+      change.path,
+      ...(change.movePath ? [change.movePath] : []),
+    ]),
+  )
+  const files = fileChanges.map(({ id, change }) => ({
+    id,
+    change,
+    displayPath: displayPaths.get(change.path) ?? fileName(change.path),
+    displayMovePath: change.movePath
+      ? (displayPaths.get(change.movePath) ?? fileName(change.movePath))
+      : undefined,
+  }))
+  const aggregatedDiffs = block.activities.flatMap((activity) =>
+    activity.aggregatedDiff
+      ? [{ id: `${activity.id}-aggregated`, diff: activity.aggregatedDiff }]
+      : [],
+  )
+  const childCount = files.length + aggregatedDiffs.length
+  const children = childCount ? (
+    <div className="flex min-w-0 flex-col">
+      {files.map(({ id, change, displayPath, displayMovePath }) => (
+        <FileChangeRow
+          key={id}
+          change={change}
+          displayPath={displayPath}
+          displayMovePath={displayMovePath}
+        />
+      ))}
+      {aggregatedDiffs.map(({ id, diff }) => (
+        <AggregatedDiffRow key={id} diff={diff} />
+      ))}
+    </div>
+  ) : null
+  const [open, setOpen] = React.useState(true)
+  return (
+    <div className="min-w-0 text-xs">
+      {childCount > 1 ? (
+        <Collapsible open={open} onOpenChange={setOpen}>
+          <CollapsibleTrigger className="group inline-flex min-h-6 max-w-full items-center gap-2 text-app-text-muted hover:text-foreground">
+            <ActivityIcon kind="file" />
+            <span className="truncate">Changed files</span>
+            <ChevronRightIcon
+              className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`}
+            />
+          </CollapsibleTrigger>
+          <TranscriptCollapsibleContent>
+            <div className="min-h-0 overflow-hidden pl-5">{children}</div>
+          </TranscriptCollapsibleContent>
+        </Collapsible>
+      ) : childCount === 1 ? (
+        children
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          {block.activities.map((item) => (
+            <ActivityRow key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FileChangeRow({
+  change,
+  displayPath,
+  displayMovePath,
+}: {
+  change: NonNullable<ChatActivity['changes']>[number]
+  displayPath: string
+  displayMovePath?: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const label = `${formatChangeKind(change.kind)} ${displayPath}${displayMovePath ? ` -> ${displayMovePath}` : ''}`
+  const stats = countDiffLines(change.diff)
+  const statsLabel = formatDiffStats(stats)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        className="group inline-flex min-h-6 max-w-full items-center gap-1.5 text-left text-app-text-muted hover:text-foreground"
+        disabled={!change.diff}
+      >
+        <PencilIcon className="size-3.5 shrink-0 text-app-text-subtle" />
+        <span className="truncate">{label}</span>
+        {statsLabel ? <span className="shrink-0 text-app-text-subtle">{statsLabel}</span> : null}
+        {change.diff ? (
+          <ChevronRightIcon
+            className={`size-3.5 shrink-0 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          />
+        ) : null}
+      </CollapsibleTrigger>
+      {change.diff ? (
+        <TranscriptCollapsibleContent>
+          <ShikiCodeBlock
+            code={redactAbsoluteDiffHeaderPaths(change.diff)}
+            language="diff"
+            label={displayPath}
+            copy={false}
+            className="my-1"
+            contentClassName="max-h-72"
+          />
+        </TranscriptCollapsibleContent>
+      ) : null}
+    </Collapsible>
+  )
+}
+
+function AggregatedDiffRow({ diff }: { diff: string }) {
+  const [open, setOpen] = React.useState(false)
+  const statsLabel = formatDiffStats(countDiffLines(diff))
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="group inline-flex min-h-6 max-w-full items-center gap-1.5 text-left text-app-text-muted hover:text-foreground">
+        <span className="truncate">Aggregated diff</span>
+        {statsLabel ? <span className="shrink-0 text-app-text-subtle">{statsLabel}</span> : null}
+        <ChevronRightIcon
+          className={`size-3.5 shrink-0 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        />
+      </CollapsibleTrigger>
+      <TranscriptCollapsibleContent>
+        <ShikiCodeBlock
+          code={redactAbsoluteDiffHeaderPaths(diff)}
+          language="diff"
+          label="diff"
+          copy={false}
+          className="my-1"
+          contentClassName="max-h-72"
+        />
+      </TranscriptCollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function formatChangeKind(kind: string) {
+  if (kind === 'add') return 'Added'
+  if (kind === 'update') return 'Edited'
+  if (kind === 'delete') return 'Deleted'
+  if (kind === 'move') return 'Moved'
+  return kind ? `${kind.charAt(0).toUpperCase()}${kind.slice(1)}` : 'Changed'
+}
+
+function formatActivityLabel(item: ChatActivity, displayedCommand = item.command ?? item.title) {
+  if (item.kind !== 'command')
+    return item.status === 'running' ? `Running ${item.title}` : item.title
+  const command = displayedCommand
+  if (item.status === 'running') return `Running ${command}`
+  const duration =
+    item.durationMs === undefined ? '' : ` in ${formatActivityDuration(item.durationMs)}`
+  return item.command ? `Ran ${command}${duration}` : `${command}${duration}`
+}
+
+function formatCommandResult(item: ChatActivity) {
+  if (item.kind !== 'command') return undefined
+  if (item.commandStatus === 'completed')
+    return { label: 'Success', className: 'border-success/40 bg-success/10 text-success' }
+  if (item.commandStatus === 'failed')
+    return {
+      label: 'Failed',
+      className: 'border-destructive/40 bg-destructive/10 text-destructive',
+    }
+  if (item.commandStatus === 'declined')
+    return { label: 'Declined', className: 'border-warning/40 bg-warning/10 text-warning' }
+  if (item.commandStatus === 'interrupted')
+    return {
+      label: 'Interrupted',
+      className: 'border-app-border bg-app-surface-raised text-app-text-muted',
+    }
+  if (item.exitCode !== undefined)
+    return {
+      label: `Exit code ${item.exitCode}`,
+      className: 'border-app-border bg-app-surface-raised text-app-text-muted',
+    }
+  return undefined
+}
+
+function formatActivityDuration(durationMs: number) {
+  if (durationMs < 1_000) return `${Math.max(0, Math.round(durationMs))}ms`
+  const seconds = Math.round(durationMs / 1_000)
+  return seconds < 60 ? `${seconds}s` : formatDuration(durationMs)
+}
+
+function formatDiffStats(stats: ReturnType<typeof countDiffLines>) {
+  return [
+    stats.additions ? `+${stats.additions}` : '',
+    stats.deletions ? `-${stats.deletions}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}

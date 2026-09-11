@@ -1,0 +1,226 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-app-canvas: var(--app-canvas);
+  --color-app-surface: var(--app-surface);
+  --color-app-surface-subtle: var(--app-surface-subtle);
+  --color-app-surface-raised: var(--app-surface-raised);
+  --color-app-surface-overlay: var(--app-surface-overlay);
+  --color-app-access-mode: var(--app-access-mode);
+  --color-app-send: var(--app-send);
+  --color-app-send-foreground: var(--app-send-foreground);
+  --color-app-text: var(--app-text);
+  --color-app-text-muted: var(--app-text-muted);
+  --color-app-text-subtle: var(--app-text-subtle);
+  --color-app-text-on-accent: var(--app-text-on-accent);
+  --color-on-accent: var(--app-text-on-accent);
+  --color-app-border: var(--app-border);
+  --color-app-border-strong: var(--app-border-strong);
+  --color-app-action: var(--app-action);
+  --color-success: var(--app-success);
+  --color-warning: var(--app-warning);
+  --color-diff-added: var(--app-diff-added);
+  --color-diff-removed: var(--app-diff-removed);
+  --color-skill: var(--app-skill);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: var(--app-surface);
+  --foreground: var(--app-text);
+  --card: var(--app-surface);
+  --card-foreground: var(--app-text);
+  --popover: var(--app-surface-raised);
+  --popover-foreground: var(--app-text);
+  --primary: var(--app-action);
+  --primary-foreground: var(--app-text-on-accent);
+  --secondary: var(--app-surface-subtle);
+  --secondary-foreground: var(--app-text);
+  --muted: var(--app-surface-subtle);
+  --muted-foreground: var(--app-text-muted);
+  --accent: var(--app-surface-subtle);
+  --accent-foreground: var(--app-text);
+  --destructive: var(--app-destructive);
+  --border: var(--app-border);
+  --input: var(--app-input);
+  --ring: var(--app-focus-ring);
+  --radius: 0.625rem;
+  --sidebar: var(--app-canvas);
+  --sidebar-foreground: var(--app-text);
+  --sidebar-primary: var(--app-action);
+  --sidebar-primary-foreground: var(--app-text-on-accent);
+  --sidebar-accent: var(--app-surface-subtle);
+  --sidebar-accent-foreground: var(--app-text);
+  --sidebar-border: var(--app-border);
+  --sidebar-ring: var(--app-focus-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .app-interactive,
+  .app-interactive-roving,
+  .app-interactive-no-press {
+    --app-state-layer: transparent;
+    background-image: linear-gradient(var(--app-state-layer), var(--app-state-layer));
+  }
+
+  .app-state-selected,
+  .app-interactive[aria-expanded='true'],
+  .app-interactive-roving[data-popup-open],
+  .app-interactive-roving[data-open],
+  .app-interactive-no-press[data-popup-open],
+  .app-interactive-no-press[data-open],
+  .app-interactive[aria-selected='true'],
+  .app-interactive-roving[aria-selected='true'],
+  .app-interactive[data-state='selected'],
+  .app-interactive-roving[data-state='selected'],
+  .app-interactive-no-press[aria-expanded='true'],
+  .app-interactive-no-press[aria-selected='true'],
+  .app-interactive-no-press[data-state='selected'],
+  .app-interactive-no-press:has([data-checked]),
+  .app-interactive-no-press[data-checked],
+  .app-interactive:has([data-checked]),
+  .app-interactive[data-checked],
+  .app-interactive-roving[data-checked],
+  tr[data-state='selected'],
+  tr:has([aria-expanded='true']) {
+    --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+    background-image: linear-gradient(var(--app-state-layer), var(--app-state-layer));
+  }
+
+  @media (hover: hover) {
+    .app-interactive:not(:disabled):not([aria-disabled='true']):not([data-disabled]):hover,
+    .app-interactive-roving:not(:disabled):not([aria-disabled='true']):not([data-disabled]):hover,
+    .app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not(
+        [data-disabled]
+      ):hover {
+      --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+    }
+  }
+
+  .app-interactive-roving:not(:disabled):not([aria-disabled='true']):not([data-disabled]):focus,
+  .app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not([data-disabled]):focus {
+    --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+  }
+
+  .app-interactive:not(:disabled):not([aria-disabled='true']):not([data-disabled]):active,
+  .app-interactive-roving:not(:disabled):not([aria-disabled='true']):not([data-disabled]):active {
+    --app-state-layer: color-mix(in srgb, currentColor 12%, transparent);
+  }
+
+  .app-interactive.app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not(
+      [data-disabled]
+    ):active,
+  .app-interactive-roving.app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not(
+      [data-disabled]
+    ):active,
+  .app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not([data-disabled]):active {
+    --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+  }
+}
+
+@keyframes activity-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes text-stream {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.thinking-shimmer {
+  --shimmer-base: rgba(140, 140, 160, 0.4);
+  --shimmer-highlight: #ffffff;
+
+  color: var(--shimmer-base);
+
+  background: linear-gradient(
+    100deg,
+    var(--shimmer-base) 25%,
+    var(--shimmer-highlight) 50%,
+    var(--shimmer-base) 75%
+  );
+
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+
+  animation: thinking-swipe 2.5s ease-in-out infinite;
+}
+
+@keyframes thinking-swipe {
+  0% {
+    background-position: 150% 0;
+  }
+  55% {
+    background-position: -50% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-shimmer {
+    background: none;
+    color: var(--shimmer-base);
+    -webkit-text-fill-color: currentColor;
+    animation: none;
+  }
+}
