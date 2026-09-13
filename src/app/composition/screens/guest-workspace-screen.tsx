@@ -142,7 +142,6 @@ export function GuestWorkspaceScreen() {
         setActiveTurn(null)
         if (cancelled) detail.retry()
       },
-      onCompacted: () => toast.message('Guest conversation compacting'),
       onError: (message) => toast.error(message),
     },
     runtimeReady: ready,

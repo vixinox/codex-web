@@ -151,19 +151,28 @@ export function toChatTurnPresentation(
       continue
     }
     if (type === 'contextCompaction') {
+      const compactionStatus = stringValue(item.status)
+      const status =
+        compactionStatus === 'inProgress'
+          ? 'running'
+          : compactionStatus === 'completed'
+            ? 'completed'
+            : compactionStatus === 'interrupted' || compactionStatus === 'cancelled'
+              ? 'cancelled'
+              : 'failed'
       blocks.push({
         id: itemId,
         type: 'article',
         kind: 'context-compaction',
-        title: item.status === 'inProgress' ? 'Context compacting' : 'Context compacted',
-        status:
-          item.status === 'failed'
-            ? 'failed'
-            : item.status === 'interrupted'
-              ? 'cancelled'
-              : item.status === 'inProgress'
-                ? 'running'
-                : 'completed',
+        title:
+          status === 'running'
+            ? 'Context compacting'
+            : status === 'completed'
+              ? 'Context compacted'
+              : status === 'cancelled'
+                ? 'Context compaction cancelled'
+                : 'Context compaction failed',
+        status,
       })
       continue
     }

@@ -56,9 +56,9 @@ export const ThreadAssets = React.memo(
     const latestUserBlockId = session
       ? sessionSnapshot.latestUserBlockId
       : [...displayThread.turns]
-          .reverse()
-          .flatMap((turn) => [...turn.blocks].reverse())
-          .find((block) => block.type === 'user')?.id
+        .reverse()
+        .flatMap((turn) => [...turn.blocks].reverse())
+        .find((block) => block.type === 'user')?.id
 
     React.useLayoutEffect(() => {
       const assets = assetsRef.current
@@ -142,7 +142,7 @@ export const ThreadAssets = React.memo(
             </p>
           )}
           {compacting &&
-          !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
+            !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
             <LiveRow label="Compacting" />
           ) : null}
         </div>
@@ -362,7 +362,6 @@ const ThreadTurn = React.memo(function ThreadTurn({
           ) : null}
         </div>
       ) : null}
-      <div className="h-2" />
       <Collapsible open={processOpen} onOpenChange={setDetailsOpen}>
         {showWorkSummary ? (
           <WorkSummary

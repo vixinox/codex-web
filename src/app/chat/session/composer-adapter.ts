@@ -59,8 +59,6 @@ export type ComposerHost = {
   onThreadCreated?(turn: AcceptedTurn): void
   /** Working Turn was cancelled; the screen refreshes or drops optimistic state. */
   onTurnCancelled?(): void
-  /** Compaction was accepted by the runtime. */
-  onCompacted?(threadId: string): void
   onUnavailable?(): void
   /** Runtime reported a Composer error the screen should surface outside the composer. */
   onError?(message: string): void

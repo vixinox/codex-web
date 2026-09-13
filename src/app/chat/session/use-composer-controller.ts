@@ -388,7 +388,7 @@ export function useComposerController({
     setCompacting(true)
     try {
       await adapter.threads.compactThread(current.target.threadId)
-      current.onCompacted?.(current.target.threadId)
+      setCompacting(false)
     } catch (nextError) {
       setCompacting(false)
       const message =

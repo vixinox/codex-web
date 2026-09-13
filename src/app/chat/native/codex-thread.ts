@@ -493,7 +493,11 @@ function mergeTurn(current: CodexRecord, next: CodexRecord): CodexRecord {
 
 function withLifecycleStatus(method: string, item: CodexRecord) {
   if (item.type !== 'contextCompaction') return item
-  return { ...item, status: method === 'item/started' ? 'inProgress' : 'completed' }
+  if (method === 'item/started') return { ...item, status: 'inProgress' }
+  if (method !== 'item/completed') return item
+  if (item.status === 'failed' || item.status === 'interrupted' || item.status === 'cancelled')
+    return item
+  return { ...item, status: 'completed' }
 }
 function findTurn(thread: CodexRecord, id: string) {
   return (Array.isArray(thread.turns) ? thread.turns : []).find(
