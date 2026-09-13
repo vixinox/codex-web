@@ -17,9 +17,10 @@ Guest Page uses a real but isolated Guest runtime. It must remain separate from 
 
 - Keep changes within the requested files and behavior. Preserve unrelated user changes.
 - Update `PROJECT.md` only for stable architecture, security boundaries, runtime topology, architecture risks, or hard-to-reverse decisions. Do not record ordinary progress, local implementation details, or routine verification there.
-- This workspace has no Git repository. Do not rely on Git history or Git rollback.
+- Do not rely on Git history or Git rollback. The sole exception is `pnpm lint:staged`: it compares the Git index with `HEAD` to report only warnings newly introduced by the intended staged changes.
 - When searching source, exclude `.data/**` and `docs/vendor/**`.
 - Use `oxfmt` for TypeScript; Prettier is not used.
+- `pnpm lint` intentionally suppresses the existing warning baseline. Before a change is committed, stage its intended files and run `pnpm lint:staged`; it exits nonzero for staged errors or warnings not present in `HEAD`.
 - Pin every shadcn CLI command to `shadcn@4.16.0`.
 - Services are user-operated. Do not start, stop, restart, terminate, or take over Vite, Fastify, databases, preview servers, or test harnesses unless the user explicitly requests process management. Use only Vite `5173` and Fastify `3000` when authorized.
 - Always use `pnpm` as the package manager (`pnpm install`, `pnpm add`, `pnpm run`, etc.). Do not use `npm`, `yarn`, or `bun` for package management.

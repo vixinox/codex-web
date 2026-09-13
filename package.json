@@ -14,6 +14,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "lint": "oxlint . --quiet",
+    "lint:staged": "node scripts/lint-staged-warnings.mjs",
     "format": "oxfmt --write \"**/*.{ts,tsx}\"",
     "format:check": "oxfmt --check \"**/*.{ts,tsx}\"",
     "test": "tsx --test server/**/*.test.ts",

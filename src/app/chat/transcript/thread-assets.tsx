@@ -45,8 +45,7 @@ export const ThreadAssets = React.memo(
     const assetsRef = React.useRef<HTMLDivElement>(null)
     const scrollParentRef = React.useRef<HTMLElement | null>(null)
     const scrollLockedRef = React.useRef(true)
-    const previousScrollTopRef = React.useRef(0)
-    const previousLockRequestRef = React.useRef(lockEpoch ?? 0)
+    const previousLockRequestRef = React.useRef<number | null>(null)
     const latestUserBlockRef = React.useRef<string | null>(null)
     const sessionSnapshot = useThreadSessionSnapshot(session ?? null)
     const displayThread = thread
@@ -56,9 +55,9 @@ export const ThreadAssets = React.memo(
     const latestUserBlockId = session
       ? sessionSnapshot.latestUserBlockId
       : [...displayThread.turns]
-        .reverse()
-        .flatMap((turn) => [...turn.blocks].reverse())
-        .find((block) => block.type === 'user')?.id
+          .reverse()
+          .flatMap((turn) => [...turn.blocks].reverse())
+          .find((block) => block.type === 'user')?.id
 
     React.useLayoutEffect(() => {
       const assets = assetsRef.current
@@ -76,16 +75,20 @@ export const ThreadAssets = React.memo(
       }
       if (!parent) return
       scrollParentRef.current = parent
-      previousScrollTopRef.current = parent.scrollTop
       const updateScrollLock = () => {
-        const scrollTop = parent.scrollTop
-        const scrollingUp = scrollTop < previousScrollTopRef.current
-        if (scrollingUp && scrollLockedRef.current) scrollLockedRef.current = false
-        else if (!scrollLockedRef.current && isAtBottom(parent)) scrollLockedRef.current = true
-        previousScrollTopRef.current = scrollTop
+        scrollLockedRef.current = isAtBottom(parent)
       }
+      const resizeObserver = new ResizeObserver(() => {
+        if (scrollLockedRef.current) scrollToBottom(parent)
+      })
       parent.addEventListener('scroll', updateScrollLock, { passive: true })
-      return () => parent.removeEventListener('scroll', updateScrollLock)
+      resizeObserver.observe(assets)
+      resizeObserver.observe(parent)
+      return () => {
+        parent.removeEventListener('scroll', updateScrollLock)
+        resizeObserver.disconnect()
+        if (scrollParentRef.current === parent) scrollParentRef.current = null
+      }
     }, [])
 
     React.useLayoutEffect(() => {
@@ -142,7 +145,7 @@ export const ThreadAssets = React.memo(
             </p>
           )}
           {compacting &&
-            !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
+          !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
             <LiveRow label="Compacting" />
           ) : null}
         </div>
