@@ -2,10 +2,21 @@ import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { checker } from 'vite-plugin-checker'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    checker({
+      typescript: true,
+      overlay: {
+        initialIsOpen: true,
+        position: 'br',
+      },
+    }),
+  ],
   server: {
     host: true,
     watch: {
@@ -22,5 +33,8 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
+  },
+  optimizeDeps: {
+    include: ['lucide-react', 'gsap', 'react-markdown', 'remark-gfm'],
   },
 })

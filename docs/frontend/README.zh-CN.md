@@ -4,6 +4,8 @@
 
 API 契约见 [API 契约](../api/README.zh-CN.md)。稳定架构基线见 [PROJECT.md](../../PROJECT.md)。移动端访问策略见 [移动端访问策略](mobile-access.zh-CN.md)。
 
+Transcript 渲染实现见 [Transcript 渲染架构](transcript-architecture.zh-CN.md)。
+
 ## 依赖方向
 
 ```text

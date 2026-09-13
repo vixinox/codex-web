@@ -21,10 +21,12 @@ import { TranscriptCollapsibleContent } from './transcript-collapsible'
 export function ThreadBlock({
   block,
   streaming = false,
+  animate = false,
   onAssistantSettled,
 }: {
   block: ChatBlock
   streaming?: boolean
+  animate?: boolean
   onAssistantSettled?: () => void
 }) {
   if (block.type === 'assistant')
@@ -33,7 +35,7 @@ export function ThreadBlock({
         <StreamingAssistant
           text={block.text}
           flush={!streaming}
-          animate={streaming}
+          animate={animate}
           onSettled={onAssistantSettled}
         />
       </div>

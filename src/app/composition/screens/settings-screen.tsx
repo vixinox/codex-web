@@ -13,7 +13,7 @@ export function SettingsScreen({
   isGuest?: boolean
 }) {
   return (
-    <main className="flex h-full flex-1 flex-col overflow-auto px-4 py-24 text-foreground">
+    <main className="flex h-full flex-1 flex-col overflow-auto px-4 pt-24 text-foreground">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-16">
         <AppearanceSection />
         {isGuest ? <GuestCapacitySection /> : null}

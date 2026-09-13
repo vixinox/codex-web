@@ -1,7 +1,8 @@
 import * as React from 'react'
 import { MessageContent } from '@/app/chat/content/message-content'
-import { useGsapEnter } from '@/lib/platform/browser/use-gsap-enter'
 import { repairInterruptedCodeFence } from './markdown-repair'
+import { gsap } from 'gsap'
+import { transcriptDebug } from './transcript-debug'
 
 type MarkdownBlock = { id: string; text: string }
 
@@ -51,7 +52,12 @@ export function splitCompleteMarkdownBlocks(text: string, flush = false) {
       current = ''
     }
   }
-
+  transcriptDebug({
+    phase: 'split',
+    blockCount: blocks.length,
+    pendingLength: current.length,
+    preview: false,
+  })
   return { blocks, pending: current }
 }
 
@@ -105,19 +111,49 @@ const MarkdownBlockView = React.memo(function MarkdownBlockView({
   animate: boolean
   onComplete?: () => void
 }) {
-  const ref = useGsapEnter<HTMLDivElement>([animate, block.id], {
-    duration: 0.3,
-    y: 4,
-    onComplete,
-  })
+  const ref = React.useRef<HTMLDivElement>(null)
+  const animatedRef = React.useRef(false)
+  const onCompleteRef = React.useRef(onComplete)
+  onCompleteRef.current = onComplete
+  React.useLayoutEffect(() => {
+    if (!animate || animatedRef.current) return undefined
+    const root = ref.current
+    if (!root) return undefined
+    animatedRef.current = true
+    transcriptDebug({ phase: 'gsap', elementCount: 1, settled: false })
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      gsap.set(root, { opacity: 1 })
+      transcriptDebug({ phase: 'gsap', elementCount: 1, settled: true })
+      onCompleteRef.current?.()
+      return undefined
+    }
+    const context = gsap.context(() => {
+      gsap.fromTo(
+        root,
+        { opacity: 0 },
+        {
+          opacity: 1,
+          duration: 0.3,
+          ease: 'power2.out',
+          overwrite: 'auto',
+          onComplete: () => {
+            transcriptDebug({ phase: 'gsap', elementCount: 1, settled: true })
+            onCompleteRef.current?.()
+          },
+        },
+      )
+    }, root)
+    return () => {
+      animatedRef.current = false
+      context.revert()
+    }
+  }, [animate, block.id])
 
   const content = <MessageContent text={block.text} />
-  return animate ? (
+  return (
     <div ref={ref} className="min-w-0">
       {content}
     </div>
-  ) : (
-    <div className="min-w-0">{content}</div>
   )
 })
 
@@ -132,8 +168,17 @@ export function StreamingAssistant({
   animate?: boolean
   onSettled?: () => void
 }) {
-  const { blocks } = React.useMemo(() => splitCompleteMarkdownBlocks(text, flush), [text, flush])
-  const lastBlockId = blocks.at(-1)?.id
+  const split = React.useMemo(() => splitCompleteMarkdownBlocks(text, flush), [text, flush])
+  const blocks = split.blocks
+  const settledBlockIdsRef = React.useRef(new Set<string>())
+  const settleBlock = React.useCallback(
+    (blockId: string) => {
+      if (settledBlockIdsRef.current.has(blockId)) return
+      settledBlockIdsRef.current.add(blockId)
+      if (settledBlockIdsRef.current.size === blocks.length) onSettled?.()
+    },
+    [blocks.length, onSettled],
+  )
   return (
     <div className="flex min-w-0 flex-col gap-2">
       {blocks.map((block) => (
@@ -141,7 +186,7 @@ export function StreamingAssistant({
           key={block.id}
           block={block}
           animate={animate}
-          onComplete={block.id === lastBlockId ? onSettled : undefined}
+          onComplete={animate ? () => settleBlock(block.id) : undefined}
         />
       ))}
     </div>

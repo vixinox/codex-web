@@ -18,6 +18,7 @@ import {
 } from '@/app/chat/projection/thread-presentation'
 import type { ChatThreadPresentation, ChatTurnPresentation } from '@/app/chat/model/types'
 import type { CodexThread } from '@/lib/protocol/protocol'
+import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 
 export type ThreadSessionPresentation = Omit<ChatThreadPresentation, 'turns'> & {
   status: 'idle' | 'ready' | 'error'
@@ -293,6 +294,7 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
       syncAll()
       return
     }
+    const previousStatus = state.turnsById[change.turnId]?.status
     const version = (turnVersionById.get(change.turnId) ?? 0) + 1
     turnVersionById.set(change.turnId, version)
     const cached = presentationCache.get(change.turnId)
@@ -311,6 +313,29 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
     syncTurn(state, presentation)
     updateTurnDerived(presentation.id, presentation)
     updateTranscriptDerived(presentation.id)
+    transcriptDebug({
+      phase: 'render',
+      turnId: presentation.id,
+      status: presentation.status,
+      blockCount: presentation.blocks.length,
+      assistantBlockCount: presentation.blocks.filter((block) => block.type === 'assistant').length,
+      assistantTextLength: presentation.blocks
+        .filter(
+          (
+            block,
+          ): block is Extract<ChatTurnPresentation['blocks'][number], { type: 'assistant' }> =>
+            block.type === 'assistant',
+        )
+        .reduce((total, block) => total + block.text.length, 0),
+    })
+    if (previousStatus !== presentation.status) {
+      transcriptDebug({
+        phase: 'turn',
+        turnId: presentation.id,
+        status: `${previousStatus ?? 'unknown'}->${presentation.status}`,
+        blockCount: presentation.blocks.length,
+      })
+    }
     state.isBusy = inProgressTurns.size > 0
     syncInputErrors()
   }
@@ -351,6 +376,7 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
     },
     applyEvent(notification, eventId) {
       if (disposed || !native) return
+      transcriptDebug({ phase: 'event', eventId, method: notification.method })
       syncChange(
         applyCodexNotification(
           native,
@@ -358,6 +384,15 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
           eventId === undefined ? undefined : String(eventId),
         ),
       )
+      const turnId =
+        typeof notification.params.turnId === 'string' ? notification.params.turnId : undefined
+      const turn = turnId ? state.turnsById[turnId] : undefined
+      transcriptDebug({
+        phase: 'turn',
+        turnId,
+        status: turn?.status,
+        blockCount: turn?.blocks.length,
+      })
     },
     interruptUserInput() {
       if (disposed || !native) return

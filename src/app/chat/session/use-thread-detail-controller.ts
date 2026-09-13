@@ -13,6 +13,7 @@ import {
   type ThreadEvent,
   type ThreadSnapshot,
 } from '@/lib/bridge/thread-client'
+import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 
 export type ThreadDetailModel =
   | { status: 'idle' }
@@ -63,6 +64,12 @@ export function useThreadDetailController(
         return
       if (event.id <= lastEventId) return
       lastEventId = event.id
+      transcriptDebug({
+        phase: 'event',
+        threadId,
+        eventId: event.id,
+        method: parsed.ok ? parsed.value.method : undefined,
+      })
       if (!parsed.ok) {
         session.applyEvent(
           { method: 'webcodex/protocol-error', params: { code: parsed.error } },
@@ -79,6 +86,7 @@ export function useThreadDetailController(
         return
       }
       session.applyEvent(parsed.value, event.id)
+      transcriptDebug({ phase: 'turn', threadId, eventId: event.id, method: parsed.value.method })
     }
     const subscribe = (afterId: number) => {
       unsubscribe()

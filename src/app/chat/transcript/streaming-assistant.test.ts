@@ -40,6 +40,45 @@ describe('streaming Markdown blocks', () => {
     const first = splitCompleteMarkdownBlocks('First\n\nSecond')
     const replacement = splitCompleteMarkdownBlocks('Replacement')
     expect(first.blocks).toEqual([{ id: 'markdown-0', text: 'First' }])
-    expect(replacement).toEqual({ blocks: [], pending: 'Replacement' })
+    expect(replacement).toEqual({
+      blocks: [],
+      pending: 'Replacement',
+    })
+  })
+
+  it('keeps a plain single-line tail pending while streaming', () => {
+    expect(splitCompleteMarkdownBlocks('hello')).toEqual({
+      blocks: [],
+      pending: 'hello',
+    })
+  })
+
+  it('commits a complete paragraph while the next Markdown block is pending', () => {
+    expect(splitCompleteMarkdownBlocks('hello\n\n**unfinished')).toEqual({
+      blocks: [{ id: 'markdown-0', text: 'hello' }],
+      pending: '**unfinished',
+    })
+  })
+
+  it('does not preview a plain single-line tail with a trailing newline', () => {
+    expect(splitCompleteMarkdownBlocks('hello\n')).toEqual({
+      blocks: [],
+      pending: 'hello\n',
+    })
+  })
+
+  it('does not preview incomplete Markdown syntax', () => {
+    expect(splitCompleteMarkdownBlocks('**unfinished')).toEqual({
+      blocks: [],
+      pending: '**unfinished',
+    })
+    expect(splitCompleteMarkdownBlocks('[unfinished](https://example.com')).toEqual({
+      blocks: [],
+      pending: '[unfinished](https://example.com',
+    })
+    expect(splitCompleteMarkdownBlocks('```ts\nconst value = 1')).toEqual({
+      blocks: [],
+      pending: '```ts\nconst value = 1',
+    })
   })
 })

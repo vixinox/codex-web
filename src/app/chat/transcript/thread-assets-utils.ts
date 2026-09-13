@@ -1,5 +1,6 @@
 import type { ChatBlock, ChatTurnPresentation, ChatUserInputRequest } from '../model/types'
 import { splitCompleteMarkdownBlocks } from './streaming-assistant'
+import { transcriptDebug } from './transcript-debug'
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
 const REASONING_SUMMARY_TITLE = 'Reasoning summary'
@@ -12,7 +13,10 @@ export function visibleTurnContent(
   const visibleBlocks = turn.blocks.filter(
     (block) =>
       (block.type === 'assistant' &&
-        splitCompleteMarkdownBlocks(block.text, turn.status !== 'inProgress').blocks.length > 0) ||
+        (() => {
+          const split = splitCompleteMarkdownBlocks(block.text, turn.status !== 'inProgress')
+          return split.blocks.length > 0
+        })()) ||
       block.type === 'article' ||
       (block.type === 'activity' &&
         block.activities.some((activity) => activity.title !== REASONING_SUMMARY_TITLE)),
@@ -25,7 +29,7 @@ export function visibleTurnContent(
     !hasQuestionnaire && !hasFinalPlan && trailingBlock?.type === 'assistant'
       ? trailingBlock.id
       : undefined
-  return {
+  const result = {
     hasContent,
     trailingAssistantId,
     revision: JSON.stringify({
@@ -34,6 +38,19 @@ export function visibleTurnContent(
       finalPlan: hasFinalPlan ? finalPlan : undefined,
     }),
   }
+  transcriptDebug({
+    phase: 'render',
+    turnId: turn.id,
+    status: turn.status,
+    blockCount: visibleBlocks.length,
+    visible: hasContent,
+    revision: `length:${result.revision.length}`,
+  })
+  return result
+}
+
+export function hasAssistantText(turn: ChatTurnPresentation) {
+  return turn.blocks.some((block) => block.type === 'assistant' && Boolean(block.text.trim()))
 }
 
 export function withoutReasoningSummaryActivity(block: ChatBlock): ChatBlock | null {

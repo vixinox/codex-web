@@ -10,13 +10,13 @@ node_modules
 dist
 dist-ssr
 pnpm-lock.yaml
+pnpm-workspace.yaml
 *.local
 .data/
 /docs/vendor
 .env
 .env.*
 !.env.example
-%SystemDrive%/
 
 .vscode/*
 !.vscode/extensions.json

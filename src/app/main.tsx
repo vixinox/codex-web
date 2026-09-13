@@ -2,9 +2,9 @@ import '../index.css'
 
 import { Component, lazy, type ReactNode, StrictMode, Suspense, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
+import { toast, Toaster } from '@/components/ui/toast'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { ThemeProvider } from '@/components/shared/theme-provider'
-import { Toaster } from '@/components/ui/sonner'
 import {
   ForbiddenPage,
   NotFoundPage,
@@ -17,7 +17,6 @@ import { WorkspaceShell } from '@/app/composition/workspace-shell'
 import { CodexStartupScreen } from '@/app/composition/screens/codex-startup-screen'
 import { GuestWorkspaceScreen } from '@/app/composition/screens/guest-workspace-screen'
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
-import { toast } from 'sonner'
 import { AdminScreen } from '@/app/composition/screens/admin-screen'
 
 const StartupScreen = lazy(() =>
@@ -82,7 +81,11 @@ function AuthenticatedWorkspace({ userId }: { userId: string }) {
 
   useEffect(() => {
     if (!runtime.errorEvent) return
-    toast.error('Codex could not start', { description: runtime.errorEvent.message })
+    toast.add({
+      title: 'Codex could not start',
+      description: runtime.errorEvent.message,
+      type: 'error',
+    })
   }, [runtime.errorEvent])
 
   if (runtime.bootstrapping) return <CodexStartupScreen />
@@ -128,7 +131,7 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <ThemeProvider>
           <App />
-          <Toaster position="bottom-right" />
+          <Toaster />
         </ThemeProvider>
       </BrowserRouter>
     </RootErrorBoundary>

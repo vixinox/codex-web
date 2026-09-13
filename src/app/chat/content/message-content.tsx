@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { ComponentPropsWithoutRef, ReactNode } from 'react'
+import type { ComponentPropsWithoutRef, ReactNode, Ref } from 'react'
 import type { Components, ExtraProps } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -102,12 +102,24 @@ const markdownComponents: Components = {
   },
 }
 
-export function MessageContent({ text, markdown = true }: { text: string; markdown?: boolean }) {
+export function MessageContent({
+  text,
+  markdown = true,
+  rootRef,
+}: {
+  text: string
+  markdown?: boolean
+  rootRef?: Ref<HTMLDivElement>
+}) {
   if (!markdown) {
     return <span className="wrap-break-word whitespace-pre-wrap">{text}</span>
   }
   return (
-    <div className="space-y-2 text-sm leading-6 wrap-break-word text-foreground">
+    <div
+      ref={rootRef}
+      data-markdown-root="true"
+      className="space-y-2 text-sm leading-6 wrap-break-word text-foreground"
+    >
       <ReactMarkdown
         skipHtml
         remarkPlugins={[remarkGfm, remarkCodeFenceInfo]}

@@ -1,7 +1,6 @@
 /* eslint-disable max-lines -- Guest composition owns the isolated route state and reset lifecycle. */
 import * as React from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { toast } from 'sonner'
 
 import { ComposerInput } from '@/app/chat/composer/composer-input'
 import type { ChatThreadPresentation } from '@/app/chat/model/types'
@@ -20,6 +19,7 @@ import { ThreadHeader } from '@/app/composition/layout/thread-header'
 import { ThreadEmptyState } from '@/app/composition/layout/thread-empty-state'
 import { ComposerContainer } from '@/app/composition/layout/composer-container'
 import { promoteGuestThread, reconcileGuestThreads } from './guest-thread-order'
+import { toast } from '@/components/ui/toast'
 
 const PROJECTS_UNAVAILABLE = 'Projects are unavailable to guests.'
 const ARCHIVED_UNAVAILABLE = 'Archived chats are unavailable to guests.'
@@ -41,7 +41,10 @@ export function GuestWorkspaceScreen() {
     const summaries = await guestThreadClient.listThreads(null)
     setThreads((current) => reconcileGuestThreads(current, summaries))
   }, [])
-  const reportUnavailable = React.useCallback(() => toast.error('Guest runtime is unavailable'), [])
+  const reportUnavailable = React.useCallback(
+    () => toast.add({ title: 'Guest runtime is unavailable', type: 'error' }),
+    [],
+  )
   const detail = useThreadDetailController(
     guestThreadClient,
     ready && requestedThreadId && !settingsActive ? null : undefined,
@@ -74,7 +77,7 @@ export function GuestWorkspaceScreen() {
         await refreshThreads()
         if (!disposed) setReady(true)
       } catch {
-        if (!disposed) toast.error('Guest runtime is unavailable')
+        if (!disposed) toast.add({ title: 'Guest runtime is unavailable', type: 'error' })
       }
     })()
     return () => {
@@ -148,7 +151,7 @@ export function GuestWorkspaceScreen() {
         setActiveTurn(null)
         if (cancelled) detail.retry()
       },
-      onError: (message) => toast.error(message),
+      onError: (message) => toast.add({ title: message, type: 'error' }),
     },
     runtimeReady: ready,
     working: visiblePending?.working ?? false,
@@ -160,7 +163,12 @@ export function GuestWorkspaceScreen() {
   })
 
   const unavailable = React.useCallback(
-    () => toast.message('Projects are unavailable', { description: PROJECTS_UNAVAILABLE }),
+    () =>
+      toast.add({
+        title: 'Projects are unavailable',
+        description: PROJECTS_UNAVAILABLE,
+        type: 'info',
+      }),
     [],
   )
   const sidebarModel = React.useMemo<WorkspaceSidebarModel>(

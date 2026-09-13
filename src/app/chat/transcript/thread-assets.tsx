@@ -24,6 +24,7 @@ import { TranscriptCollapsibleContent } from './transcript-collapsible'
 import {
   formatTurnTimestamp,
   formatUserContentForCopy,
+  hasAssistantText,
   visibleTurnContent,
   withoutReasoningSummaryActivity,
 } from './thread-assets-utils'
@@ -229,10 +230,18 @@ const ThreadTurn = React.memo(function ThreadTurn({
   pendingQuestionnaire?: ChatUserInputRequest
 }) {
   const [detailsOpen, setDetailsOpen] = React.useState(false)
+  const [animateAssistant, setAnimateAssistant] = React.useState(false)
   const previousStatusRef = React.useRef(turn.status)
   React.useLayoutEffect(() => {
-    if (previousStatusRef.current === 'inProgress' && turn.status === 'completed') {
+    const enteredTerminal =
+      previousStatusRef.current === 'inProgress' && turn.status !== 'inProgress'
+    if (enteredTerminal) {
       setDetailsOpen(false)
+      setAnimateAssistant(true)
+      previousStatusRef.current = turn.status
+    }
+    if (turn.status === 'inProgress') {
+      setAnimateAssistant(false)
     }
     previousStatusRef.current = turn.status
   }, [turn.status])
@@ -265,29 +274,18 @@ const ThreadTurn = React.memo(function ThreadTurn({
     process.length || retryState || finalAssistant || finalPlan || turn.questionnaire,
   )
   const visibleContent = visibleTurnContent(turn, pendingQuestionnaire, finalPlan)
-  const visibleRevision = visibleContent.revision
   const hasVisibleContent = visibleContent.hasContent
   const trailingAssistantId = visibleContent.trailingAssistantId
-  const [settledRevision, setSettledRevision] = React.useState<string | null>(null)
-  const hasTrailingAssistant = trailingAssistantId !== undefined
-  React.useEffect(() => {
-    if (!hasVisibleContent || hasTrailingAssistant) return
-    const frame = window.requestAnimationFrame(() => setSettledRevision(visibleRevision))
-    return () => window.cancelAnimationFrame(frame)
-  }, [hasTrailingAssistant, hasVisibleContent, visibleRevision])
-  const settleTrailingAssistant = React.useCallback(
-    (revision: string) => {
-      if (revision === visibleRevision) setSettledRevision(revision)
-    },
-    [visibleRevision],
-  )
+  const finishAssistantAnimation = React.useCallback(() => {
+    if (!working) setAnimateAssistant(false)
+  }, [working])
   const showThinking =
     working &&
+    !hasAssistantText(turn) &&
     !hasRunningCompaction &&
     !retryState &&
     !pendingQuestionnaire &&
-    !turn.error &&
-    (!hasVisibleContent || settledRevision === visibleRevision)
+    !turn.error
   const showWorkSummary = !working || hasVisibleContent
   const showSeparator = hasProcess && (!working || hasVisibleContent)
   const processOpen = working || detailsOpen
@@ -311,9 +309,10 @@ const ThreadTurn = React.memo(function ThreadTurn({
               key={block.id}
               block={block}
               streaming={working}
+              animate={working || animateAssistant}
               onAssistantSettled={
                 block.type === 'assistant' && block.id === trailingAssistantId
-                  ? () => settleTrailingAssistant(visibleRevision)
+                  ? finishAssistantAnimation
                   : undefined
               }
             />
@@ -338,7 +337,6 @@ const ThreadTurn = React.memo(function ThreadTurn({
       />,
     )
   }
-  if (showThinking) processBlocks.push(<LiveRow key="thinking" label="Thinking" />)
 
   const turnTimestamp = formatTurnTimestamp(turn.completedAt ?? turn.startedAt)
 
@@ -392,14 +390,14 @@ const ThreadTurn = React.memo(function ThreadTurn({
           <ThreadBlock
             block={finalAssistant}
             streaming={working}
+            animate={working || animateAssistant}
             onAssistantSettled={
-              finalAssistant.id === trailingAssistantId
-                ? () => settleTrailingAssistant(visibleRevision)
-                : undefined
+              finalAssistant.id === trailingAssistantId ? finishAssistantAnimation : undefined
             }
           />
         </div>
       ) : null}
+      {showThinking ? <LiveRow label="Thinking" /> : null}
       {finalPlan ? (
         <div className="flex flex-col gap-3 rounded-lg p-4 text-background">
           {finalPlan.explanation ? (

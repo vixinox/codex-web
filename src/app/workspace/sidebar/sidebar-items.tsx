@@ -32,7 +32,7 @@ import { ProjectNameDialog } from '../project/project-name-dialog'
 import { removeStoredValue, useStoredBoolean } from './sidebar-storage'
 import { useGsapFadePulse } from '@/lib/platform/browser/use-gsap-enter'
 import { FadePresenceList } from './fade-presence-list'
-import { toast } from 'sonner'
+import { toast } from '@/components/ui/toast'
 
 export function ProjectItem({
   project,
@@ -286,11 +286,13 @@ export function ThreadItem({
                     setArchiving(true)
                     void onArchive()
                       .catch((error: unknown) => {
-                        toast.error('Could not archive chat', {
+                        toast.add({
+                          title: 'Could not archive chat',
                           description:
                             error instanceof Error
                               ? error.message
                               : 'Could not archive this thread. Try again.',
+                          type: 'error',
                         })
                       })
                       .finally(() => setArchiving(false))
