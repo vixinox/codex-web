@@ -19,9 +19,10 @@ export function usePendingThreadPresentation({
   thread?: ChatThreadPresentation
 }) {
   const key = composerScopeForTarget(userId, target)
-  const previousTargetRef = React.useRef(target)
   const [pending, setPending] = React.useState<ChatPendingTurn | null>(null)
   const [pendingKey, setPendingKey] = React.useState<string | null>(null)
+  const pendingOriginRef = React.useRef<ComposerSelectionTarget | null>(null)
+  // local: scroll-lock epoch used to coordinate optimistic turns.
   const [lockEpoch, setLockEpoch] = React.useState(0)
   const isSameScope = pendingKey === key
   const isCurrentNativeThread = Boolean(
@@ -30,7 +31,8 @@ export function usePendingThreadPresentation({
   const isNewChatCreationTransition = Boolean(
     pending?.nativeThreadId &&
     target.threadId === null &&
-    previousTargetRef.current.threadId === null &&
+    pendingOriginRef.current?.threadId === null &&
+    pendingOriginRef.current?.projectId === target.projectId &&
     pending.projectId === target.projectId,
   )
   const displayPending =
@@ -52,10 +54,6 @@ export function usePendingThreadPresentation({
   const workingTurn = mergedThread?.turns.find((turn) => turn.status === 'inProgress')
 
   React.useEffect(() => {
-    previousTargetRef.current = target
-  }, [target.projectId, target.threadId])
-
-  React.useEffect(() => {
     if (!pendingSettled) return
     setPending(null)
     setPendingKey(null)
@@ -63,11 +61,12 @@ export function usePendingThreadPresentation({
 
   const onPendingChange = React.useCallback(
     (nextPending: ChatPendingTurn | null, nextKey: string | null) => {
+      pendingOriginRef.current = nextPending ? target : null
       setPending(nextPending)
       setPendingKey(nextKey)
       if (nextPending) setLockEpoch((epoch) => epoch + 1)
     },
-    [],
+    [target],
   )
 
   return {

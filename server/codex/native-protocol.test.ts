@@ -32,6 +32,33 @@ test('rejects unknown events instead of passing opaque payloads to the browser',
   )
 })
 
+test('projects the Guest token-limit event with only safe numeric fields', () => {
+  assert.deepEqual(
+    projectNativeMessage({
+      method: 'webcodex/guest-token-limit',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        maxTokens: 128_000,
+        actualTokens: 130_000,
+        apiKey: 'secret',
+      },
+    }),
+    {
+      ok: true,
+      value: {
+        method: 'webcodex/guest-token-limit',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          maxTokens: 128_000,
+          actualTokens: 130_000,
+        },
+      },
+    },
+  )
+})
+
 test('projects only supported Thread model and reasoning settings', () => {
   assert.deepEqual(
     projectNativeThread({
@@ -68,7 +95,7 @@ test('projects Thread settings updates without runtime or filesystem fields', ()
       params: {
         threadId: 'thread-1',
         threadSettings: {
-          model: 'gpt-5.6-luna',
+          model: 'gpt-5.6-terra',
           effort: 'low',
           cwd: 'C:/private',
           modelProvider: 'secret-provider',
@@ -83,7 +110,7 @@ test('projects Thread settings updates without runtime or filesystem fields', ()
         method: 'thread/settings/updated',
         params: {
           threadId: 'thread-1',
-          model: 'gpt-5.6-luna',
+          model: 'gpt-5.6-terra',
           reasoningEffort: 'low',
         },
       },

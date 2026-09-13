@@ -37,6 +37,9 @@ describe('Thread Composer selection sync', () => {
     expect(
       syncComposerPreferences(current, { reasoningEffort: 'high' }, GUEST_COMPOSER_CAPABILITIES),
     ).toEqual(current)
+    expect(
+      syncComposerPreferences(current, { model: 'gpt-5.6-sol' }, GUEST_COMPOSER_CAPABILITIES),
+    ).toEqual(current)
   })
 
   it('applies only server fields that changed since the previous truth', () => {

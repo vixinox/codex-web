@@ -33,7 +33,6 @@ export type ChatActivity = {
   aggregatedDiff?: string
   meta?: string
   truncated?: boolean
-  plan?: ChatPlanStep[]
   changes?: ChatFileChange[]
 }
 
@@ -41,7 +40,7 @@ export type ChatPlanStep = { step: string; status: 'pending' | 'inProgress' | 'c
 export type ChatFileChange = { path: string; kind: string; movePath?: string; diff?: string }
 
 export type ChatBlock =
-  | { id: string; type: 'user'; content: ChatUserContent[]; intervention?: boolean }
+  | { id: string; type: 'user'; content: ChatUserContent[] }
   | { id: string; type: 'assistant'; text: string; final?: boolean }
   | { id: string; type: 'activity'; kind: ChatActivityKind; activities: ChatActivity[] }
   | {
@@ -51,7 +50,6 @@ export type ChatBlock =
       title: string
       status: 'running' | 'completed' | 'cancelled' | 'failed'
     }
-  | { id: string; type: 'unsupported'; itemType: string }
   | { id: string; type: 'error'; message: string }
 
 export type ChatTurnPresentation = {
@@ -64,7 +62,6 @@ export type ChatTurnPresentation = {
   completedAt?: number
   durationMs?: number
   error?: { message: string; details?: string }
-  networkRetry?: { attempt: number; maxAttempts: number }
   plan?: ChatPlanPresentation
 }
 
@@ -139,24 +136,4 @@ export type ChatTokenUsage = {
     reasoningOutputTokens: number
     totalTokens: number
   }
-}
-
-export type ChatScenarioId =
-  | 'empty-thread'
-  | 'persisted-conversation'
-  | 'streaming-response'
-  | 'command-activity'
-  | 'mixed-activity'
-  | 'activity-timeline'
-  | 'completed-turn'
-  | 'codex-events'
-  | 'failed-turn'
-  | 'cancelled-turn'
-  | 'background-completion'
-
-export type ChatScenario = {
-  id: ChatScenarioId
-  title: string
-  purpose: string
-  thread: ChatThreadPresentation
 }

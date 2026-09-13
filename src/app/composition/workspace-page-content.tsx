@@ -1,5 +1,3 @@
-import * as React from 'react'
-
 import { ThreadHeader } from '@/app/composition/layout/thread-header'
 import { ComposerInput } from '@/app/chat/composer/composer-input'
 import { OWNER_NEW_CHAT_COMPOSER_CAPABILITIES } from '@/app/chat/composer/composer-capabilities'
@@ -35,28 +33,8 @@ export function WorkspacePageContent({
 }) {
   const projects = controller.model.status === 'ready' ? controller.model.projects : []
   const ready = runtime.model.status === 'started'
-  const bufferedThreadPage = React.useRef<ThreadPageController | null>(null)
-  if (page.model.status === 'ready') bufferedThreadPage.current = page
-
-  const showingBufferedThread = Boolean(
-    !route.settingsActive &&
-    route.selection &&
-    (page.model.status === 'idle' || page.model.status === 'loading') &&
-    bufferedThreadPage.current?.model.status === 'ready' &&
-    bufferedThreadPage.current.model.thread.id !== route.selection.threadId,
-  )
-  const surfacePage = showingBufferedThread
-    ? {
-        ...bufferedThreadPage.current!,
-        actions: page.actions,
-        composer: page.composer,
-        composerSlot: page.composerSlot,
-        compacting: page.compacting,
-        inputErrors: page.inputErrors,
-        lockEpoch: page.lockEpoch,
-        retryState: page.retryState,
-      }
-    : page
+  const surfacePage = page
+  const threadLoading = Boolean(route.selection && page.model.status !== 'ready')
 
   return (
     <>
@@ -76,7 +54,7 @@ export function WorkspacePageContent({
           ) : (
             <SettingsScreen runtime={runtime} />
           )
-        ) : ready ? (
+        ) : ready && !threadLoading ? (
           <ThreadPageSurface controller={surfacePage} onRetry={page.actions.retry} />
         ) : (
           <RuntimePlaceholder
@@ -86,7 +64,7 @@ export function WorkspacePageContent({
           />
         )}
       </div>
-      {ready && !route.settingsActive ? (
+      {ready && !route.settingsActive && !threadLoading ? (
         <div className="z-10 flex-none pb-4">
           {page.model.status === 'empty' ? (
             <ComposerInput

@@ -1,4 +1,5 @@
 import type { ChatBlock, ChatTurnPresentation, ChatUserInputRequest } from '../model/types'
+import { splitCompleteMarkdownBlocks } from './streaming-assistant'
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
 const REASONING_SUMMARY_TITLE = 'Reasoning summary'
@@ -10,7 +11,8 @@ export function visibleTurnContent(
 ) {
   const visibleBlocks = turn.blocks.filter(
     (block) =>
-      (block.type === 'assistant' && Boolean(block.text)) ||
+      (block.type === 'assistant' &&
+        splitCompleteMarkdownBlocks(block.text, turn.status !== 'inProgress').blocks.length > 0) ||
       block.type === 'article' ||
       (block.type === 'activity' &&
         block.activities.some((activity) => activity.title !== REASONING_SUMMARY_TITLE)),

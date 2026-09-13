@@ -889,6 +889,42 @@ describe('Codex native thread reducer', () => {
     )
   })
 
+  it('renders Guest token limits as a deduplicated system activity', () => {
+    const state = createCodexThreadState(
+      { id: 'thread-1', turns: [{ id: 'turn-1', status: 'interrupted', items: [] }] },
+      null,
+    )
+    const event = {
+      method: 'webcodex/guest-token-limit',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        maxTokens: 128_000,
+        actualTokens: 129_000,
+      },
+    }
+    applyCodexNotification(state, event, 'guest-limit-1')
+    applyCodexNotification(state, event, 'guest-limit-1')
+    applyHistoryEvents(state, [historyEvent(2, event.method, event.params)])
+    const blocks = toChatThreadPresentation(state).turns[0]?.blocks ?? []
+    expect(blocks).toEqual([
+      {
+        id: 'activity-guest-token-limit:turn-1',
+        type: 'activity',
+        kind: 'system',
+        activities: [
+          expect.objectContaining({
+            id: 'guest-token-limit:turn-1',
+            sourceType: 'guestTurnLimit',
+            kind: 'system',
+            title: 'Guest turn token limit reached',
+            detail: 'This turn reached the 128000 token limit and was stopped.',
+          }),
+        ],
+      },
+    ])
+  })
+
   it('makes malformed and replayed events visible without duplicating text', () => {
     const state = createCodexThreadState(
       { id: 'thread-1', turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] },

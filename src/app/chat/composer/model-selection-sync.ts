@@ -16,7 +16,8 @@ export function syncComposerPreferences(
   const model =
     thread?.model &&
     thread.model !== previous?.model &&
-    capabilities.availableModels.includes(thread.model)
+    capabilities.availableModels.includes(thread.model) &&
+    !capabilities.disabledModels.includes(thread.model)
       ? thread.model
       : current.model
   const effort =

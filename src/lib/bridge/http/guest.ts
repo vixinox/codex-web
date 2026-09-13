@@ -100,9 +100,6 @@ async function guestRequest<T>(path: string, init: RequestInit = {}): Promise<T>
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
 }
 
-export async function resetGuestSession() {
-  return guestRequest<GuestSession>('/guest-api/reset', { method: 'POST' })
-}
 export async function fetchGuestThreads() {
   return (await guestRequest<{ data: GuestThreadSummary[] }>('/guest-api/threads')).data
 }

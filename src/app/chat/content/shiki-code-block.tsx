@@ -69,8 +69,8 @@ export function ShikiCodeBlock({
       </div>
       <div
         className={cn(
-          'w-full scrollbar-thin scrollbar-thumb-app-border overflow-auto bg-app-surface-raised font-mono text-xs leading-6 text-app-text [&_pre]:bg-transparent [&_pre]:px-4 [&_pre]:pt-1 [&_pre]:pb-4 [&_pre]:whitespace-pre [&_pre]:text-inherit',
-          footer ? 'pb-10' : undefined,
+          'w-full scrollbar-thin scrollbar-thumb-app-border overflow-auto bg-app-surface-raised font-mono text-xs leading-6 text-app-text [&_pre]:bg-transparent [&_pre]:px-4 [&_pre]:pt-1 [&_pre]:whitespace-pre [&_pre]:text-inherit',
+          footer ? 'pb-8' : undefined,
           contentClassName,
         )}
         {...(highlightedCode?.key === highlightKey

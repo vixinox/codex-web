@@ -105,7 +105,7 @@ test('guest startup fails closed when runtime preparation fails', async () => {
   assert.equal(processStarted, false)
 })
 
-test('guest HTTP routes issue, restore, and reset a lease without owner authentication', async () => {
+test('guest HTTP routes issue and restore a lease without owner authentication', async () => {
   const app = await createHttpServer()
   await registerGuestRoutes(app, {
     dependencies: { guest: testDependencies.guest },
@@ -130,17 +130,14 @@ test('guest HTTP routes issue, restore, and reset a lease without owner authenti
       url: '/guest-api/reset',
       headers: { cookie: Array.isArray(initialCookie) ? initialCookie[0] : initialCookie },
     })
-    assert.equal(reset.statusCode, 200)
-    const resetCookie = reset.headers['set-cookie']
-    assert.ok(resetCookie)
-    assert.notEqual(resetCookie, initialCookie)
+    assert.equal(reset.statusCode, 404)
 
-    const revoked = await app.inject({
+    const stillValid = await app.inject({
       method: 'GET',
       url: '/guest-api/session',
       headers: { cookie: Array.isArray(initialCookie) ? initialCookie[0] : initialCookie },
     })
-    assert.equal(revoked.statusCode, 401)
+    assert.equal(stillValid.statusCode, 200)
   } finally {
     await app.close()
   }

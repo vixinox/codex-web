@@ -10,7 +10,7 @@ export type NativeProjectionResult =
 
 const MAX_TEXT = 16_000
 const MAX_DIFF = 32_000
-const CHAT_MODELS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'])
+const CHAT_MODELS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'])
 const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh'])
 
 // App Server DTOs are not browser DTOs. Keep only reviewed, renderable fields.
@@ -26,6 +26,13 @@ export function projectNativeMessage(value: unknown): NativeProjectionResult {
     params = compact({ threadId, thread: projectNativeThread(p.thread) })
   else if (value.method === 'thread/tokenUsage/updated')
     params = compact({ threadId, turnId, tokenUsage: tokenUsage(p.tokenUsage) })
+  else if (value.method === 'webcodex/guest-token-limit')
+    params = compact({
+      threadId,
+      turnId,
+      maxTokens: positiveInteger(p.maxTokens),
+      actualTokens: nonNegativeInteger(p.actualTokens),
+    })
   else if (value.method === 'thread/settings/updated') {
     const settings = record(p.threadSettings) ? p.threadSettings : {}
     params = compact({
@@ -438,6 +445,12 @@ function text(value: unknown) {
 }
 function numeric(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+function positiveInteger(value: unknown) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+function nonNegativeInteger(value: unknown) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 function bool(value: unknown) {
   return typeof value === 'boolean' ? value : undefined

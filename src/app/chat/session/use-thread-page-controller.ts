@@ -49,21 +49,26 @@ export function useThreadPageController({
   )
   const readyThread = detail.model.status === 'ready' ? detail.model.thread : undefined
   const pending = usePendingThreadPresentation({ userId, target, thread: readyThread })
-  const mergedThread = pending.thread
+  // New Chat is a hard presentation boundary. Background work may continue,
+  // but no pending/native Thread state from another target may surface here.
+  // Newly-created chats navigate to their native Thread immediately, so the
+  // transient optimistic bridge is not needed for the New Chat surface.
+  const visiblePending = isThread ? pending : null
+  const mergedThread = visiblePending?.thread
   const composer = useThreadComposerController({
     userId,
     runtimeReady,
     runtimeStatus,
     host: {
       target,
-      activeTurnId: pending.activeNativeTurnId,
+      activeTurnId: visiblePending?.activeNativeTurnId,
       followTurn: detail.followTurn,
       retry: detail.retry,
       navigateToThread: onNavigateToThread,
       onTurnAccepted,
       onUnavailable,
     },
-    working: pending.working,
+    working: visiblePending?.working ?? false,
     tokenUsage: mergedThread?.tokenUsage,
     threadSelection: mergedThread
       ? { model: mergedThread.model, reasoningEffort: mergedThread.reasoningEffort }
@@ -79,9 +84,7 @@ export function useThreadPageController({
         : detail.model.status === 'ready'
           ? { status: 'ready' as const, thread: readyThread! }
           : detail.model
-    : pending.pending
-      ? { status: 'starting' as const, thread: optimisticThread(pending.pending) }
-      : { status: 'empty' as const, title: 'What should we build?' }
+    : { status: 'empty' as const, title: 'What should we build?' }
 
   const turns =
     detail.model.status === 'ready'
@@ -122,7 +125,7 @@ export function useThreadPageController({
       answerUserInput: detail.answerUserInput,
       cancelUserInput: detail.cancelUserInput,
     },
-    lockEpoch: pending.lockEpoch,
+    lockEpoch: visiblePending?.lockEpoch ?? 0,
     retryState: composer.retryState,
     inputErrors: detail.inputErrors,
   }

@@ -21,7 +21,6 @@ import { contextUsagePercent, formatContextUsage, formatTokenTotals } from './us
 const MODEL_OPTIONS = [
   { value: 'gpt-5.6-sol', label: '5.6 Sol' },
   { value: 'gpt-5.6-terra', label: '5.6 Terra' },
-  { value: 'gpt-5.6-luna', label: '5.6 Luna' },
   { value: 'gpt-5.5', label: '5.5' },
 ] as const satisfies readonly { value: ChatModel; label: string }[]
 const EFFORT_OPTIONS = [
@@ -208,17 +207,27 @@ export function ComposerControls({
           >
             <div role="group" aria-label="Models">
               {visibleModelOptions.map((option) => (
-                <OptionButton
+                <span
                   key={option.value}
-                  selected={option.value === model}
-                  selectedBackground={false}
-                  onClick={() => {
-                    onModelChange(option.value)
-                    setModelOpen(false)
-                  }}
+                  title={
+                    capabilities.disabledModels.includes(option.value)
+                      ? capabilities.disabledModelMessage
+                      : undefined
+                  }
                 >
-                  {option.label}
-                </OptionButton>
+                  <OptionButton
+                    selected={option.value === model}
+                    selectedBackground={false}
+                    disabled={capabilities.disabledModels.includes(option.value)}
+                    onClick={() => {
+                      if (capabilities.disabledModels.includes(option.value)) return
+                      onModelChange(option.value)
+                      setModelOpen(false)
+                    }}
+                  >
+                    {option.label}
+                  </OptionButton>
+                </span>
               ))}
             </div>
             <div className="px-1">

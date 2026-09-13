@@ -201,7 +201,7 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 
-  animation: thinking-swipe 2.5s ease-in-out infinite;
+  animation: thinking-swipe 2s ease-in-out infinite;
 }
 
 @keyframes thinking-swipe {

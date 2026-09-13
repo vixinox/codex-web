@@ -13,7 +13,7 @@ export type SkillPickerViewModel =
   | { status: 'error'; items: readonly ComposerSkill[]; message: string }
   | { status: 'ready'; items: readonly ComposerSkill[] }
 
-export type ChatModel = 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.6-luna' | 'gpt-5.5'
+export type ChatModel = 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.5'
 export type ChatEffort = 'low' | 'medium' | 'high' | 'xhigh'
 /**
  * The owner workspace is allowed to opt into full access. Other workspace

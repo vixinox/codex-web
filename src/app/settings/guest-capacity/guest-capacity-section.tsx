@@ -12,10 +12,11 @@ import { useSettingsLoadEnter } from '../use-settings-load-enter'
 type GuestCapacity = {
   globalDailyTokenLimit: number
   globalDailyTokenUsed: number
-  globalDailyTokenReserved: number
+  globalDailyTokenAvailable: number
   perGuestDailyTokenLimit: number
   perGuestDailyTokenUsed: number
-  perGuestDailyTokenReserved: number
+  perGuestDailyTokenAvailable: number
+  maxTokensPerTurn: number
   maxActiveThreads: number
   activeThreads: number
   maxQueue: number
@@ -26,10 +27,11 @@ type GuestCapacity = {
 const REQUIRED_NUMBER_FIELDS = [
   'globalDailyTokenLimit',
   'globalDailyTokenUsed',
-  'globalDailyTokenReserved',
+  'globalDailyTokenAvailable',
   'perGuestDailyTokenLimit',
   'perGuestDailyTokenUsed',
-  'perGuestDailyTokenReserved',
+  'perGuestDailyTokenAvailable',
+  'maxTokensPerTurn',
   'maxActiveThreads',
   'activeThreads',
   'maxQueue',
@@ -108,12 +110,10 @@ function CapacityCard({ capacity }: { capacity: GuestCapacity }) {
   const cardRef = useSettingsLoadEnter<HTMLDivElement>([capacity])
   const globalTokens = {
     used: capacity.globalDailyTokenUsed,
-    reserved: capacity.globalDailyTokenReserved,
     limit: capacity.globalDailyTokenLimit,
   }
   const guestTokens = {
     used: capacity.perGuestDailyTokenUsed,
-    reserved: capacity.perGuestDailyTokenReserved,
     limit: capacity.perGuestDailyTokenLimit,
   }
   return (
@@ -128,18 +128,22 @@ function CapacityCard({ capacity }: { capacity: GuestCapacity }) {
         <Meter
           label="Shared daily tokens"
           used={globalTokens.used}
-          reserved={globalTokens.reserved}
           limit={globalTokens.limit}
-          detail={`${formatTokens(Math.max(0, globalTokens.limit - globalTokens.used - globalTokens.reserved))} available`}
+          detail={`${formatTokens(remaining(globalTokens.limit, globalTokens.used))} available`}
         />
         <Meter
           label="Your daily tokens"
           used={guestTokens.used}
-          reserved={guestTokens.reserved}
           limit={guestTokens.limit}
-          detail={`${formatTokens(Math.max(0, guestTokens.limit - guestTokens.used - guestTokens.reserved))} available`}
+          detail={`${formatTokens(remaining(guestTokens.limit, guestTokens.used))} available`}
         />
         <Separator />
+        <div className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="font-medium">Per-turn token limit</span>
+          <span className="text-muted-foreground tabular-nums">
+            {formatTokens(capacity.maxTokensPerTurn)}
+          </span>
+        </div>
         <Meter
           label="Running turns"
           used={capacity.activeThreads}
@@ -160,21 +164,18 @@ function CapacityCard({ capacity }: { capacity: GuestCapacity }) {
 function Meter({
   label,
   used,
-  reserved,
   limit,
   detail,
 }: {
   label: string
   used: number
-  reserved?: number
   limit: number
   detail: string
 }) {
   const safeLimit = Math.max(1, limit)
   const clampPercent = (value: number) => Math.min(100, Math.max(0, (value / safeLimit) * 100))
   const usedPercent = clampPercent(used)
-  const reservedPercent = clampPercent(reserved ?? 0)
-  const available = Math.max(0, limit - used - (reserved ?? 0))
+  const available = Math.max(0, limit - used)
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -186,12 +187,6 @@ function Meter({
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
               <dt className="text-muted-foreground">Used</dt>
               <dd className="text-right font-medium tabular-nums">{formatExact(used)}</dd>
-              {reserved !== undefined ? (
-                <>
-                  <dt className="text-muted-foreground">Reserved</dt>
-                  <dd className="text-right font-medium tabular-nums">{formatExact(reserved)}</dd>
-                </>
-              ) : null}
               <dt className="text-muted-foreground">Limit</dt>
               <dd className="text-right font-medium tabular-nums">{formatExact(limit)}</dd>
               <dt className="text-muted-foreground">Available</dt>
@@ -207,14 +202,17 @@ function Meter({
         aria-valuemin={0}
         aria-valuemax={limit}
         aria-valuenow={used}
-        aria-valuetext={`${used} of ${limit} used, ${available} available`}
+        aria-valuetext={`${used} of ${limit} used, ${detail}`}
         className="flex h-2 w-full overflow-hidden rounded-full bg-muted"
       >
         <div className="h-full bg-primary" style={{ width: `${usedPercent}%` }} />
-        <div className="h-full bg-primary/40" style={{ width: `${reservedPercent}%` }} />
       </div>
     </div>
   )
+}
+
+function remaining(limit: number, used: number) {
+  return Math.max(0, limit - used)
 }
 
 function formatExact(value: number) {

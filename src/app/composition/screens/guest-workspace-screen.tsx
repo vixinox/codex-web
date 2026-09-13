@@ -2,7 +2,6 @@
 import * as React from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { toast } from 'sonner'
-import { signOut } from '@/lib/auth/auth-client'
 
 import { ComposerInput } from '@/app/chat/composer/composer-input'
 import type { ChatThreadPresentation } from '@/app/chat/model/types'
@@ -11,7 +10,7 @@ import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
 import { SettingsScreen } from '@/app/composition/screens/settings-screen'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
 import type { WorkspaceSidebarModel } from '@/app/workspace/model/types'
-import { readGuestSession, resetGuestSession } from '@/lib/bridge/http/guest'
+import { readGuestSession } from '@/lib/bridge/http/guest'
 import { guestThreadClient } from '@/lib/bridge/thread-adapters'
 import { guestComposerAdapter } from '@/app/chat/session/guest-composer-adapter'
 import { useComposerController } from '@/app/chat/session/use-composer-controller'
@@ -54,13 +53,20 @@ export function GuestWorkspaceScreen() {
     target: { projectId: null, threadId: requestedThreadId },
     thread: detail.model.status === 'ready' ? detail.model.thread : undefined,
   })
-  const activeThread = pending.thread ?? pending.optimisticThread ?? null
+  // New Chat is a hard presentation boundary. A background Guest turn may
+  // continue, but it must never provide transcript/working UI for /app.
+  const visiblePending = requestedThreadId ? pending : null
+  const activeThread = visiblePending?.thread ?? visiblePending?.optimisticThread ?? null
+  const threadLoading = Boolean(
+    requestedThreadId && detail.model.status !== 'ready' && !activeThread,
+  )
 
   React.useEffect(() => {
     let disposed = false
     void (async () => {
       try {
-        const session = (await readGuestSession()) ?? (await resetGuestSession())
+        const session = await readGuestSession()
+        if (!session) throw new Error('Guest session unavailable')
         if (disposed) return
         // The lease id scopes Composer state, so a new lease cannot inherit the
         // previous lease's draft, model, effort, or selected skills.
@@ -145,7 +151,7 @@ export function GuestWorkspaceScreen() {
       onError: (message) => toast.error(message),
     },
     runtimeReady: ready,
-    working: pending.working,
+    working: visiblePending?.working ?? false,
     tokenUsage: activeThread?.tokenUsage,
     threadSelection: activeThread
       ? { model: activeThread.model, reasoningEffort: activeThread.reasoningEffort }
@@ -191,14 +197,14 @@ export function GuestWorkspaceScreen() {
       activeThreadId={requestedThreadId}
       settingsActive={settingsActive}
       newChatActive={!settingsActive && !requestedThreadId}
-      onOpenSettings={() => navigate('/app/settings')}
+      onOpenSettings={() =>
+        navigate('/app/settings', {
+          state: { settingsReturn: `${location.pathname}${location.search}` },
+        })
+      }
       onStartCodex={async () => true}
       runtimeInteractive={false}
       isGuest
-      onSignOut={async () => {
-        await signOut()
-        void navigate('/login', { replace: true })
-      }}
       onOpenNewChat={() => navigate('/app')}
       onSelectThread={(_, id) => navigate(guestThreadPath(id))}
       onSelectRootThread={(id) => navigate(guestThreadPath(id))}
@@ -225,7 +231,11 @@ export function GuestWorkspaceScreen() {
   const settingsSidebar = (
     <SettingsSidebar
       archivedActive={false}
-      onBack={() => navigate('/app')}
+      onBack={() => {
+        const settingsReturn = (location.state as { settingsReturn?: string } | null)
+          ?.settingsReturn
+        void navigate(settingsReturn ?? '/app')
+      }}
       onGeneral={() => navigate('/app/settings')}
       onArchived={() => undefined}
       archivedDisabled
@@ -242,9 +252,9 @@ export function GuestWorkspaceScreen() {
           <SettingsScreen isGuest />
         ) : (
           <>
-            {activeThread ? <ThreadHeader title={activeThread.title} /> : null}
+            {activeThread && !threadLoading ? <ThreadHeader title={activeThread.title} /> : null}
             <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto">
-              {activeThread ? (
+              {threadLoading ? null : activeThread ? (
                 <section
                   className="relative flex min-h-full flex-col"
                   aria-label="Guest chat conversation"
@@ -258,16 +268,18 @@ export function GuestWorkspaceScreen() {
                 />
               )}
             </div>
-            <div className="z-10 flex-none pb-4">
-              <ComposerContainer>
-                <ComposerInput
-                  viewModel={composer.viewModel}
-                  actions={composer.actions}
-                  placeholder="Explore the isolated guest workspace"
-                  capabilities={composer.capabilities}
-                />
-              </ComposerContainer>
-            </div>
+            {!threadLoading ? (
+              <div className="z-10 flex-none pb-4">
+                <ComposerContainer>
+                  <ComposerInput
+                    viewModel={composer.viewModel}
+                    actions={composer.actions}
+                    placeholder="Explore the isolated guest workspace"
+                    capabilities={composer.capabilities}
+                  />
+                </ComposerContainer>
+              </div>
+            ) : null}
           </>
         )}
       </main>

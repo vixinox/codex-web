@@ -4,6 +4,27 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/codex.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      ;(() => {
+        const desktopOptIn = 'codex_web_desktop'
+        let optedIn = false
+        try {
+          optedIn = window.localStorage.getItem(desktopOptIn) === '1'
+        } catch {
+          optedIn = false
+        }
+        if (!optedIn) {
+          optedIn = document.cookie.split('; ').some((cookie) => cookie === `${desktopOptIn}=1`)
+        }
+
+        if (!optedIn && window.matchMedia('(max-width: 767px)').matches) {
+          window.location.replace('/unsupported.html')
+        }
+      })()
+    </script>
+    <noscript>
+      <meta http-equiv="refresh" content="0;url=/unsupported.html" />
+    </noscript>
     <meta
       name="description"
       content="Codex Web is a local, single-user browser client for Codex."

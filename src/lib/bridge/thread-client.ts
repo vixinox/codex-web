@@ -53,6 +53,7 @@ export const THREAD_EVENT_METHODS = [
   'thread/status/changed',
   'thread/settings/updated',
   'thread/tokenUsage/updated',
+  'webcodex/guest-token-limit',
   'thread/archived',
   'thread/deleted',
   'thread/closed',

@@ -9,13 +9,11 @@ export type ErrorPageProps = {
   /** One-line explanation rendered under the heading. */
   description: string
   /** Optional small glyph centered above the code. */
-  icon?: ReactNode
-  /** Action buttons rendered under the description. */
   actions?: ReactNode
   className?: string
 }
 
-export function ErrorPage({ code, title, description, icon, actions, className }: ErrorPageProps) {
+export function ErrorPage({ code, title, description, actions, className }: ErrorPageProps) {
   return (
     <div
       className={cn(
@@ -23,17 +21,9 @@ export function ErrorPage({ code, title, description, icon, actions, className }
         className,
       )}
     >
-      {icon ? (
-        <div
-          aria-hidden="true"
-          className="text-app-text-subtle [&_svg]:size-5 [&_svg]:stroke-[1.5]"
-        >
-          {icon}
-        </div>
-      ) : null}
       <p
         aria-hidden="true"
-        className="text-[clamp(4rem,14vw,7.5rem)] leading-none font-light tracking-tighter text-app-text-subtle select-none"
+        className="text-7xl leading-none font-light tracking-tighter text-app-text-subtle select-none"
       >
         {code}
       </p>

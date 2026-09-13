@@ -79,18 +79,16 @@ export function useComposerController({
   const scope = composerScopeForTarget(userId, host.target)
   const targetProjectId = host.target.projectId
   const selection = adapter.selection
-  const state = ensureComposerScope(
-    scope,
-    selection ? selection.read(userId, host.target) : FALLBACK_PREFERENCES,
-  )
+  ensureComposerScope(scope, selection ? selection.read(userId, host.target) : FALLBACK_PREFERENCES)
   const snapshot = useComposerScopeSnapshot(scope)
   const resolvedCapabilities = capabilities ?? adapter.capabilities
-  const appliedThreadSelection = React.useRef<{
-    scope: string
-    selection?: ThreadComposerSelection
-  } | null>(null)
+  const appliedThreadSelections = React.useRef(
+    new Map<string, ThreadComposerSelection | undefined>(),
+  )
+  const createdThreadScopes = React.useRef(new Set<string>())
   const [error, setError] = React.useState<string | null>(null)
   const [retryAttempt, setRetryAttempt] = React.useState(0)
+  // local: optimistic compact intent, not an App Server turn field.
   const [compacting, setCompacting] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
   const [skills, setSkills] = React.useState<SkillPickerViewModel>({
@@ -102,22 +100,45 @@ export function useComposerController({
   const [contextWindow, setContextWindow] = React.useState<number | undefined>(undefined)
   const operation = React.useRef<AbortController | null>(null)
   const sequence = React.useRef(0)
+  const targetGeneration = React.useRef(0)
+  const targetKey = `${host.target.projectId ?? '<root>'}\0${host.target.threadId ?? '<new>'}`
+  const previousTargetKey = React.useRef(targetKey)
+  // Invalidate old async callbacks during the render that observes a route
+  // change. An effect runs too late for requests that settle immediately.
+  if (previousTargetKey.current !== targetKey) {
+    previousTargetKey.current = targetKey
+    targetGeneration.current += 1
+    // Keep the old request running, but let the new route submit independently.
+    operation.current = null
+  }
+  React.useEffect(() => {
+    setSubmitting(false)
+    setError(null)
+  }, [targetKey])
 
   React.useEffect(() => {
-    const applied = appliedThreadSelection.current
+    const hasApplied = appliedThreadSelections.current.has(scope)
+    const applied = appliedThreadSelections.current.get(scope)
+    const createdThread = createdThreadScopes.current.has(scope)
+    if (createdThread && !threadSelection) return
+    if (createdThread) {
+      createdThreadScopes.current.delete(scope)
+      appliedThreadSelections.current.set(scope, threadSelection)
+      return
+    }
     if (
-      applied?.scope === scope &&
-      applied.selection?.model === threadSelection?.model &&
-      applied.selection?.reasoningEffort === threadSelection?.reasoningEffort
+      hasApplied &&
+      applied?.model === threadSelection?.model &&
+      applied?.reasoningEffort === threadSelection?.reasoningEffort
     )
       return
     const preferences = syncComposerPreferences(
       snapshot.preferences,
       threadSelection,
       resolvedCapabilities,
-      applied?.scope === scope ? applied.selection : undefined,
+      hasApplied ? applied : undefined,
     )
-    appliedThreadSelection.current = { scope, selection: threadSelection }
+    appliedThreadSelections.current.set(scope, threadSelection)
     if (
       preferences.model === snapshot.preferences.model &&
       preferences.effort === snapshot.preferences.effort
@@ -148,6 +169,14 @@ export function useComposerController({
     [selection, userId],
   )
 
+  const updatePreferences = React.useCallback(
+    (update: (preferences: ComposerPreferences) => ComposerPreferences) => {
+      const next = updateComposerPreferences(scope, update)
+      persistSelection(hostRef.current.target.threadId, next)
+    },
+    [persistSelection, scope],
+  )
+
   const setDraft = React.useCallback(
     (draft: string, nextSkills?: readonly ComposerSkill[]) => {
       setComposerDraft(scope, draft, nextSkills)
@@ -157,27 +186,21 @@ export function useComposerController({
   )
   const setModel = React.useCallback(
     (model: ChatModel) => {
-      updateComposerPreferences(scope, (current) => ({ ...current, model }))
-      persistSelection(hostRef.current.target.threadId, { ...state.preferences, model })
+      updatePreferences((current) => ({ ...current, model }))
     },
-    [persistSelection, scope, state],
+    [updatePreferences],
   )
   const setEffort = React.useCallback(
     (effort: ChatEffort) => {
-      updateComposerPreferences(scope, (current) => ({ ...current, effort }))
-      persistSelection(hostRef.current.target.threadId, { ...state.preferences, effort })
+      updatePreferences((current) => ({ ...current, effort }))
     },
-    [persistSelection, scope, state],
+    [updatePreferences],
   )
   const setCollaborationMode = React.useCallback(
     (collaborationMode: CollaborationMode) => {
-      updateComposerPreferences(scope, (current) => ({ ...current, collaborationMode }))
-      persistSelection(hostRef.current.target.threadId, {
-        ...state.preferences,
-        collaborationMode,
-      })
+      updatePreferences((current) => ({ ...current, collaborationMode }))
     },
-    [persistSelection, scope, state],
+    [updatePreferences],
   )
 
   React.useEffect(() => {
@@ -247,6 +270,7 @@ export function useComposerController({
     ) => {
       if (!text.trim() || operation.current) return
       const target = hostRef.current.target
+      const generation = targetGeneration.current
       const controller = new AbortController()
       operation.current = controller
       const clientTurnId = `client-turn-${++sequence.current}`
@@ -308,19 +332,16 @@ export function useComposerController({
         }
         if (!accepted) return
         const acceptedTurn = accepted
+        if (generation !== targetGeneration.current) return
         hostRef.current.onTurnAccepted(acceptedTurn)
-        if (!target.threadId)
-          await waitForThreadAvailability(
-            (signal) =>
-              adapter.threads.readThread(acceptedTurn.projectId, acceptedTurn.threadId, signal),
-            controller.signal,
-          )
+        // local: optimistic turn shaped like native presentation until reconciliation.
         const pendingTurn: ChatPendingTurn = {
           ...optimisticTurn,
           projectId: acceptedTurn.projectId,
           nativeThreadId: acceptedTurn.threadId,
           ...(adapter.acceptedTurnIdIsNative ? { nativeTurnId: acceptedTurn.turnId } : {}),
         }
+        if (generation !== targetGeneration.current) return
         onPendingChange?.(
           pendingTurn,
           composerScopeForTarget(userId, {
@@ -336,22 +357,44 @@ export function useComposerController({
           collaborationMode: mode,
         }
         persistSelection(target.threadId ?? acceptedTurn.threadId, submitted)
+        if (!target.threadId) {
+          const createdScope = composerScopeForTarget(userId, {
+            projectId: acceptedTurn.projectId,
+            threadId: acceptedTurn.threadId,
+          })
+          updateComposerPreferences(createdScope, () => submitted)
+          createdThreadScopes.current.add(createdScope)
+        }
+        // Establish the native Thread URL as soon as creation is accepted so
+        // Settings/back navigation never loses the source while availability
+        // polling is still in progress. Keep the local preference/pending
+        // updates above synchronous with the accepted response.
+        if (!target.threadId) hostRef.current.onThreadCreated?.(acceptedTurn)
+        if (!target.threadId)
+          await waitForThreadAvailability(
+            (signal) =>
+              adapter.threads.readThread(acceptedTurn.projectId, acceptedTurn.threadId, signal),
+            controller.signal,
+          )
         if (target.threadId) hostRef.current.onTurnFollowed?.(acceptedTurn)
-        else hostRef.current.onThreadCreated?.(acceptedTurn)
       } catch (nextError) {
-        onPendingChange?.(null, null)
+        if (generation === targetGeneration.current) onPendingChange?.(null, null)
         if (nextError instanceof DOMException && nextError.name === 'AbortError') return
         const message =
           nextError instanceof Error
             ? nextError.message
             : (adapter.messages?.submitError ?? 'Codex could not send this message.')
-        setError(message)
-        hostRef.current.onError?.(message)
-        if (isCodexUnavailable(nextError)) hostRef.current.onUnavailable?.()
+        if (generation === targetGeneration.current) {
+          setError(message)
+          hostRef.current.onError?.(message)
+          if (isCodexUnavailable(nextError)) hostRef.current.onUnavailable?.()
+        }
       } finally {
         if (operation.current === controller) operation.current = null
-        setSubmitting(false)
-        setRetryAttempt(0)
+        if (generation === targetGeneration.current) {
+          setSubmitting(false)
+          setRetryAttempt(0)
+        }
       }
     },
     [

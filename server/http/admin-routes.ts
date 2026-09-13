@@ -67,7 +67,6 @@ export async function registerAdminRoutes(
       usage: {
         globalDailyTokenLimit: capacity.globalDailyTokenLimit,
         globalDailyTokenUsed: capacity.globalDailyTokenUsed,
-        globalDailyTokenReserved: capacity.globalDailyTokenReserved,
         perGuestDailyTokenLimit: capacity.perGuestDailyTokenLimit,
         resetAt: capacity.resetAt,
       },

@@ -66,6 +66,9 @@ describe('shared pending Thread presentation', () => {
     act(() => result.current.onPendingChange(pending, 'user:user-1\0thread:<root>\0thread-1'))
     rerender({ threadId: null })
     expect(result.current.pending).toBeNull()
+    // A later render must not resurrect the old Thread's optimistic turn.
+    rerender({ threadId: null })
+    expect(result.current.pending).toBeNull()
   })
 
   it('reconciles an opaque Guest job with the native completed transcript', () => {

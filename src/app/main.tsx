@@ -19,8 +19,6 @@ import { GuestWorkspaceScreen } from '@/app/composition/screens/guest-workspace-
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import { toast } from 'sonner'
 import { AdminScreen } from '@/app/composition/screens/admin-screen'
-import { useIsMobile } from '@/lib/platform/browser/use-mobile'
-import { MobileUnsupportedScreen } from '@/app/composition/screens/mobile-unsupported-screen'
 
 const StartupScreen = lazy(() =>
   import('@/app/composition/screens/startup-screen').then(({ StartupScreen: screen }) => ({
@@ -29,9 +27,6 @@ const StartupScreen = lazy(() =>
 )
 
 export function App() {
-  const isMobile = useIsMobile()
-  if (isMobile) return <MobileUnsupportedScreen />
-
   return (
     <Routes>
       <Route path="/" element={<RootRoute />} />

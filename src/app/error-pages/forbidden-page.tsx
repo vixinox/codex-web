@@ -1,4 +1,4 @@
-import { ArrowLeft, Home, ShieldX } from 'lucide-react'
+import { ArrowLeft, Home } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { ErrorPage } from './error-page'
@@ -16,12 +16,11 @@ export function ForbiddenPage({ onGoHome, onGoBack }: ForbiddenPageProps = {}) {
   return (
     <ErrorPage
       code={403}
-      icon={<ShieldX aria-hidden="true" />}
       title="Access denied"
       description="You don't have permission to view this page."
       actions={
         <>
-          <Button type="button" variant="ghost" onClick={onGoBack ?? (() => navigate(-1))}>
+          <Button type="button" variant="outline" onClick={onGoBack ?? (() => navigate(-1))}>
             <ArrowLeft data-icon="inline-start" />
             Go back
           </Button>

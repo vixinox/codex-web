@@ -20,8 +20,7 @@
 | -------------- | --------------------------------------------------------- | --------------------------------------------- |
 | `POST`         | `/guest-api/session`                                      | 签发新的 24 小时 guest lease                  |
 | `GET`          | `/guest-api/session`                                      | 读取当前 guest lease 与受限 runtime 声明      |
-| `POST`         | `/guest-api/reset`                                        | 使当前 guest lease 失效并开始新的隔离 session |
-| `GET`          | `/guest-api/capacity`                                     | 读取当前 lease 与全局准入容量                 |
+| `GET`          | `/guest-api/capacity`                                     | 读取当前 lease 与全局准入容量（实际用量与剩余量） |
 | `GET` / `POST` | `/guest-api/threads`                                      | 列出或创建当前 lease 的 Thread/首个 Turn      |
 | `GET`          | `/guest-api/threads/:guestThreadId`                       | 读取安全投影 Thread 快照与历史事件            |
 | `GET`          | `/guest-api/threads/:guestThreadId/status`                | 读取恢复状态                                  |
@@ -83,7 +82,7 @@ Project 是按受控 `cwd` 建立的逻辑分组；删除 Project 不删除目�
 
 Thread 响应不返回 `cwd`、rollout 路径或 Git remote。读取响应为 `{ thread, eventCursor, historyEvents }`；服务端按受控 Project 校验归属并投影安全字段。安全 Thread 投影可包含白名单内的 `model` 与 `reasoningEffort`；缺失、超长或不受支持的值会被省略。Turn 最终状态以 SSE 的 `turn/completed` 为准。
 
-`historyEvents` 只包含当前用户、当前 Thread、保留窗口内经过安全投影且需要补齐原生 Thread 快照的事件：Thread model/effort 设置更新、命令执行生命周期，以及用户问答的 `item/tool/requestUserInput`、`webcodex/userInput/answered`、`serverRequest/resolved`。其中 `webcodex/userInput/answered` 是 bridge 自有事件，用于持久化 App Server 的 resolved 通知未携带的已提交答案；前端按 `requestId` 将请求、答案和结束事件归一为稳定的 transcript summary。`eventCursor` 是当前 Thread 最后一条历史事件 ID，而非用户级最后 ID，因此跨 Thread 事件不会导致 SSE 漏事件；查询快照与响应之间产生的新事件仍通过 SSE 补回。每个用户 Thread 最多保留最近 1000 条事件，旧的按事件 ID 滚动删除。`historyEvents` 不含 API key、绝对路径、stack 或 raw rollout 字段。
+`historyEvents` 只包含当前用户、当前 Thread、保留窗口内经过安全投影且需要补齐原生 Thread 快照的事件：Thread model/effort 设置更新、命令执行生命周期，以及用户问答的 `item/tool/requestUserInput`、`webcodex/userInput/answered`、`serverRequest/resolved`。Guest 还可能收到 bridge 自有的 `webcodex/guest-token-limit`，其参数严格为 `threadId`、`turnId`、`maxTokens` 和可选 `actualTokens`；前端将它渲染为当前 Turn 内独立的 system activity。`webcodex/userInput/answered` 是 bridge 自有事件，用于持久化 App Server 的 resolved 通知未携带的已提交答案；前端按 `requestId` 将请求、答案和结束事件归一为稳定的 transcript summary。`eventCursor` 是当前 Thread 最后一条历史事件 ID，而非用户级最后 ID，因此跨 Thread 事件不会导致 SSE 漏事件；查询快照与响应之间产生的新事件仍通过 SSE 补回。每个用户 Thread 最多保留最近 1000 条事件，旧的按事件 ID 滚动删除。`historyEvents` 不含 API key、绝对路径、stack 或 raw rollout 字段。
 
 ## SSE
 
@@ -111,9 +110,9 @@ data: {"method":"item/agentMessage/delta","params":{}}
 - 游标必须是非负安全整数；非法游标返回 `INVALID_EVENT_CURSOR`。
 - 前端按 Codex item ID 聚合 delta，`item/completed` 是最终事实来源；bridge 不生成 UI block。问答是例外：bridge 发布 `webcodex/userInput/answered` 补足原生 `serverRequest/resolved` 缺失的答案字段，UI block 仍由前端投影生成。
 
-前端应处理 `thread/started`、`thread/settings/updated`、`thread/tokenUsage/updated`、`turn/started`、`item/started`、`item/agentMessage/delta`、`item/completed`、`turn/completed`、`turn/diff/updated`、审批 request、`serverRequest/resolved`、`error` 和 `warning`。其中 `thread/settings/updated` 的浏览器投影只包含 `threadId` 及合法时的 `model`、`reasoningEffort`，不透传原始 `threadSettings`。同一 SSE ID 只处理一次。
+前端应处理 `thread/started`、`thread/settings/updated`、`thread/tokenUsage/updated`、`turn/started`、`item/started`、`item/agentMessage/delta`、`item/completed`、`turn/completed`、`turn/diff/updated`、审批 request、`serverRequest/resolved`、`error` 和 `warning`。Guest 前端还应处理 `webcodex/guest-token-limit`，并将其作为 system activity 显示，而不是覆盖原生 turn error。`thread/settings/updated` 的浏览器投影只包含 `threadId` 及合法时的 `model`、`reasoningEffort`，不透传原始 `threadSettings`。同一 SSE ID 只处理一次。
 
-Guest SSE 使用同一 envelope 与 cursor 规则，但路径为 `/guest-api/events`，cursor 只来自当前 Guest Thread 的 `guest_event`；不得与 Owner `codex_event` 或 Owner `/api/events` 混用。Guest 只安全投影普通且非 secret 的 `item/tool/requestUserInput`，所有 approval、permission、command、file、network、MCP、dynamic-tool 或未知 server request 都由服务端拒绝，绝不转发到浏览器。
+Guest SSE 使用同一 envelope 与 cursor 规则，但路径为 `/guest-api/events`，cursor 只来自当前 Guest Thread 的 `guest_event`；不得与 Owner `codex_event` 或 Owner `/api/events` 混用。Guest 只安全投影普通且非 secret 的 `item/tool/requestUserInput`，所有 approval、permission、command、file、network、MCP、dynamic-tool 或未知 server request 都由服务端拒绝，绝不转发到浏览器。Guest capacity 的每日剩余量始终为 `limit - used`，`maxTokensPerTurn` 仅表示单轮硬上限，不参与准入 headroom 或 reservation。
 
 ## 错误
 

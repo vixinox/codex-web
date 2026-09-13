@@ -1,4 +1,4 @@
-import { CloudOff, Home, RotateCcw } from 'lucide-react'
+import { Home, RotateCcw } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { ErrorPage } from './error-page'
@@ -25,12 +25,11 @@ export function ServiceUnavailablePage({
   return (
     <ErrorPage
       code={503}
-      icon={<CloudOff aria-hidden="true" />}
       title={title}
       description={description}
       actions={
         <>
-          <Button type="button" variant="ghost" onClick={onGoHome ?? (() => navigate('/'))}>
+          <Button type="button" variant="outline" onClick={onGoHome ?? (() => navigate('/'))}>
             <Home data-icon="inline-start" />
             Go home
           </Button>

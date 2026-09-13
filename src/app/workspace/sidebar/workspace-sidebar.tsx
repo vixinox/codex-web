@@ -2,15 +2,6 @@ import * as React from 'react'
 import { ChevronRight, Dot, LogOut, Plus, Settings, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { WorkspaceSidebarModel } from '@/app/workspace/model/types'
@@ -57,7 +48,7 @@ export function WorkspaceSidebar({
   newChatActive: boolean
   onOpenSettings: () => void
   onStartCodex: () => Promise<boolean>
-  onSignOut: () => Promise<void>
+  onSignOut?: () => Promise<void>
   onOpenNewChat: () => void
   onSelectThread: (projectId: string, threadId: string) => void
   onSelectRootThread: (threadId: string) => void
@@ -84,8 +75,6 @@ export function WorkspaceSidebar({
     duration: 0.22,
   })
   const [createOpen, setCreateOpen] = React.useState(false)
-  const [signOutOpen, setSignOutOpen] = React.useState(false)
-  const [signingOut, setSigningOut] = React.useState(false)
   const [projectsOpen, setProjectsOpen] = useStoredBoolean(
     'workspace-sidebar:projects',
     true,
@@ -299,51 +288,19 @@ export function WorkspaceSidebar({
               {runtimeContent}
             </div>
           )}
-          <Button
-            type="button"
-            variant="ghost"
-            className="w-full justify-start gap-2 p-2"
-            onClick={() => {
-              if (isGuest) {
-                setSignOutOpen(true)
-                return
-              }
-              void onSignOut()
-            }}
-          >
-            <LogOut data-icon="inline-start" />
-            Sign out
-          </Button>
+          {!isGuest ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full justify-start gap-2 p-2"
+              onClick={() => void onSignOut?.()}
+            >
+              <LogOut data-icon="inline-start" />
+              Sign out
+            </Button>
+          ) : null}
         </div>
       </aside>
-      {isGuest ? (
-        <Dialog open={signOutOpen} onOpenChange={setSignOutOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Leave Guest Workspace?</DialogTitle>
-              <DialogDescription>
-                Your guest workspace will be left behind and removed by the existing guest lease
-                cleanup.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline" disabled={signingOut} />}>
-                Cancel
-              </DialogClose>
-              <Button
-                variant="destructive"
-                disabled={signingOut}
-                onClick={() => {
-                  setSigningOut(true)
-                  void onSignOut().finally(() => setSigningOut(false))
-                }}
-              >
-                {signingOut ? 'Signing out...' : 'Sign out'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      ) : null}
     </TooltipProvider>
   )
 }

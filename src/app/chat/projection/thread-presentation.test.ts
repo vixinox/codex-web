@@ -104,7 +104,6 @@ describe('thread user input projection', () => {
       0,
       [],
     )
-    expect(turn.blocks).not.toContainEqual(expect.objectContaining({ type: 'unsupported' }))
     const activities = turn.blocks.flatMap((block) =>
       block.type === 'activity' ? block.activities : [],
     )

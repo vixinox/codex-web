@@ -17,6 +17,12 @@ describe('chat model selection storage', () => {
     expect(readNewChatSelection('user-b')).toMatchObject({ model: 'gpt-5.6-sol', effort: 'low' })
   })
 
+  it('restores the same New Chat selection independently of project', () => {
+    writeNewChatSelection('user-a', { model: 'gpt-5.5', effort: 'xhigh' })
+
+    expect(readNewChatSelection('user-a')).toMatchObject({ model: 'gpt-5.5', effort: 'xhigh' })
+  })
+
   it('keeps the last submitted selection separate for each Thread', () => {
     writeThreadSelection('user-a', 'thread-1', { model: 'gpt-5.5', effort: 'xhigh' })
 

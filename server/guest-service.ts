@@ -21,7 +21,7 @@ import {
 } from './codex/native-protocol.js'
 
 const ACTIVE_JOB_STATES = ['queued', 'running'] as const
-const GUEST_MODELS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'])
+const GUEST_MODELS = new Set(['gpt-5.6-terra', 'gpt-5.5'])
 const GUEST_EFFORTS = new Set(['low', 'medium'])
 
 export type GuestIdentity = { id: string; userId: string; expiresAt: Date }
@@ -39,6 +39,8 @@ export class GuestService {
   private readonly hydrated = new Set<string>()
   /** Tokens the App Server reported for each in-flight native turn. */
   private readonly turnTokens = new Map<string, number>()
+  /** Native turns that have already crossed the configured per-turn limit. */
+  private readonly tokenLimitNotified = new Set<string>()
   private eventIdCounter: number | null = null
   private eventIdInit: Promise<void> | null = null
 
@@ -54,7 +56,6 @@ export class GuestService {
       .select({
         id: guestTurnJob.id,
         guestId: guestTurnJob.guestId,
-        reservedTokens: guestTurnJob.reservedTokens,
         usageDate: guestTurnJob.usageDate,
       })
       .from(guestTurnJob)
@@ -121,7 +122,6 @@ export class GuestService {
       .select({
         id: guestTurnJob.id,
         guestId: guestTurnJob.guestId,
-        reservedTokens: guestTurnJob.reservedTokens,
         usageDate: guestTurnJob.usageDate,
         nativeTurnId: guestTurnJob.nativeTurnId,
         nativeThreadId: guestThread.nativeThreadId,
@@ -327,13 +327,23 @@ export class GuestService {
       .select({ count: sql<number>`count(*)::int` })
       .from(guestTurnJob)
       .where(eq(guestTurnJob.status, 'queued'))
+    const maxTokensPerTurn = this.config.guest!.maxTokensPerTurn
+    const globalTokens = guestTokenCapacity(
+      this.config.guest!.globalDailyTokenLimit,
+      global?.usedTokens ?? 0,
+    )
+    const personalTokens = guestTokenCapacity(
+      this.config.guest!.perGuestDailyTokenLimit,
+      personal?.usedTokens ?? 0,
+    )
     return {
       globalDailyTokenLimit: this.config.guest!.globalDailyTokenLimit,
       globalDailyTokenUsed: global?.usedTokens ?? 0,
-      globalDailyTokenReserved: global?.reservedTokens ?? 0,
+      globalDailyTokenAvailable: globalTokens.available,
       perGuestDailyTokenLimit: this.config.guest!.perGuestDailyTokenLimit,
       perGuestDailyTokenUsed: personal?.usedTokens ?? 0,
-      perGuestDailyTokenReserved: personal?.reservedTokens ?? 0,
+      perGuestDailyTokenAvailable: personalTokens.available,
+      maxTokensPerTurn,
       maxActiveThreads: this.config.guest!.maxActiveThreads,
       activeThreads: jobs?.count ?? 0,
       maxQueue: this.config.guest!.maxQueue,
@@ -356,11 +366,17 @@ export class GuestService {
       .select({ count: sql<number>`count(*)::int` })
       .from(guestTurnJob)
       .where(eq(guestTurnJob.status, 'queued'))
+    const maxTokensPerTurn = this.config.guest!.maxTokensPerTurn
+    const globalTokens = guestTokenCapacity(
+      this.config.guest!.globalDailyTokenLimit,
+      global?.usedTokens ?? 0,
+    )
     return {
       globalDailyTokenLimit: this.config.guest!.globalDailyTokenLimit,
       globalDailyTokenUsed: global?.usedTokens ?? 0,
-      globalDailyTokenReserved: global?.reservedTokens ?? 0,
+      globalDailyTokenAvailable: globalTokens.available,
       perGuestDailyTokenLimit: this.config.guest!.perGuestDailyTokenLimit,
+      maxTokensPerTurn,
       maxActiveThreads: this.config.guest!.maxActiveThreads,
       activeThreads: jobs?.count ?? 0,
       maxQueue: this.config.guest!.maxQueue,
@@ -387,12 +403,14 @@ export class GuestService {
       .from(guestThread)
       .where(and(eq(guestThread.nativeThreadId, nativeThreadId), isNull(guestThread.deletedAt)))
     if (!record) return
-    if (usageTokens !== undefined)
-      await this.reconcileLateUsage(turnId(projected.value), usageTokens)
+    const nativeTurnId = turnId(projected.value)
+    const terminal = ['turn/completed', 'turn/failed'].includes(projected.value.method)
+    if (usageTokens !== undefined && nativeTurnId !== undefined)
+      await this.enforceTurnLimit(record, nativeTurnId, usageTokens, terminal)
+    if (usageTokens !== undefined) await this.reconcileLateUsage(nativeTurnId, usageTokens)
     const rewritten = replaceThreadId(projected.value, record.id)
     await this.publish(record.guestId, record.id, rewritten)
     if (['turn/completed', 'turn/failed'].includes(rewritten.method)) {
-      const nativeTurnId = turnId(projected.value)
       if (nativeTurnId) {
         const completionTokens = turnUsageTokens(projected.value.params?.tokenUsage)
         const reportedTokens = this.takeTurnTokens(nativeTurnId)
@@ -414,6 +432,7 @@ export class GuestService {
             rewritten.method === 'turn/failed' ? 'Turn failed' : null,
           )
         await this.dispatchNext()
+        this.tokenLimitNotified.delete(nativeTurnId)
       }
     }
   }
@@ -465,14 +484,11 @@ export class GuestService {
   ) {
     const admission = await this.assertAdmission(identity.id)
     const id = randomUUID()
-    const reserve = this.config.guest!.maxTokensPerTurn
-    await this.reserve(identity.id, reserve)
     await this.db.insert(guestTurnJob).values({
       id,
       guestId: identity.id,
       guestThreadId: record.id,
       status: admission === 'queued' ? 'queued' : 'running',
-      reservedTokens: reserve,
       usageDate: utcDate(),
       inputText: input.text.trim(),
       model: input.model,
@@ -502,7 +518,6 @@ export class GuestService {
       const job = {
         id,
         guestId: identity.id,
-        reservedTokens: reserve,
         actualTokens: 0,
         usageDate: utcDate(),
       }
@@ -533,14 +548,8 @@ export class GuestService {
     if ((total?.count ?? 0) >= this.config.guest!.maxQueue) throw new Error('Guest queue is full')
     const capacity = await this.capacity(identity)
     if (
-      capacity.globalDailyTokenUsed +
-        capacity.globalDailyTokenReserved +
-        this.config.guest!.maxTokensPerTurn >
-        capacity.globalDailyTokenLimit ||
-      capacity.perGuestDailyTokenUsed +
-        capacity.perGuestDailyTokenReserved +
-        this.config.guest!.maxTokensPerTurn >
-        capacity.perGuestDailyTokenLimit
+      capacity.globalDailyTokenUsed >= capacity.globalDailyTokenLimit ||
+      capacity.perGuestDailyTokenUsed >= capacity.perGuestDailyTokenLimit
     )
       throw new Error('Guest token capacity is exhausted')
     const running = await this.db
@@ -550,31 +559,10 @@ export class GuestService {
     return (running[0]?.count ?? 0) >= this.config.guest!.maxActiveThreads ? 'queued' : 'running'
   }
 
-  private async reserve(guestId: string, tokens: number) {
-    const date = utcDate()
-    await this.db.transaction(async (tx) => {
-      await tx
-        .insert(guestDailyUsage)
-        .values({ guestId, usageDate: date, reservedTokens: tokens })
-        .onConflictDoUpdate({
-          target: [guestDailyUsage.guestId, guestDailyUsage.usageDate],
-          set: { reservedTokens: sql`${guestDailyUsage.reservedTokens} + ${tokens}` },
-        })
-      await tx
-        .insert(guestGlobalDailyUsage)
-        .values({ usageDate: date, reservedTokens: tokens })
-        .onConflictDoUpdate({
-          target: guestGlobalDailyUsage.usageDate,
-          set: { reservedTokens: sql`${guestGlobalDailyUsage.reservedTokens} + ${tokens}` },
-        })
-    })
-  }
-
   private async settle(
     job: {
       id: string
       guestId: string
-      reservedTokens: number
       actualTokens: number
       usageDate?: string
     },
@@ -585,23 +573,24 @@ export class GuestService {
     const date = job.usageDate ?? utcDate()
     await this.db.transaction(async (tx) => {
       await tx
+        .insert(guestDailyUsage)
+        .values({ guestId: job.guestId, usageDate: date })
+        .onConflictDoNothing({ target: [guestDailyUsage.guestId, guestDailyUsage.usageDate] })
+      await tx
+        .insert(guestGlobalDailyUsage)
+        .values({ usageDate: date })
+        .onConflictDoNothing({ target: guestGlobalDailyUsage.usageDate })
+      await tx
         .update(guestTurnJob)
         .set({ status, actualTokens, error, updatedAt: new Date() })
         .where(eq(guestTurnJob.id, job.id))
-      const update = {
-        reservedTokens: sql`greatest(0, ${guestDailyUsage.reservedTokens} - ${job.reservedTokens})`,
-        usedTokens: sql`${guestDailyUsage.usedTokens} + ${actualTokens}`,
-      }
       await tx
         .update(guestDailyUsage)
-        .set(update)
+        .set({ usedTokens: sql`${guestDailyUsage.usedTokens} + ${actualTokens}` })
         .where(and(eq(guestDailyUsage.guestId, job.guestId), eq(guestDailyUsage.usageDate, date)))
       await tx
         .update(guestGlobalDailyUsage)
-        .set({
-          reservedTokens: sql`greatest(0, ${guestGlobalDailyUsage.reservedTokens} - ${job.reservedTokens})`,
-          usedTokens: sql`${guestGlobalDailyUsage.usedTokens} + ${actualTokens}`,
-        })
+        .set({ usedTokens: sql`${guestGlobalDailyUsage.usedTokens} + ${actualTokens}` })
         .where(eq(guestGlobalDailyUsage.usageDate, date))
     })
   }
@@ -609,14 +598,41 @@ export class GuestService {
   private recordTurnTokens(message: NativeCodexMessage) {
     const nativeTurnId = turnId(message)
     const tokens = turnUsageTokens(message.params?.tokenUsage)
-    if (nativeTurnId && tokens !== undefined) this.turnTokens.set(nativeTurnId, tokens)
+    if (nativeTurnId && tokens !== undefined)
+      this.turnTokens.set(nativeTurnId, Math.max(this.turnTokens.get(nativeTurnId) ?? 0, tokens))
   }
 
   private takeTurnTokens(nativeTurnId: string | null | undefined) {
     if (!nativeTurnId) return 0
     const tokens = this.turnTokens.get(nativeTurnId) ?? 0
     this.turnTokens.delete(nativeTurnId)
+    this.tokenLimitNotified.delete(nativeTurnId)
     return tokens
+  }
+
+  private async enforceTurnLimit(
+    record: { id: string; guestId: string; nativeThreadId: string },
+    nativeTurnId: string,
+    actualTokens: number,
+    terminal: boolean,
+  ) {
+    const maxTokens = this.config.guest!.maxTokensPerTurn
+    if (actualTokens < maxTokens || this.tokenLimitNotified.has(nativeTurnId)) return
+    this.tokenLimitNotified.add(nativeTurnId)
+    const [job] = await this.db
+      .select({ id: guestTurnJob.id, status: guestTurnJob.status })
+      .from(guestTurnJob)
+      .where(eq(guestTurnJob.nativeTurnId, nativeTurnId))
+    if (!job || !ACTIVE_JOB_STATES.includes(job.status as (typeof ACTIVE_JOB_STATES)[number])) {
+      this.tokenLimitNotified.delete(nativeTurnId)
+      return
+    }
+    if (!terminal)
+      await this.manager.interrupt(record.nativeThreadId, nativeTurnId).catch(() => undefined)
+    await this.publish(record.guestId, record.id, {
+      method: 'webcodex/guest-token-limit',
+      params: { threadId: record.id, turnId: nativeTurnId, maxTokens, actualTokens },
+    })
   }
 
   private async reconcileLateUsage(nativeTurnId: string | undefined, tokens: number) {
@@ -763,6 +779,10 @@ export type GuestTurnInput = {
   reasoningEffort: string
   collaborationMode?: string
   skillHandles?: readonly string[]
+}
+
+export function guestTokenCapacity(limit: number, used: number) {
+  return { available: Math.max(0, limit - used) }
 }
 
 function validateTurnInput(input: GuestTurnInput) {

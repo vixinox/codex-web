@@ -82,28 +82,6 @@ export async function registerGuestRoutes(
     const identity = await requireGuest(request, reply)
     return identity ? sessionBody(identity) : undefined
   })
-  app.post('/guest-api/reset', async (request, reply) => {
-    const session = await requireSession(request, reply, auth)
-    if (!session) return
-    const user = session.user as { kind?: string; isAnonymous?: boolean }
-    if (user.kind !== 'guest' || !user.isAnonymous) {
-      return reply.status(403).send(apiError('GUEST_ACCESS_REQUIRED', 'Guest access required'))
-    }
-    await service.reset(session.user.id)
-    const signInRes = await auth.api.signInAnonymous({
-      headers: authHeaders(request),
-      asResponse: true,
-    })
-    const setCookie = signInRes.headers.getSetCookie()
-    if (setCookie.length) reply.header('set-cookie', setCookie)
-    const body = (await signInRes.json()) as { user?: { id?: string } }
-    const newUserId = body.user?.id
-    if (!newUserId) {
-      return reply.status(500).send(apiError('AUTH_FAILURE', 'Failed to issue new guest session'))
-    }
-    const started = await service.startSession(newUserId)
-    return sessionBody(started.identity)
-  })
   app.get('/guest-api/capacity', async (request, reply) => {
     const identity = await requireGuest(request, reply)
     return identity ? service.capacity(identity) : undefined

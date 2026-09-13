@@ -19,7 +19,6 @@ import {
 } from '../src/lib/db/schema.js'
 
 const DAY_MS = 86_400_000
-const RESERVED_PER_TURN = 128_000
 const FIRST_TURN_TOKENS = 33_194
 const SECOND_TURN_TOKENS = 6_000
 
@@ -48,7 +47,7 @@ test('bills each guest turn from the App Server token usage notification', async
   const firstTurnId = `integration-turn-1-${guestId}`
   const secondTurnId = `integration-turn-2-${guestId}`
   let globalRowExisted = false
-  let globalSnapshot = { usedTokens: 0, reservedTokens: 0 }
+  let globalSnapshot = { usedTokens: 0 }
 
   try {
     const [existingGlobal] = await db
@@ -59,7 +58,6 @@ test('bills each guest turn from the App Server token usage notification', async
     if (existingGlobal)
       globalSnapshot = {
         usedTokens: existingGlobal.usedTokens,
-        reservedTokens: existingGlobal.reservedTokens,
       }
     else await db.insert(guestGlobalDailyUsage).values({ usageDate: today })
 
@@ -79,9 +77,6 @@ test('bills each guest turn from the App Server token usage notification', async
       nativeThreadId,
       title: 'Guest usage integration',
     })
-    await db
-      .insert(guestDailyUsage)
-      .values({ guestId, usageDate: today, reservedTokens: RESERVED_PER_TURN })
     await insertRunningJob(db, { guestId, guestThreadId, nativeTurnId: firstTurnId, today })
 
     const service = new GuestService(db, config, {
@@ -103,25 +98,15 @@ test('bills each guest turn from the App Server token usage notification', async
     await service.ingest(usageEvent(nativeThreadId, firstTurnId, FIRST_TURN_TOKENS, 49_575))
 
     assert.equal((await ledger())?.usedTokens, FIRST_TURN_TOKENS)
-    assert.equal((await ledger())?.reservedTokens, 0)
     assert.equal((await service.capacity(identity)).perGuestDailyTokenUsed, FIRST_TURN_TOKENS)
 
     // A second turn on the same thread bills its own `last` usage, not the cumulative `total`.
-    await db
-      .update(guestDailyUsage)
-      .set({ reservedTokens: sql`${guestDailyUsage.reservedTokens} + ${RESERVED_PER_TURN}` })
-      .where(and(eq(guestDailyUsage.guestId, guestId), eq(guestDailyUsage.usageDate, today)))
-    await db
-      .update(guestGlobalDailyUsage)
-      .set({ reservedTokens: sql`${guestGlobalDailyUsage.reservedTokens} + ${RESERVED_PER_TURN}` })
-      .where(eq(guestGlobalDailyUsage.usageDate, today))
     await insertRunningJob(db, { guestId, guestThreadId, nativeTurnId: secondTurnId, today })
     const cumulative = FIRST_TURN_TOKENS + SECOND_TURN_TOKENS
     await service.ingest(usageEvent(nativeThreadId, secondTurnId, SECOND_TURN_TOKENS, cumulative))
     await service.ingest(completedEvent(nativeThreadId, secondTurnId))
 
     assert.equal((await ledger())?.usedTokens, cumulative)
-    assert.equal((await ledger())?.reservedTokens, 0)
 
     const [globalAfter] = await db
       .select()
@@ -131,7 +116,10 @@ test('bills each guest turn from the App Server token usage notification', async
 
     const capacity = await service.capacity(identity)
     assert.equal(capacity.perGuestDailyTokenUsed, cumulative)
-    assert.equal(capacity.perGuestDailyTokenReserved, 0)
+    assert.equal(
+      capacity.perGuestDailyTokenAvailable,
+      config.guest!.perGuestDailyTokenLimit - cumulative,
+    )
     assert.equal(capacity.activeThreads, 0)
   } finally {
     await db.delete(guest).where(eq(guest.id, guestId))
@@ -156,7 +144,6 @@ async function insertRunningJob(
     guestThreadId: input.guestThreadId,
     nativeTurnId: input.nativeTurnId,
     status: 'running',
-    reservedTokens: RESERVED_PER_TURN,
     usageDate: input.today,
     inputText: 'integration',
     model: 'gpt-5.6-sol',

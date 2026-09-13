@@ -35,9 +35,22 @@ export function useWorkspaceRouteController(): WorkspaceRouteController {
   const pageTarget = decodeThreadPageTarget(location.pathname, location.search)
   const activeThreadId = selection?.threadId ?? null
   const newChatActive = !settingsActive && !selection
+  const settingsReturn = (location.state as { settingsReturn?: string } | null)?.settingsReturn
 
-  const openApp = React.useCallback(() => navigate('/app'), [navigate])
-  const openSettings = React.useCallback(() => navigate('/app/settings'), [navigate])
+  const workspaceReturnRef = React.useRef<{ pathname: string; search: string } | null>(null)
+  React.useEffect(() => {
+    if (!settingsActive && pageTarget) {
+      workspaceReturnRef.current = { pathname: location.pathname, search: location.search }
+    }
+  }, [location.pathname, location.search, pageTarget, settingsActive])
+  const openApp = React.useCallback(() => {
+    const target = workspaceReturnRef.current
+    void navigate(settingsReturn ?? (target ? `${target.pathname}${target.search}` : '/app'))
+  }, [navigate, settingsReturn])
+  const openSettings = React.useCallback(() => {
+    const target = pageTarget ? `${location.pathname}${location.search}` : '/app'
+    void navigate('/app/settings', { state: { settingsReturn: target } })
+  }, [location.pathname, location.search, navigate, pageTarget])
   const openArchivedChats = React.useCallback(
     () => navigate('/app/settings/archived-chats'),
     [navigate],

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { detectShellLanguage, formatDisplayedCommand } from './activity-code'
+import { detectShellLanguage, formatDisplayedCommand, trimBlankEdgeLines } from './activity-code'
 
 describe('detectShellLanguage', () => {
   it.each([
@@ -25,5 +25,22 @@ describe('formatDisplayedCommand', () => {
     ['pnpm typecheck', 'pnpm typecheck'],
   ])('formats %j as %j', (command, expected) => {
     expect(formatDisplayedCommand(command)).toBe(expected)
+  })
+})
+
+describe('trimBlankEdgeLines', () => {
+  it('strips the blank lines PowerShell wraps around command output', () => {
+    expect(trimBlankEdgeLines('\r\n2026年9月13日 15:04:19\r\n\r\n\r\n')).toBe(
+      '2026年9月13日 15:04:19',
+    )
+  })
+
+  it('keeps interior blank lines and line indentation', () => {
+    expect(trimBlankEdgeLines('\nfirst\n\n  indented\n\n')).toBe('first\n\n  indented')
+  })
+
+  it('collapses an all-blank payload to nothing', () => {
+    expect(trimBlankEdgeLines('\r\n\r\n')).toBe('')
+    expect(trimBlankEdgeLines('')).toBe('')
   })
 })

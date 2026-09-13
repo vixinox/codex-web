@@ -9,7 +9,7 @@ import {
 import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { MessageContent } from '@/app/chat/content/message-content'
 import { ShikiCodeBlock } from '@/app/chat/content/shiki-code-block'
-import { detectShellLanguage, formatDisplayedCommand } from './activity-code'
+import { detectShellLanguage, formatDisplayedCommand, trimBlankEdgeLines } from './activity-code'
 import { StreamingAssistant } from './streaming-assistant'
 import { countDiffLines } from '@/app/chat/native/diff-stats'
 import type { ChatActivity, ChatActivityKind, ChatBlock } from '@/app/chat/model/types'
@@ -43,13 +43,6 @@ export function ThreadBlock({
       <div className="flex items-center gap-2 text-sm text-app-text-subtle select-none">
         <ListCollapseIcon className="size-3.5 shrink-0" />
         <span>{block.title}</span>
-      </div>
-    )
-  if (block.type === 'unsupported')
-    return (
-      <div className="flex items-center gap-2 text-xs text-app-text-subtle">
-        <AlertCircleIcon className="size-3.5" />
-        Activity: {block.itemType}
       </div>
     )
   if (block.type === 'error')
@@ -158,18 +151,31 @@ export function LiveRow({
       ) : kind ? (
         <ActivityIcon kind={kind} />
       ) : null}
-      <span className="thinking-shimmer truncate w-fit">{label}</span>
+      <span className="thinking-shimmer w-fit truncate">{label}</span>
     </div>
   )
 }
 
+const commandResultLabels: Record<NonNullable<ChatActivity['commandStatus']>, string> = {
+  completed: 'Success',
+  failed: 'Failed',
+  declined: 'Declined',
+  interrupted: 'Interrupted',
+}
+
 function ActivityRow({ item }: { item: ChatActivity }) {
   const [open, setOpen] = React.useState(false)
-  const details = item.command || item.detail || item.meta || item.output || item.plan?.length
+  const output = item.output ? trimBlankEdgeLines(item.output) : undefined
+  const details = item.command || item.detail || item.meta || output
   const command = item.command ? formatDisplayedCommand(item.command) : undefined
   const label = formatActivityLabel(item, command)
-  const code = [command, item.output].filter(Boolean).join('\n')
-  const commandResult = formatCommandResult(item)
+  const code = [command, output].filter(Boolean).join('\n')
+  const commandResult =
+    item.commandStatus !== undefined
+      ? commandResultLabels[item.commandStatus]
+      : item.kind === 'command' && item.exitCode !== undefined
+        ? `Exit code ${item.exitCode}`
+        : undefined
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="group min-w-0 text-xs">
@@ -197,10 +203,8 @@ function ActivityRow({ item }: { item: ChatActivity }) {
                   contentClassName="max-h-56"
                   footer={
                     commandResult ? (
-                      <span
-                        className={`rounded-sm border px-1.5 py-0.5 font-mono text-[11px] leading-4 ${commandResult.className}`}
-                      >
-                        {commandResult.label}
+                      <span className="px-1.5 py-0.5 text-xs leading-4 text-app-text-subtle">
+                        {commandResult}
                       </span>
                     ) : undefined
                   }
@@ -208,30 +212,6 @@ function ActivityRow({ item }: { item: ChatActivity }) {
               ) : null}
               {item.detail ? <div className="text-app-text-subtle">{item.detail}</div> : null}
               {item.meta ? <div className="text-app-text-subtle/75">{item.meta}</div> : null}
-              {item.plan?.length ? (
-                <ol className="flex flex-col gap-1 text-app-text-muted">
-                  {item.plan.map((step, index) => (
-                    <li key={`${step.step}-${index}`} className="flex gap-2">
-                      <span
-                        className={
-                          step.status === 'completed'
-                            ? 'text-success'
-                            : step.status === 'inProgress'
-                              ? 'text-warning'
-                              : 'text-app-text-subtle'
-                        }
-                      >
-                        {step.status === 'completed'
-                          ? '✓'
-                          : step.status === 'inProgress'
-                            ? '•'
-                            : '○'}
-                      </span>
-                      <span>{step.step}</span>
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
               {item.truncated ? (
                 <div className="text-app-text-subtle">Content was truncated.</div>
               ) : null}
@@ -400,30 +380,6 @@ function formatActivityLabel(item: ChatActivity, displayedCommand = item.command
   const duration =
     item.durationMs === undefined ? '' : ` in ${formatActivityDuration(item.durationMs)}`
   return item.command ? `Ran ${command}${duration}` : `${command}${duration}`
-}
-
-function formatCommandResult(item: ChatActivity) {
-  if (item.kind !== 'command') return undefined
-  if (item.commandStatus === 'completed')
-    return { label: 'Success', className: 'border-success/40 bg-success/10 text-success' }
-  if (item.commandStatus === 'failed')
-    return {
-      label: 'Failed',
-      className: 'border-destructive/40 bg-destructive/10 text-destructive',
-    }
-  if (item.commandStatus === 'declined')
-    return { label: 'Declined', className: 'border-warning/40 bg-warning/10 text-warning' }
-  if (item.commandStatus === 'interrupted')
-    return {
-      label: 'Interrupted',
-      className: 'border-app-border bg-app-surface-raised text-app-text-muted',
-    }
-  if (item.exitCode !== undefined)
-    return {
-      label: `Exit code ${item.exitCode}`,
-      className: 'border-app-border bg-app-surface-raised text-app-text-muted',
-    }
-  return undefined
 }
 
 function formatActivityDuration(durationMs: number) {

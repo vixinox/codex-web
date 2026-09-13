@@ -7,7 +7,9 @@ import type { ComposerSelectionStore, ComposerSelectionTarget } from './composer
  * a Guest lease. Scopes are keyed like the durable store, so a new lease (new
  * `userId`) starts from defaults and New Chat cannot inherit a Thread truth.
  */
-export function createMemorySelectionStore(): ComposerSelectionStore {
+export function createMemorySelectionStore(
+  initial: ComposerPreferences = DEFAULT_COMPOSER_PREFERENCES,
+): ComposerSelectionStore {
   const perUser = new Map<string, Map<string, ComposerPreferences>>()
   const keyFor = (target: ComposerSelectionTarget) =>
     target.threadId ? `${target.projectId ?? '<root>'}\0${target.threadId}` : '<new-chat>'
@@ -15,7 +17,7 @@ export function createMemorySelectionStore(): ComposerSelectionStore {
   return {
     read: (userId, target) => {
       const preferences = perUser.get(userId)?.get(keyFor(target))
-      return { ...(preferences ?? DEFAULT_COMPOSER_PREFERENCES) }
+      return { ...(preferences ?? initial) }
     },
     write: (userId, target, preferences) => {
       const byTarget = perUser.get(userId) ?? new Map<string, ComposerPreferences>()

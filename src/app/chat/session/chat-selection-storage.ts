@@ -8,7 +8,7 @@ const DEFAULT_SELECTION: ChatSelection = {
   effort: 'low',
   collaborationMode: 'default',
 }
-const MODELS = new Set<ChatModel>(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'])
+const MODELS = new Set<ChatModel>(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'])
 const EFFORTS = new Set<ChatEffort>(['low', 'medium', 'high', 'xhigh'])
 
 function selectionKey(

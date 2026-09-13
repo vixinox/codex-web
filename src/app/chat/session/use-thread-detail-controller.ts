@@ -96,6 +96,16 @@ export function useThreadDetailController(
       lastEventId = hydration.replayAfterId
       subscribe(hydration.replayAfterId)
     }
+    const reconcileTimer = window.setInterval(() => {
+      if (!active || !session.state.isBusy || recovering) return
+      void client
+        .readThreadStatus(projectId, threadId, controller.signal)
+        .then((status) => {
+          if (!active || status.eventCursor <= lastEventId) return
+          return client.readThread(projectId, threadId, controller.signal).then(hydrateAndSubscribe)
+        })
+        .catch(() => undefined)
+    }, 5_000)
     const recover = async () => {
       if (!active || recovering) return
       recovering = true
@@ -151,6 +161,7 @@ export function useThreadDetailController(
       active = false
       controller.abort()
       if (recoveryTimer !== null) window.clearTimeout(recoveryTimer)
+      window.clearInterval(reconcileTimer)
       unsubscribe()
       registry.release(projectId ?? null, threadId)
     }

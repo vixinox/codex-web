@@ -75,7 +75,7 @@ async function main() {
           'Password (leave empty to generate a secure random password): ',
           '',
         )
-        password = enteredPassword || undefined
+        password = enteredPassword
       }
     } finally {
       rl.close()

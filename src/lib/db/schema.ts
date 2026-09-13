@@ -221,7 +221,6 @@ export const guestTurnJob = pgTable(
     reasoningEffort: text('reasoning_effort'),
     skillHandles: jsonb('skill_handles').$type<string[]>().notNull().default([]),
     status: text('status').notNull(),
-    reservedTokens: integer('reserved_tokens').notNull().default(0),
     usageDate: text('usage_date').notNull(),
     actualTokens: integer('actual_tokens').notNull().default(0),
     error: text('error'),
@@ -242,7 +241,6 @@ export const guestDailyUsage = pgTable(
       .references(() => guest.id, { onDelete: 'cascade' }),
     usageDate: text('usage_date').notNull(),
     usedTokens: integer('used_tokens').notNull().default(0),
-    reservedTokens: integer('reserved_tokens').notNull().default(0),
   },
   (table) => [uniqueIndex('guest_daily_usage_unique').on(table.guestId, table.usageDate)],
 )
@@ -250,7 +248,6 @@ export const guestDailyUsage = pgTable(
 export const guestGlobalDailyUsage = pgTable('guest_global_daily_usage', {
   usageDate: text('usage_date').primaryKey(),
   usedTokens: integer('used_tokens').notNull().default(0),
-  reservedTokens: integer('reserved_tokens').notNull().default(0),
 })
 
 export const userRelations = relations(user, ({ many }) => ({

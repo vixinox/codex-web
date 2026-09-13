@@ -24,6 +24,11 @@ export async function buildGuestServer(
     method: ['GET', 'POST'],
     url: '/api/auth/*',
     async handler(request, reply) {
+      if (request.url.split('?', 1)[0] === '/api/auth/sign-out') {
+        return reply
+          .status(404)
+          .send(apiError('AUTH_ROUTE_NOT_FOUND', 'Authentication route not found'))
+      }
       try {
         return await proxyAuthRequest(request, reply, auth, config.authUrl)
       } catch {

@@ -1,4 +1,4 @@
-import { Home, RotateCcw, TriangleAlert } from 'lucide-react'
+import { Home, RotateCcw } from 'lucide-react'
 import { useInRouterContext, useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { ErrorPage } from './error-page'
@@ -61,12 +61,11 @@ function ServerErrorPageView({
   return (
     <ErrorPage
       code={500}
-      icon={<TriangleAlert aria-hidden="true" />}
       title={title}
       description={description}
       actions={
         <>
-          <Button type="button" variant="ghost" onClick={onGoHome}>
+          <Button type="button" variant="outline" onClick={onGoHome}>
             <Home data-icon="inline-start" />
             Go home
           </Button>

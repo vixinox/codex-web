@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { composerStore } from '@/app/chat/composer/composer-store'
+import { composerStore, type ComposerPreferences } from '@/app/chat/composer/composer-store'
 import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/composer-capabilities'
 import { useComposerController } from './use-composer-controller'
 import type { ComposerRuntimeAdapter } from './composer-adapter'
@@ -78,6 +78,66 @@ describe('shared composer controller', () => {
       turnId: 'turn-1',
     })
     expect(result.current.viewModel.draft).toBe('')
+  })
+
+  it('carries the New Chat model and effort into the newly created Thread before navigation', async () => {
+    let stored: ComposerPreferences = {
+      model: 'gpt-5.6-sol',
+      effort: 'medium',
+      collaborationMode: 'default',
+    }
+    const adapter = createAdapter({
+      selection: {
+        read: () => ({ ...stored }),
+        write: vi.fn((_userId, target, preferences) => {
+          if (target.threadId) stored = { ...preferences }
+        }),
+      },
+    })
+    let rerender:
+      | ((props: { threadId: string | null; model: 'gpt-5.6-sol'; effort: 'low' }) => void)
+      | undefined
+    const { result, rerender: rerenderHook } = renderHook(
+      ({
+        threadId,
+        model,
+        effort,
+      }: {
+        threadId: string | null
+        model: 'gpt-5.6-sol'
+        effort: 'low'
+      }) => {
+        rerender = (next) => rerenderHook(next)
+        return useComposerController({
+          userId: 'user-1',
+          adapter,
+          host: {
+            target: { projectId: null, threadId },
+            onTurnAccepted: vi.fn(),
+            onThreadCreated: () =>
+              rerender?.({ threadId: 'thread-1', model: 'gpt-5.6-sol', effort: 'low' }),
+          },
+          runtimeReady: true,
+          working: false,
+          threadSelection: threadId ? { model, reasoningEffort: effort } : undefined,
+        })
+      },
+      { initialProps: { threadId: null, model: 'gpt-5.6-sol', effort: 'low' } },
+    )
+
+    act(() => {
+      result.current.actions.setModel('gpt-5.6-terra')
+      result.current.actions.setEffort('medium')
+    })
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-terra'))
+    await act(async () => result.current.actions.submit('Use Terra.'))
+
+    expect(adapter.threads.createThread).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gpt-5.6-terra', reasoningEffort: 'medium' }),
+      expect.any(AbortSignal),
+    )
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-terra'))
+    expect(result.current.viewModel.effort).toBe('medium')
   })
 
   it('starts a Turn on an existing Thread and clears the submitted draft and skills', async () => {
@@ -241,13 +301,63 @@ describe('shared composer controller', () => {
     rerender({ threadId: 'thread-a', model: 'gpt-5.6-terra', effort: 'low' })
     expect(result.current.viewModel.model).toBe('gpt-5.5')
 
-    rerender({ threadId: 'thread-b', model: 'gpt-5.6-luna', effort: 'medium' })
-    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-luna'))
+    rerender({ threadId: 'thread-b', model: 'gpt-5.6-terra', effort: 'medium' })
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-terra'))
     expect(result.current.viewModel.effort).toBe('medium')
 
     rerender({ threadId: 'thread-a', model: 'gpt-5.6-terra', effort: 'low' })
-    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-terra'))
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.5'))
     expect(result.current.viewModel.effort).toBe('low')
+  })
+
+  it('keeps a manual Thread selection after visiting the New Chat scope', async () => {
+    const adapter = createAdapter()
+    const { result, rerender } = renderHook(
+      ({ threadId, model }: { threadId: string | null; model?: 'gpt-5.6-terra' }) =>
+        useComposerController({
+          userId: 'user-1',
+          adapter,
+          host: { target: { projectId: null, threadId }, onTurnAccepted: vi.fn() },
+          runtimeReady: true,
+          working: false,
+          threadSelection: model ? { model } : undefined,
+        }),
+      { initialProps: { threadId: 'thread-a', model: 'gpt-5.6-terra' as const } },
+    )
+
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-terra'))
+    act(() => result.current.actions.setModel('gpt-5.5'))
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.5'))
+
+    rerender({ threadId: null })
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-sol'))
+    rerender({ threadId: 'thread-a', model: 'gpt-5.6-terra' })
+
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.5'))
+  })
+
+  it('persists model and effort together after consecutive preference changes', async () => {
+    const adapter = createAdapter()
+    const { result } = renderHook(() =>
+      useComposerController({
+        userId: 'user-1',
+        adapter,
+        host: { target: { projectId: null, threadId: 'thread-1' }, onTurnAccepted: vi.fn() },
+        runtimeReady: true,
+        working: false,
+      }),
+    )
+
+    act(() => {
+      result.current.actions.setModel('gpt-5.5')
+      result.current.actions.setEffort('high')
+    })
+
+    expect(adapter.selection?.write).toHaveBeenLastCalledWith(
+      'user-1',
+      { projectId: null, threadId: 'thread-1' },
+      { model: 'gpt-5.5', effort: 'high', collaborationMode: 'default' },
+    )
   })
 
   it('applies a settings event update without changing the other Thread preference', async () => {
@@ -281,6 +391,35 @@ describe('shared composer controller', () => {
     rerender({ model: 'gpt-5.6-sol', effort: 'high' })
     await waitFor(() => expect(result.current.viewModel.effort).toBe('high'))
     expect(result.current.viewModel.model).toBe('gpt-5.5')
+  })
+
+  it('persists a changed server model for the current Thread', async () => {
+    const adapter = createAdapter()
+    const { result, rerender } = renderHook(
+      ({ model }) =>
+        useComposerController({
+          userId: 'user-1',
+          adapter,
+          host: {
+            target: { projectId: null, threadId: 'thread-1' },
+            onTurnAccepted: vi.fn(),
+          },
+          runtimeReady: true,
+          working: false,
+          threadSelection: { model, reasoningEffort: 'medium' },
+        }),
+      { initialProps: { model: 'gpt-5.6-sol' as const } },
+    )
+
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-sol'))
+    rerender({ model: 'gpt-5.6-terra' as const })
+
+    await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-terra'))
+    expect(adapter.selection?.write).toHaveBeenLastCalledWith(
+      'user-1',
+      { projectId: null, threadId: 'thread-1' },
+      { model: 'gpt-5.6-terra', effort: 'medium', collaborationMode: 'default' },
+    )
   })
 
   it('reports a rejected submission without clearing the draft', async () => {

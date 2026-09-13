@@ -92,7 +92,9 @@ export function updateComposerPreferences(
   update: (preferences: ComposerPreferences) => ComposerPreferences,
 ) {
   const state = ensureComposerScope(scope)
-  state.preferences = update({ ...state.preferences })
+  const next = update({ ...state.preferences })
+  state.preferences = next
+  return next
 }
 
 export function clearComposerDraft(scope: ComposerScope) {

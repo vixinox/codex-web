@@ -50,7 +50,7 @@ export function toChatThreadMetadata(
   }
 }
 
-const CHAT_MODELS = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'] as const
+const CHAT_MODELS = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'] as const
 const CHAT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 
 function chatModel(value: unknown): ChatThreadPresentation['model'] {
@@ -275,6 +275,7 @@ function adaptActivity(item: CodexRecord): ChatActivity | null {
     enteredReviewMode: { kind: 'system', title: 'Entered review mode' },
     exitedReviewMode: { kind: 'system', title: 'Exited review mode' },
     contextCompaction: { kind: 'system', title: 'Context compacted' },
+    guestTurnLimit: { kind: 'system', title: 'Guest turn token limit reached' },
   }
   const mapped = map[sourceType] ?? { kind: 'system', title: sourceType }
   const status =
@@ -361,6 +362,7 @@ function activityDetail(item: CodexRecord) {
       ? item.summary.filter((entry): entry is string => typeof entry === 'string').join('\n')
       : undefined,
     typeof item.revisedPrompt === 'string' ? item.revisedPrompt : undefined,
+    typeof item.detail === 'string' ? item.detail : undefined,
     isRecord(item.error) && typeof item.error.message === 'string' ? item.error.message : undefined,
   ].filter((entry): entry is string => Boolean(entry))
   return values.length ? values.join('\n') : undefined
