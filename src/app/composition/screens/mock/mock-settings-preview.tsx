@@ -7,7 +7,7 @@ export function MockSettingsPreview({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        'relative aspect-16/10 w-full max-w-7xl overflow-hidden rounded-3xl border border-app-border bg-sidebar',
+        'relative aspect-16/10 w-full max-w-7xl overflow-hidden rounded-3xl border bg-sidebar',
         className,
       )}
     >
