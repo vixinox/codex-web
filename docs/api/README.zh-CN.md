@@ -2,7 +2,7 @@
 
 浏览器只调用 Fastify bridge 的 REST/SSE 接口，不直接连接 Codex App Server。Base URL 为 `http://127.0.0.1:3000`；Better Auth session cookie 由浏览器自动发送。
 
-`/guest-api/*` 是独立的匿名 Guest API。它只接受 Better Auth anonymous session/cookie，并使用独立的 guest lease 管理 workspace、quota、任务和 reset；lease 不是身份凭据。Guest 不能访问 Owner 的 `/api/*`、Project、Credential、Codex runtime 或 Thread 数据。生产部署使用 `pnpm guest`，Owner 使用 `pnpm server:owner`，两者不共享 workspace、凭据或 runtime，也不存在 combined 模式。
+`/guest-api/*` 是独立的匿名 Guest API。它只接受 Better Auth anonymous session/cookie，并使用独立的 guest lease 管理 workspace、quota、任务和 reset；lease 不是身份凭据。Guest 不能访问 Owner 的 `/api/*`、Project、Credential、Codex runtime 或 Thread 数据。Guest 使用 `pnpm server:guest`，Owner 使用 `pnpm server:owner`，两者不共享 workspace、凭据或 runtime，也不存在 combined 模式。
 
 ## 边界
 
@@ -33,7 +33,7 @@
 
 Better Auth anonymous session cookie 承载 Guest 身份，使用标准 HttpOnly session cookie；Guest lease 是关联 user 的 24 小时业务实体，用于 workspace、quota、任务和 reset，不是 owner `/api/*` 的身份凭据。公开 Thread UUID 只映射当前 active lease，跨 lease、过期、Reset 或猜测 ID 一律返回 `GUEST_THREAD_NOT_FOUND`。Session runtime 声明中的 `modelContextWindow` 是 Guest Composer 的独立 context-window fallback，来自 `GUEST_MODEL_CONTEXT_WINDOW`（默认 `256000`），不等同于每日 quota 或 `maxTokensPerTurn`，也不读取 Owner configuration API。
 
-Guest Thread/Turn 固定由专用 Guest App Server 运行，`approvalPolicy: never`、`workspaceWrite` writable root 和 `networkAccess: false` 不可由浏览器覆盖。Agent 可在 lease 私有 workspace 内有限读、写、执行；浏览器没有 command、filesystem、process、Credential、Project、MCP 或 Plugin 管理 API。锁定 `0.153.0` schema 未定义 `readOnlyAccess`，bridge 不传递猜测的 read-root 格式；Windows 平台额外要求 `windowsSandbox/readiness=ready`，Linux 使用受管 runtime 自带的 `bwrap` sandbox，服务均在 sandbox 未就绪时 fail-closed。Reset/过期会停止任务、软删除 Guest/Thread/job 并删除该私有 workspace；审计记录、事件和用量保留。Web Search 在 v1 不开放。
+Guest Thread/Turn 固定由专用 Guest App Server 运行，`approvalPolicy: never`、`workspaceWrite` writable root 和 `networkAccess: false` 不可由浏览器覆盖。Agent 可在 lease 私有 workspace 内有限读、写、执行；浏览器没有 command、filesystem、process、Credential、Project、MCP 或 Plugin 管理 API。锁定 `0.153.0` schema 未定义 `readOnlyAccess`，bridge 不传递猜测的 read-root 格式；Windows 平台额外要求 `windowsSandbox/readiness=ready`，Linux 使用受管 runtime 自带的 `bwrap` sandbox，服务均在 sandbox 未就绪时 fail-closed。Reset/过期会停止任务、软删除 Guest/Thread/job 并删除该私有 workspace；审计记录、事件和用量保留。
 
 Guest 创建 Thread 或启动 Turn 返回的 `turnId` 是 Guest queue/job 的公开取消句柄，不是 App Server native transcript Turn ID。客户端只用它调用 Guest cancel endpoint；transcript identity 以安全 Thread snapshot/SSE 中的 native Turn 投影为准。两类 ID 不得互相写入或比较。
 

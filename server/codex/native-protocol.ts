@@ -297,9 +297,21 @@ function toolContent(value: unknown) {
   return record(textItem) ? bounded('result', textItem.text, MAX_TEXT) : {}
 }
 function action(value: unknown) {
-  return record(value) && typeof value.type === 'string'
-    ? compact({ type: value.type, query: text(value.query), pattern: text(value.pattern) })
-    : undefined
+  if (!record(value) || typeof value.type !== 'string') return undefined
+  if (value.type === 'search')
+    return compact({
+      type: 'search',
+      query: limitedText(value.query),
+      queries: stringList(value.queries),
+    })
+  if (value.type === 'openPage') return compact({ type: 'openPage', url: limitedUrl(value.url) })
+  if (value.type === 'findInPage')
+    return compact({
+      type: 'findInPage',
+      url: limitedUrl(value.url),
+      pattern: limitedText(value.pattern),
+    })
+  return undefined
 }
 function plan(value: unknown) {
   return Array.isArray(value)
@@ -411,6 +423,26 @@ function strings(value: unknown) {
         typeof entry === 'string' ? [sanitize(entry).slice(0, MAX_TEXT)] : [],
       )
     : []
+}
+function stringList(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .flatMap((entry) => (typeof entry === 'string' ? [sanitize(entry).slice(0, MAX_TEXT)] : []))
+        .slice(0, 16)
+    : undefined
+}
+function limitedText(value: unknown) {
+  return typeof value === 'string' ? sanitize(value).slice(0, MAX_TEXT) : undefined
+}
+function limitedUrl(value: unknown) {
+  if (typeof value !== 'string') return undefined
+  return value
+    .replace(
+      /((?:api[_-]?key|authorization|bearer|token|secret|password)\s*[:=]\s*)([^\s,;]+)/gi,
+      '$1[redacted]',
+    )
+    .replace(/(sk-[A-Za-z0-9_-]{8,})/g, '[redacted]')
+    .slice(0, MAX_TEXT)
 }
 function sanitize(value: string) {
   return value

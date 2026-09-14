@@ -22,6 +22,51 @@ test('keeps native item lifecycle nesting', () => {
     })
 })
 
+test('projects only the schema-defined Web Search action fields', () => {
+  const thread = projectNativeThread({
+    id: 'thread-1',
+    turns: [
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: 'search',
+            type: 'webSearch',
+            query: 'ignored by action',
+            action: {
+              type: 'findInPage',
+              url: 'https://example.com/docs',
+              pattern: 'installation',
+              authorization: 'secret',
+            },
+          },
+          {
+            id: 'search-many',
+            type: 'webSearch',
+            action: { type: 'search', query: 'Codex', queries: ['Codex docs', 'Codex app server'] },
+          },
+        ],
+      },
+    ],
+  })
+  assert.ok(thread)
+  const turns = thread.turns as Array<{ items: Array<Record<string, unknown>> }>
+  assert.deepEqual(turns[0]?.items, [
+    {
+      id: 'search',
+      type: 'webSearch',
+      query: 'ignored by action',
+      action: { type: 'findInPage', url: 'https://example.com/docs', pattern: 'installation' },
+    },
+    {
+      id: 'search-many',
+      type: 'webSearch',
+      action: { type: 'search', query: 'Codex', queries: ['Codex docs', 'Codex app server'] },
+    },
+  ])
+})
+
 test('rejects unknown events instead of passing opaque payloads to the browser', () => {
   assert.deepEqual(
     projectNativeMessage({ method: 'future/method', params: { apiKey: 'secret' } }),
@@ -346,8 +391,8 @@ test('keeps command output and file diffs readable while redacting paths and bou
     'C:/workspace',
   )
   assert.ok(result)
-  const turns = result.turns as Array<{ items: Array<Record<string, unknown>> }>
-  const items = turns[0].items
+  const turns = Array.isArray(result.turns) ? result.turns : []
+  const items = Array.isArray(turns[0]?.items) ? turns[0].items : []
   assert.deepEqual(items[0], {
     id: 'command',
     type: 'commandExecution',

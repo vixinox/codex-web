@@ -129,7 +129,7 @@ describe('useWorkspaceSidebarController optimistic mutations', () => {
     )
     act(() => result.current.retryRootThreads())
 
-    await waitFor(() => expect(bridge.fetchThreads).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(result.current.model.rootThreads.status).toBe('ready'))
     expect(result.current.model).toMatchObject({
       rootThreads: { items: [{ id: 'newer' }, { id: 'older' }] },
     })

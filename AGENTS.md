@@ -9,9 +9,11 @@
 
 ## Current scope
 
-The core product mainline is substantially complete. Guest Page is the only remaining product delivery line.
+The core product mainline is complete. Remaining work is tracked in `docs/roadmap.zh-CN.md`.
 
-Guest Page uses a real but isolated Guest runtime. It must remain separate from Better Auth, Owner credentials, Owner `/api/*`, Owner Codex history and backend control APIs. Each fixed 24-hour anonymous lease has a fresh private workspace that starts empty. Guest Agent turns may read, write and execute only inside that workspace under `workspaceWrite`, with no general network access. Guest runtime auto-starts before Fastify listens and fails closed when its dedicated credential or Windows sandbox is not ready; Owner runtime remains explicitly started by the Owner. Do not expand work into unrelated features, architecture, dependencies, or documentation.
+Owner and Guest are strictly isolated runtimes: separate process entry points, credentials, workspaces, history and backend control APIs. A Guest lease gets a fresh empty private workspace for a fixed 24-hour window; Guest turns may read, write and execute only inside it under `workspaceWrite`, with no general network access. Guest runtime auto-starts before Fastify listens and fails closed when its dedicated credential or Windows sandbox is not ready; the Owner runtime remains explicitly started by the Owner.
+
+Do not expand work into unrelated features, architecture, dependencies, or documentation.
 
 ## Editing rules
 
@@ -21,7 +23,7 @@ Guest Page uses a real but isolated Guest runtime. It must remain separate from 
 - When searching source, exclude `.data/**` and `docs/vendor/**`.
 - Use `oxfmt` for TypeScript; Prettier is not used.
 - `pnpm lint` intentionally suppresses the existing warning baseline. Before a change is committed, stage its intended files and run `pnpm lint:staged`; it exits nonzero for staged errors or warnings not present in `HEAD`.
-- Pin every shadcn CLI command to `shadcn@4.16.0`.
+- Pin every shadcn CLI command to `shadcn@4.21.0`.
 - Services are user-operated. Do not start, stop, restart, terminate, or take over Vite, Fastify, databases, preview servers, or test harnesses unless the user explicitly requests process management. Use only Vite `5173` and Fastify `3000` when authorized.
 - Always use `pnpm` as the package manager (`pnpm install`, `pnpm add`, `pnpm run`, etc.). Do not use `npm`, `yarn`, or `bun` for package management.
 - Never invoke a subagent unless explicitly requested by the user.
@@ -37,6 +39,4 @@ Choose the smallest check that covers the change:
 | REST, bridge, persistence, lifecycle, or server behavior                | focused server/bridge test, `pnpm typecheck`, touched-file `oxfmt --check`                                 |
 | Codex startup, authentication, Thread, Turn, or SSE runtime             | applicable focused checks, `pnpm typecheck`, and manual browser regression; live test commands are retired |
 
-Frontend automated tests cover transport, security projections, controller state, SSE behavior, and pure logic. Do not add React DOM, renderer, page-flow, Playwright, screenshot, or visual tests unless explicitly requested; UI acceptance uses manual browser regression.
-
-The user operates required services for manual or live verification. Report the required command when a running service is needed.
+Frontend automated tests cover transport, security projections, controller state, SSE behavior, and pure logic. Do not add React DOM, renderer, page-flow, Playwright, screenshot, or visual tests unless explicitly requested; UI acceptance uses manual browser regression. The user operates required services for verification — report the required command when a running service is needed.

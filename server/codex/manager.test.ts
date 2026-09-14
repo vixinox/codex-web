@@ -14,7 +14,7 @@ import type { JsonRpcMessage } from './stdio-transport.js'
 class AutoTransport implements RpcTransport {
   sent: JsonRpcMessage[] = []
   private message?: (message: JsonRpcMessage) => void
-  private exit?: (code: number | null, signal: NodeJS.Signals | null) => void
+  private exit?: (code: number | null, signal: string | null) => void
   send(message: JsonRpcMessage) {
     this.sent.push(message)
     if (message.method === 'initialize' || message.method === 'account/login/start')
@@ -37,7 +37,7 @@ class AutoTransport implements RpcTransport {
   onError() {
     return () => true
   }
-  onExit(listener: (code: number | null, signal: NodeJS.Signals | null) => void) {
+  onExit(listener: (code: number | null, signal: string | null) => void) {
     this.exit = listener
     return () => true
   }
@@ -136,6 +136,10 @@ test('uses the credential provider as the configured custom provider id', async 
         'base_url = "https://api.example.com"',
         'wire_api = "responses"',
         'requires_openai_auth = true',
+        '',
+        'web_search = "live"',
+        '',
+        '[tools.web_search]',
         '',
       ].join('\n'),
     )

@@ -168,7 +168,7 @@ const commandResultLabels: Record<NonNullable<ChatActivity['commandStatus']>, st
 function ActivityRow({ item }: { item: ChatActivity }) {
   const [open, setOpen] = React.useState(false)
   const output = item.output ? trimBlankEdgeLines(item.output) : undefined
-  const details = item.command || item.detail || item.meta || output
+  const details = item.command || item.detail || item.meta || output || searchActivityDetails(item)
   const command = item.command ? formatDisplayedCommand(item.command) : undefined
   const label = formatActivityLabel(item, command)
   const code = [command, output].filter(Boolean).join('\n')
@@ -213,6 +213,11 @@ function ActivityRow({ item }: { item: ChatActivity }) {
                 />
               ) : null}
               {item.detail ? <div className="text-app-text-subtle">{item.detail}</div> : null}
+              {searchActivityDetails(item) ? (
+                <div className="whitespace-pre-wrap text-app-text-subtle">
+                  {searchActivityDetails(item)}
+                </div>
+              ) : null}
               {item.meta ? <div className="text-app-text-subtle/75">{item.meta}</div> : null}
               {item.truncated ? (
                 <div className="text-app-text-subtle">Content was truncated.</div>
@@ -375,6 +380,10 @@ function formatChangeKind(kind: string) {
 }
 
 function formatActivityLabel(item: ChatActivity, displayedCommand = item.command ?? item.title) {
+  if (item.kind === 'search' && item.searchAction) {
+    if (item.searchAction.type === 'openPage') return 'Opened page'
+    if (item.searchAction.type === 'findInPage') return 'Found in page'
+  }
   if (item.kind !== 'command')
     return item.status === 'running' ? `Running ${item.title}` : item.title
   const command = displayedCommand
@@ -382,6 +391,15 @@ function formatActivityLabel(item: ChatActivity, displayedCommand = item.command
   const duration =
     item.durationMs === undefined ? '' : ` in ${formatActivityDuration(item.durationMs)}`
   return item.command ? `Ran ${command}${duration}` : `${command}${duration}`
+}
+
+function searchActivityDetails(item: ChatActivity) {
+  const action = item.searchAction
+  if (!action) return undefined
+  if (action.type === 'search')
+    return [action.query, ...(action.queries ?? [])].filter(Boolean).join('\n')
+  if (action.type === 'openPage') return action.url
+  return [action.url, action.pattern].filter(Boolean).join('\n') || undefined
 }
 
 function formatActivityDuration(durationMs: number) {

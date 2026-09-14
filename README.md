@@ -2,6 +2,8 @@
 
 本地运行的 Codex Web 客户端，面向单用户使用。
 
+![Codex Web 工作区](docs/assets/codex-web-workspace.png)
+
 ## 开始
 
 需要 Node.js 18+、pnpm；PostgreSQL 可通过 Docker 运行。
@@ -38,6 +40,7 @@ pnpm test:bridge
 ## 文档
 
 - [架构与安全](PROJECT.md)
+- [剩余工作](docs/roadmap.zh-CN.md)
 - [API](docs/api/README.zh-CN.md)
 - [前端约定](docs/frontend/README.zh-CN.md)
 - [App Server](docs/app-server/README.md)

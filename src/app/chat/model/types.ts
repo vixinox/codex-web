@@ -13,6 +13,11 @@ export type ChatActivityKind =
   | 'image'
   | 'system'
 
+export type ChatSearchAction =
+  | { type: 'search'; query?: string; queries?: string[] }
+  | { type: 'openPage'; url?: string }
+  | { type: 'findInPage'; url?: string; pattern?: string }
+
 export type ChatUserContent =
   | { type: 'text'; text: string }
   | { type: 'attachment'; kind: 'image' | 'audio'; label: string }
@@ -32,6 +37,7 @@ export type ChatActivity = {
   output?: string
   aggregatedDiff?: string
   meta?: string
+  searchAction?: ChatSearchAction
   truncated?: boolean
   changes?: ChatFileChange[]
 }

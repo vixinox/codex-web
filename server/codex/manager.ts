@@ -447,6 +447,10 @@ export class CodexManager {
       'wire_api = "responses"',
       'requires_openai_auth = true',
       '',
+      'web_search = "live"',
+      '',
+      '[tools.web_search]',
+      '',
     ].join('\n')
     const tempConfigPath = `${configPath}.${process.pid}.tmp`
     await writeFile(tempConfigPath, configText, { encoding: 'utf8', mode: 0o600 })

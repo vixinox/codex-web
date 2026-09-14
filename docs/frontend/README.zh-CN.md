@@ -66,7 +66,7 @@ turn: idle | queued | inProgress | interrupted | completed | failed
 - API key、绝对路径、内部 stack、原始凭据响应和不透明 provider payload 不进入 UI。
 - 输入框、取消操作和错误状态必须可理解；图标按钮必须有可访问名称和 tooltip。
 - 工具和文件事件按只读信息展示；审批能力以当前实际实现为准，不因协议事件存在而假设 UI 已开放。
-- Guest composer 固定 `workspaceWrite` access，只有 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.5` 以及 low/medium effort 可用；没有附件和 Web Search。真实 Guest skill 列表只返回 name、display name、description、scope 与短期 handle，不返回技能文件路径。
+- Guest composer 固定 `workspaceWrite` access，只有 `gpt-5.6-terra`、`gpt-5.5` 以及 low/medium effort 可选，`gpt-5.6-sol` 显示为不可用；没有附件，Web Search 由运行时默认启用。真实 Guest skill 列表只返回 name、display name、description、scope 与短期 handle，不返回技能文件路径。
 - Guest 前端与 Owner 共用单一 `index.html` 和构建产物，通过 `/`、`/login`、`/app`、`/admin` 路由及 capability 分流，不加载 Guest 不可用的 Credential、Project picker 或 Owner runtime 页面。Guest 仍复用 `WorkspaceSidebar`、`SettingsSidebar`、`ComposerInput` 和通用聊天 renderer；Projects 区域保留统一的 Owner-only 不可用提示，Archived chats 与 Appearance 设置在 Guest capability 下隐藏，避免维护两套样式实现。
 - 主题使用语义 token，不在业务组件中新增具体颜色值；主题解析保持为确定性纯逻辑。
 

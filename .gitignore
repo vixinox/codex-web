@@ -9,8 +9,6 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-pnpm-lock.yaml
-pnpm-workspace.yaml
 *.local
 .data/
 /docs/vendor

@@ -120,6 +120,62 @@ describe('thread user input projection', () => {
     })
   })
 
+  it('migrates discriminated Web Search actions into the UI model', () => {
+    const turn = toChatTurnPresentation(
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: 'open',
+            type: 'webSearch',
+            action: { type: 'openPage', url: 'https://example.com/docs' },
+          },
+          {
+            id: 'find',
+            type: 'webSearch',
+            action: {
+              type: 'findInPage',
+              url: 'https://example.com/docs',
+              pattern: 'installation',
+            },
+          },
+          {
+            id: 'search',
+            type: 'webSearch',
+            action: { type: 'search', query: 'Codex', queries: ['Codex docs'] },
+          },
+        ],
+      },
+      0,
+      [],
+    )
+    const activities = turn.blocks.flatMap((block) =>
+      block.type === 'activity' ? block.activities : [],
+    )
+    expect(activities).toMatchObject([
+      {
+        id: 'open',
+        title: 'Opened page',
+        searchAction: { type: 'openPage', url: 'https://example.com/docs' },
+      },
+      {
+        id: 'find',
+        title: 'Found in page',
+        searchAction: {
+          type: 'findInPage',
+          url: 'https://example.com/docs',
+          pattern: 'installation',
+        },
+      },
+      {
+        id: 'search',
+        title: 'Searched the web',
+        searchAction: { type: 'search', query: 'Codex', queries: ['Codex docs'] },
+      },
+    ])
+  })
+
   it('keeps a final-answer phase streaming while its turn is in progress', () => {
     const turn = toChatTurnPresentation(
       {

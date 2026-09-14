@@ -317,6 +317,10 @@ export class GuestCodexManager {
       `base_url = ${JSON.stringify(this.guest.baseUrl)}`,
       'wire_api = "responses"',
       'requires_openai_auth = true',
+      '',
+      'web_search = "live"',
+      '',
+      '[tools.web_search]',
     ]
     if (windowsConfig) configLines.push('', windowsConfig)
     await writeFile(configPath, `${configLines.join('\n')}\n`, { mode: 0o600 })

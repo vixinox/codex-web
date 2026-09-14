@@ -192,10 +192,8 @@ export function toChatTurnPresentation(
     : []
   const finalPlan = [...items]
     .reverse()
-    .find(
-      (item): item is CodexRecord & { text: string } =>
-        item.type === 'plan' && typeof item.text === 'string',
-    )
+    .find((item) => item.type === 'plan' && typeof item.text === 'string')
+  const finalPlanText = typeof finalPlan?.text === 'string' ? finalPlan.text : undefined
   const status =
     turn.status === 'failed' || turn.status === 'interrupted'
       ? turn.status
@@ -233,7 +231,7 @@ export function toChatTurnPresentation(
       : {}),
     ...(typeof turn.durationMs === 'number' ? { durationMs: turn.durationMs } : {}),
     ...(error ? { error } : {}),
-    ...(plan.length || finalPlan
+    ...(plan.length || finalPlanText
       ? {
           plan: {
             steps: plan,
@@ -241,7 +239,7 @@ export function toChatTurnPresentation(
               typeof turn.diff === 'string' ? turn.diff : undefined,
               fileChanges,
             ),
-            ...(finalPlan ? { text: finalPlan.text } : {}),
+            ...(finalPlanText ? { text: finalPlanText } : {}),
             ...(typeof turn.planExplanation === 'string'
               ? { explanation: turn.planExplanation }
               : {}),
@@ -255,14 +253,23 @@ export function toChatTurnPresentation(
 export function codexTimestampSecondsToMs(value: number) {
   return value * 1000
 }
-function adaptActivity(item: CodexRecord): ChatActivity | null {
+function adaptActivity(item: CodexRecord) {
   const id = stringValue(item.id)
   const sourceType = stringValue(item.type)
   if (!id || !sourceType) return null
+  const searchAction = sourceType === 'webSearch' ? adaptSearchAction(item.action) : undefined
   const map: Record<string, { kind: ChatActivityKind; title: string }> = {
     commandExecution: { kind: 'command', title: 'Ran command' },
     fileChange: { kind: 'file', title: 'Changed files' },
-    webSearch: { kind: 'search', title: stringValue(item.query) ?? 'Searched the web' },
+    webSearch: {
+      kind: 'search',
+      title:
+        searchAction?.type === 'openPage'
+          ? 'Opened page'
+          : searchAction?.type === 'findInPage'
+            ? 'Found in page'
+            : (stringValue(item.query) ?? 'Searched the web'),
+    },
     mcpToolCall: { kind: 'tool', title: stringValue(item.tool) ?? 'Called tool' },
     dynamicToolCall: { kind: 'tool', title: stringValue(item.tool) ?? 'Called tool' },
     collabToolCall: { kind: 'agent', title: 'Used agents' },
@@ -278,7 +285,7 @@ function adaptActivity(item: CodexRecord): ChatActivity | null {
     guestTurnLimit: { kind: 'system', title: 'Guest turn token limit reached' },
   }
   const mapped = map[sourceType] ?? { kind: 'system', title: sourceType }
-  const status =
+  const status: 'running' | 'failed' | 'cancelled' | 'completed' =
     item.status === 'inProgress'
       ? 'running'
       : item.status === 'failed' || item.status === 'declined'
@@ -303,7 +310,7 @@ function adaptActivity(item: CodexRecord): ChatActivity | null {
           : [],
       )
     : undefined
-  const commandStatus =
+  const commandStatus: 'completed' | 'failed' | 'declined' | 'interrupted' | undefined =
     sourceType === 'commandExecution' &&
     (item.status === 'completed' ||
       item.status === 'failed' ||
@@ -326,9 +333,36 @@ function adaptActivity(item: CodexRecord): ChatActivity | null {
     ...(typeof item.aggregatedOutput === 'string' ? { output: item.aggregatedOutput } : {}),
     ...(activityDetail(item) ? { detail: activityDetail(item) } : {}),
     ...(activityMeta(item) ? { meta: activityMeta(item) } : {}),
+    ...(searchAction ? { searchAction } : {}),
     ...(item.truncated === true ? { truncated: true } : {}),
     ...(changes?.length ? { changes } : {}),
   }
+}
+
+function adaptSearchAction(value: unknown) {
+  if (!isRecord(value) || typeof value.type !== 'string') return null
+  if (value.type === 'search') {
+    const queries = Array.isArray(value.queries)
+      ? value.queries.filter((entry): entry is string => typeof entry === 'string')
+      : undefined
+    return {
+      type: 'search' as const,
+      ...(typeof value.query === 'string' ? { query: value.query } : {}),
+      ...(queries?.length ? { queries } : {}),
+    }
+  }
+  if (value.type === 'openPage')
+    return {
+      type: 'openPage' as const,
+      ...(typeof value.url === 'string' ? { url: value.url } : {}),
+    }
+  if (value.type === 'findInPage')
+    return {
+      type: 'findInPage' as const,
+      ...(typeof value.url === 'string' ? { url: value.url } : {}),
+      ...(typeof value.pattern === 'string' ? { pattern: value.pattern } : {}),
+    }
+  return null
 }
 function adaptUserContent(value: unknown): ChatUserContent[] {
   if (!Array.isArray(value)) return []
