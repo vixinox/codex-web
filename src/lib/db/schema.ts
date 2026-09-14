@@ -219,6 +219,7 @@ export const guestTurnJob = pgTable(
     inputText: text('input_text'),
     model: text('model'),
     reasoningEffort: text('reasoning_effort'),
+    collaborationMode: text('collaboration_mode').notNull().default('plan'),
     skillHandles: jsonb('skill_handles').$type<string[]>().notNull().default([]),
     status: text('status').notNull(),
     usageDate: text('usage_date').notNull(),

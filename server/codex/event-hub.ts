@@ -1,5 +1,5 @@
 import type { NativeCodexMessage } from './native-protocol.js'
-import { projectNativeMessage, record } from './native-protocol.js'
+import { projectNativeMessage, record as isRecord } from './native-protocol.js'
 
 type StoredEvent = { id: number; message: NativeCodexMessage }
 export type EventHubSnapshot = { nextId: number; events: Record<string, StoredEvent[]> }
@@ -14,13 +14,13 @@ export type ThreadRuntimeStatus = {
 
 function threadId(message: NativeCodexMessage): string | undefined {
   const params = message.params
-  if (!record(params)) return undefined
+  if (!isRecord(params)) return undefined
   const value = params.threadId
   if (typeof value === 'string') return value
   const thread = params.thread
-  if (record(thread) && typeof thread.id === 'string') return thread.id
+  if (isRecord(thread) && typeof thread.id === 'string') return thread.id
   const turn = params.turn
-  return record(turn) && typeof turn.threadId === 'string' ? turn.threadId : undefined
+  return isRecord(turn) && typeof turn.threadId === 'string' ? turn.threadId : undefined
 }
 
 export class EventHub {

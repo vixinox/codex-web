@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { ThreadBlock, UserContent, LiveRow } from './thread-block'
-import { AlertCircleIcon } from 'lucide-react'
+import { AlertCircleIcon, BracesIcon } from 'lucide-react'
 import { CopyButton } from '@/components/shared/copy-button'
 import { Separator } from '@/components/ui/separator'
 import { Collapsible } from '@/components/ui/collapsible'
@@ -344,6 +344,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
     <article className="group flex flex-col">
       {firstUser?.type === 'user' ? (
         <div className="group/user-message ml-auto flex max-w-[85%] flex-col items-end">
+          <UserSnippetCards content={firstUser.content} />
           <div className="rounded-2xl bg-app-surface-raised px-4 py-2 text-sm text-foreground">
             <UserContent content={firstUser.content} />
           </div>
@@ -441,3 +442,34 @@ const ThreadTurn = React.memo(function ThreadTurn({
     </article>
   )
 })
+
+function UserSnippetCards({
+  content,
+}: {
+  content: Extract<ChatBlock, { type: 'user' }>['content']
+}) {
+  const snippets = content.filter((item) => item.type === 'codeSnippet')
+  if (snippets.length === 0) return null
+  const visible = snippets.slice(0, 3)
+  return (
+    <div
+      className="mb-2 flex max-w-full items-center gap-2 overflow-hidden"
+      role="list"
+      aria-label="Code snippets"
+    >
+      {visible.map((snippet, index) => (
+        <div
+          key={`${snippet.title}-${index}`}
+          role="listitem"
+          className="flex w-52 min-w-0 items-center gap-2 rounded-lg border border-app-border bg-app-surface-raised p-2 text-left"
+        >
+          <BracesIcon className="size-4 shrink-0 text-app-text-muted" aria-hidden="true" />
+          <span className="min-w-0 truncate text-xs text-foreground">{snippet.title}</span>
+        </div>
+      ))}
+      {snippets.length > 3 ? (
+        <span className="shrink-0 text-xs text-app-text-muted">+{snippets.length - 3}</span>
+      ) : null}
+    </div>
+  )
+}

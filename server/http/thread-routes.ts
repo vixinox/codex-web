@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { projectNativeThread } from '../codex/native-protocol.js'
 import { createThreadDomain } from '../threads/index.js'
-import type { SkillHandleStore} from '../skills.js';
+import type { SkillHandleStore } from '../skills.js'
 import { turnInput } from '../skills.js'
 import { log, safeError } from '../logger.js'
 import { apiError, codexFailure, requireSession, safeId, threadAccessFailure } from './common.js'
@@ -193,7 +193,7 @@ export async function registerThreadRoutes(
           input: turnInput(text, selectedSkills),
           effort: reasoningEffort,
           collaborationMode: {
-            mode: collaborationMode ?? 'default',
+            mode: collaborationMode ?? 'plan',
             settings: { model, reasoning_effort: reasoningEffort },
           },
         })
@@ -485,7 +485,7 @@ export async function registerThreadRoutes(
           model,
           effort: reasoningEffort,
           collaborationMode: {
-            mode: collaborationMode ?? 'default',
+            mode: collaborationMode ?? 'plan',
             settings: { model, reasoning_effort: reasoningEffort },
           },
         })

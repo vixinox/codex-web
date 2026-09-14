@@ -10,6 +10,7 @@ const bridge = vi.hoisted(() => ({
   deleteProject: vi.fn(),
   fetchThreads: vi.fn(),
   archiveThread: vi.fn(),
+  deleteThread: vi.fn(),
 }))
 
 vi.mock('@/lib/bridge/http/projects', () => bridge)
@@ -69,6 +70,23 @@ describe('useWorkspaceSidebarController optimistic mutations', () => {
       expect(result.current.model.projects.some(({ id }) => id === 'p2')).toBe(true),
     )
     expect(result.current.model.projects.some(({ pending }) => pending)).toBe(false)
+  })
+
+  it('keeps a failed optimistic thread and deletes it locally', async () => {
+    const { result } = renderHook(() => useWorkspaceSidebarController(runtime))
+    await waitFor(() => expect(result.current.model.status).toBe('ready'))
+    let id = ''
+    act(() => {
+      id = result.current.beginThreadCreation(null, 'First message')
+    })
+    expect(result.current.model.rootThreads.items[0]).toMatchObject({ id, status: 'creating' })
+    act(() => result.current.failThreadCreation(id, 'Could not start'))
+    expect(result.current.model.rootThreads).toMatchObject({
+      items: [{ id, status: 'systemError', isPlaceholder: true }],
+    })
+    await act(async () => result.current.deleteThread(null, id))
+    expect(result.current.model.rootThreads).toMatchObject({ items: [{ id: 'root-1' }] })
+    expect(bridge.deleteThread).not.toHaveBeenCalled()
   })
 
   it('removes a thread optimistically and restores it when archiving fails', async () => {

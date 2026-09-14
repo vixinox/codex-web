@@ -26,6 +26,7 @@ import type {
   SkillPickerViewModel,
 } from '@/app/chat/model/composer-types'
 import type { ChatPendingTurn, ChatTokenUsage } from '@/app/chat/model/types'
+import type { CodeSnippetAttachment } from '@/app/chat/composer/draft-model'
 import { waitForThreadAvailability } from '@/lib/bridge/thread-client'
 import type { AcceptedTurn, ComposerHost, ComposerRuntimeAdapter } from './composer-adapter'
 
@@ -43,13 +44,20 @@ type ComposerControllerOptions = {
   tokenUsage?: ChatTokenUsage
   threadSelection?: ThreadComposerSelection
   onPendingChange?: (pending: ChatPendingTurn | null, key: string | null) => void
+  onThreadCreationStart?: (projectId: string | null, title: string) => string
+  onThreadCreationFailed?: (placeholderId: string, message: string) => void
+  onThreadCreationResolved?: (
+    placeholderId: string,
+    projectId: string | null,
+    threadId: string,
+  ) => void
 }
 
 const MAX_RETRIES = 5
 const FALLBACK_PREFERENCES: ComposerPreferences = {
   model: 'gpt-5.6-sol',
   effort: 'medium',
-  collaborationMode: 'default',
+  collaborationMode: 'plan',
 }
 
 /**
@@ -71,6 +79,9 @@ export function useComposerController({
   tokenUsage,
   threadSelection,
   onPendingChange,
+  onThreadCreationStart,
+  onThreadCreationFailed,
+  onThreadCreationResolved,
 }: ComposerControllerOptions) {
   const hostRef = React.useRef(host)
   React.useEffect(() => {
@@ -267,6 +278,10 @@ export function useComposerController({
       text: string,
       submittedSkills: readonly ComposerSkill[] = snapshot.skills,
       mode = snapshot.preferences.collaborationMode,
+      attachments: readonly Pick<
+        CodeSnippetAttachment,
+        'text' | 'title' | 'lineCount' | 'characterCount'
+      >[] = [],
     ) => {
       if (!text.trim() || operation.current) return
       const target = hostRef.current.target
@@ -274,6 +289,9 @@ export function useComposerController({
       const controller = new AbortController()
       operation.current = controller
       const clientTurnId = `client-turn-${++sequence.current}`
+      const placeholderId = !target.threadId
+        ? onThreadCreationStart?.(target.projectId, text)
+        : undefined
       const optimisticTurn: ChatPendingTurn = {
         clientTurnId,
         projectId: target.projectId,
@@ -286,6 +304,7 @@ export function useComposerController({
             kind: 'skill' as const,
             label: skill.displayName,
           })),
+          ...attachments.map((attachment) => ({ type: 'codeSnippet' as const, ...attachment })),
           { type: 'text' as const, text },
         ],
         startedAt: Date.now(),
@@ -332,6 +351,8 @@ export function useComposerController({
         }
         if (!accepted) return
         const acceptedTurn = accepted
+        if (placeholderId)
+          onThreadCreationResolved?.(placeholderId, acceptedTurn.projectId, acceptedTurn.threadId)
         if (generation !== targetGeneration.current) return
         hostRef.current.onTurnAccepted(acceptedTurn)
         // local: optimistic turn shaped like native presentation until reconciliation.
@@ -386,6 +407,7 @@ export function useComposerController({
             : (adapter.messages?.submitError ?? 'Codex could not send this message.')
         if (generation === targetGeneration.current) {
           setError(message)
+          if (placeholderId) onThreadCreationFailed?.(placeholderId, message)
           hostRef.current.onError?.(message)
           if (isCodexUnavailable(nextError)) hostRef.current.onUnavailable?.()
         }
@@ -449,7 +471,8 @@ export function useComposerController({
     setEffort,
     setCollaborationMode,
     retrySkills: () => setSkillRetryKey((value) => value + 1),
-    submit,
+    submit: (text, skills, attachments) =>
+      submit(text, skills, snapshot.preferences.collaborationMode, attachments),
     submitWithMode: (text, mode) => submit(text, snapshot.skills, mode),
     onCommand: (command) => {
       if (command === 'compact') void compact()

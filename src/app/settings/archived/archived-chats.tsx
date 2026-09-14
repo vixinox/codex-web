@@ -162,7 +162,7 @@ export function ArchivedChats() {
       </div>
       {deleteAllOpen ? (
         <div role="dialog" className="fixed inset-0 grid place-items-center">
-          <div className="w-full max-w-md rounded-xl p-6">
+          <div className="w-full max-w-md rounded-xl p-6 bg-app-surface-subtle border border-accent">
             <h2 className="text-lg font-medium">Delete all archived chats?</h2>
             <p className="mt-2 text-sm text-muted-foreground">This action cannot be undone.</p>
             <div className="mt-6 flex justify-end gap-2">

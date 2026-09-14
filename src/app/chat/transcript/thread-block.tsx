@@ -122,7 +122,7 @@ export function UserContent({
       {content.map((item, index) =>
         item.type === 'text' ? (
           <MessageContent key={index} text={item.text} markdown={false} />
-        ) : (
+        ) : item.type === 'codeSnippet' ? null : (
           <span key={index} className="text-xs text-app-text-muted">
             {item.type === 'attachment'
               ? `${item.kind === 'image' ? 'Image' : 'Audio'}: ${item.label}`
@@ -153,7 +153,7 @@ export function LiveRow({
       ) : kind ? (
         <ActivityIcon kind={kind} />
       ) : null}
-      <span className="thinking-shimmer w-fit truncate">{label}</span>
+      <span className="thinking-shimmer w-fit truncate text-sm mt-1">{label}</span>
     </div>
   )
 }

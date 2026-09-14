@@ -157,6 +157,7 @@ export class GuestCodexManager {
     effort: string,
     guestId: string,
     selectedSkills: readonly string[] = [],
+    collaborationMode: 'default' | 'plan' = 'plan',
     signal?: AbortSignal,
   ) {
     const workspace = this.threadWorkspaces.get(nativeThreadId)
@@ -170,6 +171,10 @@ export class GuestCodexManager {
         input: this.skillInput(guestId, text, selectedSkills),
         model,
         effort,
+        collaborationMode: {
+          mode: collaborationMode,
+          settings: { model, reasoning_effort: effort },
+        },
         approvalPolicy: 'never',
         sandboxPolicy: {
           type: 'workspaceWrite',

@@ -6,7 +6,7 @@ export type ChatSelection = ComposerPreferences
 const DEFAULT_SELECTION: ChatSelection = {
   model: 'gpt-5.6-sol',
   effort: 'low',
-  collaborationMode: 'default',
+  collaborationMode: 'plan',
 }
 const MODELS = new Set<ChatModel>(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'])
 const EFFORTS = new Set<ChatEffort>(['low', 'medium', 'high', 'xhigh'])

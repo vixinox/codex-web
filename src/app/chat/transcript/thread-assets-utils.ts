@@ -84,7 +84,9 @@ export function formatUserContentForCopy(content: Extract<ChatBlock, { type: 'us
         ? item.text
         : item.type === 'attachment'
           ? `${item.kind === 'image' ? 'Image' : 'Audio'}: ${item.label}`
-          : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`,
+          : item.type === 'codeSnippet'
+            ? item.text || `${item.title} (${item.lineCount} lines)`
+            : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`,
     )
     .join('\n')
 }

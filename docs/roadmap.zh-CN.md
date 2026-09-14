@@ -34,7 +34,7 @@ README 已加入工作区截图。
 
 ### P1-2 README 首屏加截图
 
-已将 startup mock 工作区截图归档至 `docs/assets/codex-web-workspace.png` 并加入 README；截图用临时页面已移除。
+已将 startup mock 工作区截图归档至 `src/assets/codex-web-workspace.png` 并加入 README；截图用临时页面已移除。
 
 ## P2 · Web Search 端到端
 

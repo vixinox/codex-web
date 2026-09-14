@@ -16,7 +16,7 @@ import type { ServerConfig } from './config.js'
 import {
   projectNativeMessage,
   projectNativeThread,
-  record,
+  record as isRecord,
   type NativeCodexMessage,
 } from './codex/native-protocol.js'
 
@@ -493,6 +493,7 @@ export class GuestService {
       inputText: input.text.trim(),
       model: input.model,
       reasoningEffort: input.reasoningEffort,
+      collaborationMode: input.collaborationMode ?? 'plan',
       skillHandles: [...(input.skillHandles ?? [])],
     })
     if (admission === 'queued') return id
@@ -504,6 +505,7 @@ export class GuestService {
         input.reasoningEffort,
         identity.id,
         input.skillHandles,
+        input.collaborationMode === 'default' ? 'default' : 'plan',
       )
       await this.db
         .update(guestTurnJob)
@@ -707,6 +709,7 @@ export class GuestService {
           job.reasoningEffort,
           job.guestId,
           job.skillHandles,
+          job.collaborationMode === 'default' ? 'default' : 'plan',
         )
         await this.db
           .update(guestTurnJob)
@@ -825,7 +828,7 @@ function turnId(message: NativeCodexMessage) {
       : undefined
 }
 function turnUsageTokens(value: unknown) {
-  if (!record(value) || !record(value.last)) return undefined
+  if (!isRecord(value) || !isRecord(value.last)) return undefined
   const totalTokens = value.last.totalTokens
   return typeof totalTokens === 'number' && Number.isFinite(totalTokens) && totalTokens >= 0
     ? totalTokens

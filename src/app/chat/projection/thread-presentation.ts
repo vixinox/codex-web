@@ -1,6 +1,8 @@
 import type { CodexThreadState } from '@/app/chat/native/codex-thread'
 import type { CodexRecord } from '@/lib/protocol/protocol'
 import { countDiffStats } from '@/app/chat/native/diff-stats'
+import { createAttachment, shouldUseCard } from '@/app/chat/composer/draft-model'
+import { parseMarkdownBlocks } from '@/app/chat/composer/chat-input-markdown'
 import type {
   ChatActivity,
   ChatActivityKind,
@@ -384,7 +386,25 @@ function adaptUserContent(value: unknown): ChatUserContent[] {
         },
       ]
     if (part.type !== 'text' || typeof part.text !== 'string') return []
-    return [{ type: 'text' as const, text: stripInjectedSkillMarkers(part.text, skillNames) }]
+    const text = stripInjectedSkillMarkers(part.text, skillNames)
+    return parseMarkdownBlocks(text).flatMap((block): ChatUserContent[] => {
+      if (block.kind === 'code' && shouldUseCard(block.text)) {
+        const attachment = createAttachment(block.text)
+        return [
+          {
+            type: 'codeSnippet' as const,
+            text: attachment.text,
+            title: attachment.title,
+            lineCount: attachment.lineCount,
+            characterCount: attachment.characterCount,
+          },
+        ]
+      }
+      if (block.kind === 'code')
+        return [{ type: 'text' as const, text: `\`\`\`\n${block.text}\n\`\`\`` }]
+      if (block.kind === 'text' && block.text) return [{ type: 'text' as const, text: block.text }]
+      return []
+    })
   })
 }
 

@@ -26,6 +26,13 @@ type ThreadComposerOptions = {
   tokenUsage?: ComposerViewModel['tokenUsage']
   threadSelection?: Parameters<typeof useComposerController>[0]['threadSelection']
   onPendingChange?: (pending: ChatPendingTurn | null, key: string | null) => void
+  onThreadCreationStart?: (projectId: string | null, title: string) => string
+  onThreadCreationFailed?: (placeholderId: string, message: string) => void
+  onThreadCreationResolved?: (
+    placeholderId: string,
+    projectId: string | null,
+    threadId: string,
+  ) => void
 }
 
 /**
@@ -41,6 +48,9 @@ export function useThreadComposerController({
   tokenUsage,
   threadSelection,
   onPendingChange,
+  onThreadCreationStart,
+  onThreadCreationFailed,
+  onThreadCreationResolved,
 }: ThreadComposerOptions) {
   const composerHost = React.useMemo<ComposerHost>(
     () => ({
@@ -64,5 +74,8 @@ export function useThreadComposerController({
     tokenUsage,
     threadSelection,
     onPendingChange,
+    onThreadCreationStart,
+    onThreadCreationFailed,
+    onThreadCreationResolved,
   })
 }

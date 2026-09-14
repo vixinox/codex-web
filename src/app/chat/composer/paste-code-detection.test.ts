@@ -6,7 +6,13 @@ import {
   skillMarkdownLink,
   unwrapSingleFencedCode,
 } from './chat-input-markdown'
-import { draftSkills, parseDraft, serializeDraft, serializeDraftBody } from './draft-model'
+import {
+  draftSkills,
+  parseDraft,
+  serializeDraft,
+  serializeDraftBody,
+  serializeDraftSubmission,
+} from './draft-model'
 import { countLogicalLines, detectCodePaste } from './paste-code-detection'
 
 describe('paste code detection', () => {
@@ -69,6 +75,13 @@ describe('paste code detection', () => {
 })
 
 describe('markdown input fences', () => {
+  it('serializes card-only drafts for submission', () => {
+    const draft = parseDraft(fenceCode('line\n'.repeat(101)))
+    expect(draft.attachments).toHaveLength(1)
+    expect(serializeDraftBody(draft)).toBe('')
+    expect(serializeDraftSubmission(draft)).toContain('line')
+  })
+
   it('uses a longer fence when the code contains backticks and parses it back', () => {
     const code = 'const markdown = "```js\\nvalue\\n```"'
     const fenced = fenceCode(code)

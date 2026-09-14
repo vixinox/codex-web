@@ -50,7 +50,7 @@ describe('chat model selection storage', () => {
     })
 
     expect(readThreadSelection('user-a', 'thread-plan').collaborationMode).toBe('plan')
-    expect(readThreadSelection('user-a', 'thread-old').collaborationMode).toBe('default')
+    expect(readThreadSelection('user-a', 'thread-old').collaborationMode).toBe('plan')
   })
 
   it('isolates the same Thread id across projects', () => {

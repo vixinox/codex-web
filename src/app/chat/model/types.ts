@@ -22,6 +22,7 @@ export type ChatUserContent =
   | { type: 'text'; text: string }
   | { type: 'attachment'; kind: 'image' | 'audio'; label: string }
   | { type: 'reference'; kind: 'skill' | 'mention'; label: string }
+  | { type: 'codeSnippet'; text: string; title: string; lineCount: number; characterCount: number }
 
 export type ChatActivity = {
   id: string

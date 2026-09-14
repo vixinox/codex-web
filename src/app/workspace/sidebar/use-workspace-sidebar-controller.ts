@@ -7,7 +7,11 @@ import {
   renameProject as requestRenameProject,
   type ProjectSummary,
 } from '@/lib/bridge/http/projects'
-import { archiveThread as requestArchiveThread, fetchThreads } from '@/lib/bridge/http/threads'
+import {
+  archiveThread as requestArchiveThread,
+  deleteThread as requestDeleteThread,
+  fetchThreads,
+} from '@/lib/bridge/http/threads'
 import { subscribeToEvents } from '@/lib/bridge/events/event-source'
 import type {
   WorkspaceProject,
@@ -34,6 +38,14 @@ export type WorkspaceSidebarController = {
   retryThreads: (projectId: string) => void
   retryRootThreads: () => void
   archiveThread: (projectId: string | null, threadId: string) => Promise<void>
+  beginThreadCreation: (
+    projectId: string | null,
+    title: string,
+    content?: WorkspaceThread['sourceLabel'],
+  ) => string
+  failThreadCreation: (placeholderId: string, message: string) => void
+  resolveThreadCreation: (placeholderId: string, projectId: string | null, threadId: string) => void
+  deleteThread: (projectId: string | null, threadId: string) => Promise<void>
   createProject: (name: string) => Promise<ProjectSummary>
   renameProject: (projectId: string, name: string) => Promise<ProjectSummary>
   deleteProject: (projectId: string) => Promise<void>
@@ -351,6 +363,51 @@ export function useWorkspaceSidebarController(
         throw error
       }
     },
+    beginThreadCreation: (projectId, title) => {
+      const id = `optimistic-thread-${nextOperationId()}`
+      const thread: WorkspaceThread = {
+        id,
+        title: title.split('\n')[0] || 'New conversation',
+        status: 'creating',
+        updatedAt: Date.now(),
+        isPlaceholder: true,
+        canContinue: false,
+      }
+      setSourceModel((current) => insertThread(current, projectId, thread))
+      return id
+    },
+    failThreadCreation: (placeholderId, message) => {
+      setSourceModel((current) =>
+        mapThread(current, placeholderId, (thread) => ({
+          ...thread,
+          status: 'systemError',
+          errorMessage: message,
+          canContinue: false,
+        })),
+      )
+    },
+    resolveThreadCreation: (placeholderId, projectId, threadId) => {
+      setSourceModel((current) =>
+        mapThread(current, placeholderId, (thread) => ({
+          ...thread,
+          id: threadId,
+          status: 'active',
+          isPlaceholder: false,
+          canContinue: true,
+        })),
+      )
+      if (projectId === null) loadRootThreads({ showLoading: false, preserveOnError: true })
+      else loadThreads(projectId, { showLoading: false, preserveOnError: true })
+    },
+    deleteThread: async (projectId, threadId) => {
+      const thread = findThread(modelRef.current, projectId, threadId)
+      if (thread?.isPlaceholder) {
+        setSourceModel((current) => removeThread(current, projectId, threadId))
+        return
+      }
+      await requestDeleteThread(projectId, threadId)
+      setSourceModel((current) => removeThread(current, projectId, threadId))
+    },
     createProject: async (name) => {
       const id = nextOperationId()
       const project: WorkspaceProject = {
@@ -442,6 +499,64 @@ function applyOptimisticOperations(
         return removeThread(model, operation.projectId, operation.threadId)
     }
   }, sourceModel)
+}
+
+function insertThread(
+  model: WorkspaceSidebarModel,
+  projectId: string | null,
+  thread: WorkspaceThread,
+): WorkspaceSidebarModel {
+  if (model.status !== 'ready') return model
+  if (projectId === null)
+    return {
+      ...model,
+      rootThreads:
+        model.rootThreads.status === 'ready'
+          ? { ...model.rootThreads, items: [thread, ...model.rootThreads.items] }
+          : model.rootThreads,
+    }
+  return mapProject(model, projectId, (project) => ({
+    ...project,
+    threads:
+      project.threads.status === 'ready'
+        ? { ...project.threads, items: [thread, ...project.threads.items] }
+        : project.threads,
+  }))
+}
+function mapThread(
+  model: WorkspaceSidebarModel,
+  id: string,
+  fn: (thread: WorkspaceThread) => WorkspaceThread,
+): WorkspaceSidebarModel {
+  if (model.status !== 'ready') return model
+  return {
+    ...model,
+    rootThreads:
+      model.rootThreads.status === 'ready'
+        ? {
+            ...model.rootThreads,
+            items: model.rootThreads.items.map((t) => (t.id === id ? fn(t) : t)),
+          }
+        : model.rootThreads,
+    projects: model.projects.map((p) => ({
+      ...p,
+      threads:
+        p.threads.status === 'ready'
+          ? { ...p.threads, items: p.threads.items.map((t) => (t.id === id ? fn(t) : t)) }
+          : p.threads,
+    })),
+  }
+}
+function findThread(model: WorkspaceSidebarModel, projectId: string | null, id: string) {
+  if (model.status !== 'ready') return undefined
+  if (projectId === null)
+    return model.rootThreads.status === 'ready'
+      ? model.rootThreads.items.find((t) => t.id === id)
+      : undefined
+  const project = model.projects.find((p) => p.id === projectId)
+  return project?.threads.status === 'ready'
+    ? project.threads.items.find((t) => t.id === id)
+    : undefined
 }
 
 function mapRootThreads(

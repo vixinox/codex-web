@@ -43,6 +43,7 @@ export function WorkspaceNavigation({
     onRetryThreads: controller.retryThreads,
     onRetryRootThreads: controller.retryRootThreads,
     onArchiveThread: controller.archiveThread,
+    onDeleteThread: controller.deleteThread,
     onOpenProjectChat: route.openNewChat,
     onCreateProject: actions.createProject,
     onRenameProject: actions.renameProject,

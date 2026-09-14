@@ -144,7 +144,7 @@ function readGitBlob(revision) {
 
   if (result.error) throw result.error
   if (result.status !== 0)
-    throw new Error(`Unable to read staged file ${revision}: ${result.stderr}`)
+    throw new Error(`Unable to read staged file ${revision}: ${String(result.stderr)}`)
 
   return result.stdout
 }

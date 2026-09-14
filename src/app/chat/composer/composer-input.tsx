@@ -3,7 +3,7 @@ import { CommandPanel } from './command-panel'
 import { ComposerControls } from './composer-controls'
 import { DraftAttachments } from './draft-attachments'
 import { LexicalComposerEditor, type LexicalComposerHandle } from './lexical-composer'
-import { draftSkills, parseDraft, serializeDraft, serializeDraftBody } from './draft-model'
+import { draftSkills, parseDraft, serializeDraft, serializeDraftSubmission } from './draft-model'
 import type { ComposerCapabilities } from './composer-capabilities'
 import type { ComposerActions, ComposerViewModel } from '@/app/chat/model/composer-types'
 import * as React from 'react'
@@ -26,12 +26,15 @@ export function ComposerInput({
   capabilities,
   leadingContent,
 }: ComposerInputProps) {
-  const skills = [
-    ...viewModel.selectedSkills,
-    ...viewModel.skills.items.filter(
-      (s) => !viewModel.selectedSkills.some((x) => x.handle === s.handle),
-    ),
-  ]
+  const skills = React.useMemo(
+    () => [
+      ...viewModel.selectedSkills,
+      ...viewModel.skills.items.filter(
+        (s) => !viewModel.selectedSkills.some((x) => x.handle === s.handle),
+      ),
+    ],
+    [viewModel.selectedSkills, viewModel.skills.items],
+  )
   const [draft, setDraft] = React.useState(() => parseDraft(viewModel.draft, skills))
   const [command, setCommand] = React.useState<{ query: string; trigger: '/' | '@' } | null>(null)
   const [pasteError, setPasteError] = React.useState<string>()
@@ -58,9 +61,13 @@ export function ComposerInput({
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [command])
+  React.useEffect(() => {
+    setDraft(parseDraft(viewModel.draft, skills))
+  }, [skills, viewModel.draft])
   const submit = () => {
-    const t = serializeDraftBody(draft).trim()
-    if (t && !disabled && !viewModel.submitting) void actions.submit(t, draftSkills(draft))
+    const text = serializeDraftSubmission(draft).trim()
+    if (text && !disabled && !viewModel.submitting)
+      void actions.submit(text, draftSkills(draft), draft.attachments)
   }
   return (
     <div
@@ -162,7 +169,7 @@ export function ComposerInput({
           working={viewModel.working}
           onSubmit={submit}
           onStop={actions.stop ? () => void actions.stop?.() : undefined}
-          canSubmit={Boolean(serializeDraftBody(draft).trim())}
+          canSubmit={Boolean(serializeDraftSubmission(draft).trim())}
         />
       </div>
     </div>

@@ -1,4 +1,5 @@
 import type { ChatPlanPresentation, ChatTokenUsage, ChatUserInputRequest } from './types'
+import type { CodeSnippetAttachment } from '../composer/draft-model'
 
 export type ComposerSkill = {
   handle: string
@@ -50,7 +51,14 @@ export type ComposerViewModel = DraftEditorModel &
 
 export type DraftEditorActions = {
   setDraft(value: string, skills?: readonly ComposerSkill[]): void
-  submit(text: string, skills?: readonly ComposerSkill[]): Promise<void>
+  submit(
+    text: string,
+    skills?: readonly ComposerSkill[],
+    attachments?: readonly Pick<
+      CodeSnippetAttachment,
+      'text' | 'title' | 'lineCount' | 'characterCount'
+    >[],
+  ): Promise<void>
   onCommand?(command: 'compact' | 'plan'): void
 }
 

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Codex Web Architecture",
+    "subtitle": "Browser, bridge, persistence, and isolated Owner and Guest runtimes.",
+    "locale": "en",
+    "visual_preset": "classic",
+    "quality_profile": "showcase",
+    "output": "codex-web-readme.html"
+  },
+  "components": [
+    { "id": "browser", "type": "external", "label": "Browser", "sublabel": "React renderer", "pos": [40, 285], "size": [140, 64] },
+    { "id": "composition", "type": "frontend", "label": "Composition + domains", "sublabel": "routes · controllers · renderers", "pos": [230, 285], "size": [190, 64] },
+    { "id": "bridge", "type": "backend", "label": "Fastify bridge", "sublabel": "loopback :3000", "pos": [470, 285], "size": [170, 64], "tag": "REST + SSE" },
+    { "id": "auth", "type": "security", "label": "Better Auth", "sublabel": "Owner + anonymous Guest", "pos": [480, 105], "size": [170, 60] },
+    { "id": "database", "type": "database", "label": "PostgreSQL", "sublabel": "sessions · projects · events", "pos": [480, 470], "size": [170, 60] },
+    { "id": "projection", "type": "backend", "label": "Security projection", "sublabel": "native DTO → UI model", "pos": [720, 285], "size": [180, 64] },
+    { "id": "eventhub", "type": "messagebus", "label": "EventHub + history", "sublabel": "SSE replay · cursors", "pos": [720, 470], "size": [180, 60] },
+    { "id": "owner-runtime", "type": "backend", "label": "Owner runtime", "sublabel": "explicit start", "pos": [940, 170], "size": [160, 64], "tag": "/api/*" },
+    { "id": "owner-server", "type": "external", "label": "Codex App Server", "sublabel": "Owner process", "pos": [1145, 170], "size": [170, 64] },
+    { "id": "guest-runtime", "type": "security", "label": "Guest runtime", "sublabel": "auto-start · fail-closed", "pos": [940, 395], "size": [160, 64], "tag": "/guest-api/*" },
+    { "id": "guest-server", "type": "external", "label": "Codex App Server", "sublabel": "workspaceWrite", "pos": [1145, 395], "size": [170, 64] },
+    { "id": "guest-workspace", "type": "security", "label": "Private workspace", "sublabel": "networkAccess: false", "pos": [1145, 535], "size": [170, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Browser boundary", "wraps": ["browser", "composition"], "pad": 26 },
+    { "kind": "region", "label": "Fastify process", "wraps": ["bridge", "auth", "database", "projection", "eventhub"], "pad": 30 },
+    { "kind": "security-group", "label": "Owner process", "wraps": ["owner-runtime", "owner-server"], "pad": 24 },
+    { "kind": "security-group", "label": "Guest process · isolated lease", "wraps": ["guest-runtime", "guest-server", "guest-workspace"], "pad": 24 }
+  ],
+  "connections": [
+    { "id": "browser-composition", "from": "browser", "to": "composition", "label": "navigation + state", "labelDy": 56 },
+    { "id": "composition-bridge", "from": "composition", "to": "bridge", "label": "fetch + EventSource", "variant": "emphasis", "labelDy": 56 },
+    { "id": "bridge-auth", "from": "bridge", "to": "auth", "label": "session checks", "fromSide": "top", "toSide": "bottom" },
+    { "id": "bridge-db", "from": "bridge", "to": "database", "label": "owned persistence", "fromSide": "bottom", "toSide": "top" },
+    { "id": "bridge-projection", "from": "bridge", "to": "projection", "label": "safe allowlist" },
+    { "id": "projection-eventhub", "from": "projection", "to": "eventhub", "label": "replayable events", "fromSide": "bottom", "toSide": "top", "labelDy": 28 },
+    { "id": "projection-owner", "from": "projection", "to": "owner-runtime", "label": "Owner control", "fromSide": "right", "toSide": "left" },
+    { "id": "owner-server", "from": "owner-runtime", "to": "owner-server", "label": "JSON-RPC" },
+    { "id": "projection-guest", "from": "projection", "to": "guest-runtime", "label": "Guest control", "fromSide": "right", "toSide": "left" },
+    { "id": "guest-server", "from": "guest-runtime", "to": "guest-server", "label": "JSON-RPC" },
+    { "id": "guest-workspace", "from": "guest-server", "to": "guest-workspace", "label": "writable root", "fromSide": "bottom", "toSide": "top", "labelDy": 28 },
+    { "id": "eventhub-composition", "from": "eventhub", "to": "composition", "label": "SSE + snapshot replay", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[810, 645], [325, 645]] }
+  ],
+  "cards": []
+}

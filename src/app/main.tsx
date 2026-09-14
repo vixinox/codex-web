@@ -15,15 +15,27 @@ import { useSession } from '@/lib/auth/auth-client'
 import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
 import { CodexStartupScreen } from '@/app/composition/screens/codex-startup-screen'
-import { GuestWorkspaceScreen } from '@/app/composition/screens/guest-workspace-screen'
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
-import { AdminScreen } from '@/app/composition/screens/admin-screen'
 
 const StartupScreen = lazy(() =>
   import('@/app/composition/screens/startup-screen').then(({ StartupScreen: screen }) => ({
     default: screen,
   })),
 )
+
+const AdminScreen = lazy(() =>
+  import('@/app/composition/screens/admin-screen').then(({ AdminScreen: screen }) => ({
+    default: screen,
+  })),
+)
+
+const GuestWorkspaceScreen = lazy(() =>
+  import('@/app/composition/screens/guest-workspace-screen').then(
+    ({ GuestWorkspaceScreen: screen }) => ({ default: screen }),
+  ),
+)
+
+const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
 export function App() {
   return (
@@ -32,9 +44,7 @@ export function App() {
       <Route
         path="/startup"
         element={
-          <Suspense
-            fallback={<div className="min-h-svh bg-background" aria-label="Loading page" />}
-          >
+          <Suspense fallback={pageFallback}>
             <StartupScreen />
           </Suspense>
         }
@@ -64,7 +74,12 @@ function CandidateRoute() {
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
   if (!session) return <Navigate to="/login" replace />
 
-  if ((session.user as { kind?: string }).kind === 'guest') return <GuestWorkspaceScreen />
+  if ((session.user as { kind?: string }).kind === 'guest')
+    return (
+      <Suspense fallback={pageFallback}>
+        <GuestWorkspaceScreen />
+      </Suspense>
+    )
   return <AuthenticatedWorkspace userId={session.user.id} />
 }
 
@@ -73,7 +88,11 @@ function AdminRoute() {
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
   if (!session) return <Navigate to="/login" replace />
   if ((session.user as { kind?: string }).kind !== 'admin') return <ForbiddenPage />
-  return <AdminScreen />
+  return (
+    <Suspense fallback={pageFallback}>
+      <AdminScreen />
+    </Suspense>
+  )
 }
 
 function AuthenticatedWorkspace({ userId }: { userId: string }) {

@@ -27,7 +27,7 @@ export type ComposerStore = {
 export const DEFAULT_COMPOSER_PREFERENCES: ComposerPreferences = {
   model: 'gpt-5.6-sol',
   effort: 'medium',
-  collaborationMode: 'default',
+  collaborationMode: 'plan',
 }
 
 export const composerStore = proxy<ComposerStore>({ scopes: {} })

@@ -24,6 +24,13 @@ export type ThreadPageControllerOptions = {
   onTurnAccepted: (turn: { projectId: string | null; threadId: string; turnId: string }) => void
   onUnavailable?: () => void
   onThreadLifecycle?: Parameters<typeof useThreadDetailController>[3]
+  onThreadCreationStart?: (projectId: string | null, title: string) => string
+  onThreadCreationFailed?: (placeholderId: string, message: string) => void
+  onThreadCreationResolved?: (
+    placeholderId: string,
+    projectId: string | null,
+    threadId: string,
+  ) => void
 }
 
 export function useThreadPageController({
@@ -35,6 +42,9 @@ export function useThreadPageController({
   onTurnAccepted,
   onUnavailable,
   onThreadLifecycle,
+  onThreadCreationStart,
+  onThreadCreationFailed,
+  onThreadCreationResolved,
 }: ThreadPageControllerOptions) {
   const isThread = target.threadId !== null
   const detail = useThreadDetailController(
@@ -74,6 +84,9 @@ export function useThreadPageController({
       ? { model: mergedThread.model, reasoningEffort: mergedThread.reasoningEffort }
       : undefined,
     onPendingChange: pending.onPendingChange,
+    onThreadCreationStart,
+    onThreadCreationFailed,
+    onThreadCreationResolved,
   })
 
   const model = isThread

@@ -1,7 +1,10 @@
 export type WorkspaceThread = {
   id: string
   title: string
-  status: 'notLoaded' | 'idle' | 'systemError' | 'active'
+  status: 'notLoaded' | 'idle' | 'systemError' | 'active' | 'creating'
+  isPlaceholder?: boolean
+  canContinue?: boolean
+  errorMessage?: string
   updatedAt: number
   sourceLabel?: string
 }

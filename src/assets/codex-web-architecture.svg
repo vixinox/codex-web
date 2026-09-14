@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1379" height="683" viewBox="0 0 1379 683" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">Codex Web Architecture</title>
+        <desc id="archify-diagram-description">Browser, bridge, persistence, and isolated Owner and Guest runtimes.</desc><style>
+svg { background: #ffffff; color: #17212b; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.c-mask { fill: #ffffff; }
+.c-region { fill: #ffffff; fill-opacity: .72; stroke: #aeb9c3; stroke-dasharray: 5 4; }
+.c-security-group { fill: #ffffff; fill-opacity: .82; stroke: #bd7a70; stroke-dasharray: 5 4; }
+.c-frontend { fill: #eff8fb; stroke: #2388a6; }
+.c-backend { fill: #f1f7f3; stroke: #4d7d5b; }
+.c-database { fill: #f6f3fb; stroke: #75619f; }
+.c-security { fill: #fff5f2; stroke: #b65c4c; }
+.c-messagebus { fill: #fff8ef; stroke: #af6e28; }
+.c-external { fill: #f5f6f7; stroke: #65727c; }
+.t-primary { fill: #17212b; }
+.t-muted { fill: #65717d; }
+.t-backend { fill: #3f7250; }
+.t-cloud { fill: #65717d; }
+.t-messagebus { fill: #a56224; }
+.t-security { fill: #a74e40; }
+.a-default { fill: none; stroke: #71808c; }
+.a-emphasis { fill: none; stroke: #2388a6; }
+.a-dashed { fill: none; stroke: #75619f; stroke-dasharray: 5 4; }
+.m-default { fill: #71808c; }
+.m-emphasis { fill: #2388a6; }
+.m-security { fill: #b65c4c; }
+.m-dashed { fill: #75619f; }
+.semantic-sigil { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.sigil-fill { stroke: none; }
+.s-frontend { stroke: #2388a6; fill: #2388a6; }
+.s-backend { stroke: #4d7d5b; fill: #4d7d5b; }
+.s-database { stroke: #75619f; fill: #75619f; }
+.s-security { stroke: #b65c4c; fill: #b65c4c; }
+.s-messagebus { stroke: #af6e28; fill: #af6e28; }
+.s-external { stroke: #65727c; fill: #65727c; }
+</style>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+        </defs>
+
+        <!-- Boundaries (behind everything) -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Browser boundary" x="14" y="259" width="432" height="110" rx="12" class="c-region" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="Fastify process" x="440" y="75" width="490" height="475" rx="12" class="c-region" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="2" data-composition-frame-label="Owner process" x="916" y="146" width="423" height="108" rx="8" class="c-security-group" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="3" data-composition-frame-label="Guest process · isolated lease" x="916" y="371" width="423" height="244" rx="8" class="c-security-group" stroke-width="1"/>
+
+        <!-- Connection paths (before components for correct z-order) -->
+        <path data-edge-from="browser" data-edge-to="composition" data-edge-label="navigation + state" data-edge-key="0" data-edge-id="browser-composition" data-composition-points="180,317;230,317" d="M 180 317 L 230 317" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="composition" data-edge-to="bridge" data-edge-label="fetch + EventSource" data-edge-key="1" data-edge-id="composition-bridge" data-composition-points="420,317;470,317" d="M 420 317 L 470 317" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="bridge" data-edge-to="auth" data-edge-label="session checks" data-edge-key="2" data-edge-id="bridge-auth" data-composition-points="555,285;555,261;581,261;581,189;565,189;565,165" d="M 555 285 L 555 269 Q 555 261 563 261 L 573 261 Q 581 261 581 253 L 581 197 Q 581 189 573 189 L 573 189 Q 565 189 565 181 L 565 165" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="bridge" data-edge-to="database" data-edge-label="owned persistence" data-edge-key="3" data-edge-id="bridge-db" data-composition-points="555,349;555,373;581,373;581,446;565,446;565,470" d="M 555 349 L 555 365 Q 555 373 563 373 L 573 373 Q 581 373 581 381 L 581 438 Q 581 446 573 446 L 573 446 Q 565 446 565 454 L 565 470" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="bridge" data-edge-to="projection" data-edge-label="safe allowlist" data-edge-key="4" data-edge-id="bridge-projection" data-composition-points="640,317;720,317" d="M 640 317 L 720 317" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="projection" data-edge-to="eventhub" data-edge-label="replayable events" data-edge-key="5" data-edge-id="projection-eventhub" data-composition-points="810,349;810,470" d="M 810 349 L 810 470" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="projection" data-edge-to="owner-runtime" data-edge-label="Owner control" data-edge-key="6" data-edge-id="projection-owner" data-composition-points="900,310;920,310;920,202;940,202" d="M 900 310 L 912 310 Q 920 310 920 302 L 920 210 Q 920 202 928 202 L 940 202" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="owner-runtime" data-edge-to="owner-server" data-edge-label="JSON-RPC" data-edge-key="7" data-edge-id="owner-server" data-composition-points="1100,202;1145,202" d="M 1100 202 L 1145 202" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="projection" data-edge-to="guest-runtime" data-edge-label="Guest control" data-edge-key="8" data-edge-id="projection-guest" data-composition-points="900,324;920,324;920,427;940,427" d="M 900 324 L 912 324 Q 920 324 920 332 L 920 419 Q 920 427 928 427 L 940 427" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="guest-runtime" data-edge-to="guest-server" data-edge-label="JSON-RPC" data-edge-key="9" data-edge-id="guest-server" data-composition-points="1100,427;1145,427" d="M 1100 427 L 1145 427" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="guest-server" data-edge-to="guest-workspace" data-edge-label="writable root" data-edge-key="10" data-edge-id="guest-workspace" data-composition-points="1230,459;1230,535" d="M 1230 459 L 1230 535" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="eventhub" data-edge-to="composition" data-edge-label="SSE + snapshot replay" data-edge-key="11" data-edge-id="eventhub-composition" data-composition-points="810,530;810,645;325,645;325,349" d="M 810 530 L 810 637 Q 810 645 802 645 L 333 645 Q 325 645 325 637 L 325 349" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+
+        <!-- Components -->
+        <g id="node-browser" data-node-id="browser" data-node-label="Browser" tabindex="0" role="button" aria-label="Focus Browser, React renderer, Browser boundary" aria-pressed="false" data-node-kind="external" data-node-sublabel="React renderer" data-node-context="Browser boundary">
+          <title>Browser · React renderer · Browser boundary</title>
+          <rect x="40" y="285" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="40" y="285" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 291) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="110" y="315" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Browser</text>
+        <text data-detail="context" x="110" y="331" class="t-muted" font-size="9" text-anchor="middle">React renderer</text>
+        </g>
+
+        <g id="node-composition" data-node-id="composition" data-node-label="Composition + domains" tabindex="0" role="button" aria-label="Focus Composition + domains, routes · controllers · renderers, Browser boundary" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="routes · controllers · renderers" data-node-context="Browser boundary">
+          <title>Composition + domains · routes · controllers · renderers · Browser boundary</title>
+          <rect x="230" y="285" width="190" height="64" rx="6" class="c-mask"/>
+          <rect x="230" y="285" width="190" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(236 291) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="325" y="315" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Composition + domains</text>
+        <text data-detail="context" x="325" y="331" class="t-muted" font-size="9" text-anchor="middle">routes · controllers · renderers</text>
+        </g>
+
+        <g id="node-bridge" data-node-id="bridge" data-node-label="Fastify bridge" tabindex="0" role="button" aria-label="Focus Fastify bridge, loopback :3000, Fastify process" aria-pressed="false" data-node-kind="backend" data-node-sublabel="loopback :3000" data-node-tag="REST + SSE" data-node-context="Fastify process">
+          <title>Fastify bridge · loopback :3000 · Fastify process · REST + SSE</title>
+          <rect x="470" y="285" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="470" y="285" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(476 291) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="555" y="315" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Fastify bridge</text>
+        <text data-detail="context" x="555" y="331" class="t-muted" font-size="9" text-anchor="middle">loopback :3000</text>
+        <text data-detail="fine" x="555" y="341" class="t-backend" font-size="7" text-anchor="middle">REST + SSE</text>
+        </g>
+
+        <g id="node-auth" data-node-id="auth" data-node-label="Better Auth" tabindex="0" role="button" aria-label="Focus Better Auth, Owner + anonymous Guest, Fastify process" aria-pressed="false" data-node-kind="security" data-node-sublabel="Owner + anonymous Guest" data-node-context="Fastify process">
+          <title>Better Auth · Owner + anonymous Guest · Fastify process</title>
+          <rect x="480" y="105" width="170" height="60" rx="6" class="c-mask"/>
+          <rect x="480" y="105" width="170" height="60" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(486 111) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="565" y="133" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Better Auth</text>
+        <text data-detail="context" x="565" y="149" class="t-muted" font-size="9" text-anchor="middle">Owner + anonymous Guest</text>
+        </g>
+
+        <g id="node-database" data-node-id="database" data-node-label="PostgreSQL" tabindex="0" role="button" aria-label="Focus PostgreSQL, sessions · projects · events, Fastify process" aria-pressed="false" data-node-kind="database" data-node-sublabel="sessions · projects · events" data-node-context="Fastify process">
+          <title>PostgreSQL · sessions · projects · events · Fastify process</title>
+          <rect x="480" y="470" width="170" height="60" rx="6" class="c-mask"/>
+          <rect x="480" y="470" width="170" height="60" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(486 476) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="565" y="498" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">PostgreSQL</text>
+        <text data-detail="context" x="565" y="514" class="t-muted" font-size="9" text-anchor="middle">sessions · projects · events</text>
+        </g>
+
+        <g id="node-projection" data-node-id="projection" data-node-label="Security projection" tabindex="0" role="button" aria-label="Focus Security projection, native DTO → UI model, Fastify process" aria-pressed="false" data-node-kind="backend" data-node-sublabel="native DTO → UI model" data-node-context="Fastify process">
+          <title>Security projection · native DTO → UI model · Fastify process</title>
+          <rect x="720" y="285" width="180" height="64" rx="6" class="c-mask"/>
+          <rect x="720" y="285" width="180" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(726 291) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="810" y="315" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Security projection</text>
+        <text data-detail="context" x="810" y="331" class="t-muted" font-size="9" text-anchor="middle">native DTO → UI model</text>
+        </g>
+
+        <g id="node-eventhub" data-node-id="eventhub" data-node-label="EventHub + history" tabindex="0" role="button" aria-label="Focus EventHub + history, SSE replay · cursors, Fastify process" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="SSE replay · cursors" data-node-context="Fastify process">
+          <title>EventHub + history · SSE replay · cursors · Fastify process</title>
+          <rect x="720" y="470" width="180" height="60" rx="6" class="c-mask"/>
+          <rect x="720" y="470" width="180" height="60" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(726 476) scale(0.6875)">
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
+            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
+            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="810" y="498" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">EventHub + history</text>
+        <text data-detail="context" x="810" y="514" class="t-muted" font-size="9" text-anchor="middle">SSE replay · cursors</text>
+        </g>
+
+        <g id="node-owner-runtime" data-node-id="owner-runtime" data-node-label="Owner runtime" tabindex="0" role="button" aria-label="Focus Owner runtime, explicit start, Owner process" aria-pressed="false" data-node-kind="backend" data-node-sublabel="explicit start" data-node-tag="/api/*" data-node-context="Owner process">
+          <title>Owner runtime · explicit start · Owner process · /api/*</title>
+          <rect x="940" y="170" width="160" height="64" rx="6" class="c-mask"/>
+          <rect x="940" y="170" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(946 176) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1020" y="200" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Owner runtime</text>
+        <text data-detail="context" x="1020" y="216" class="t-muted" font-size="9" text-anchor="middle">explicit start</text>
+        <text data-detail="fine" x="1020" y="226" class="t-backend" font-size="7" text-anchor="middle">/api/*</text>
+        </g>
+
+        <g id="node-owner-server" data-node-id="owner-server" data-node-label="Codex App Server" tabindex="0" role="button" aria-label="Focus Codex App Server, Owner process, Owner process" aria-pressed="false" data-node-kind="external" data-node-sublabel="Owner process" data-node-context="Owner process">
+          <title>Codex App Server · Owner process · Owner process</title>
+          <rect x="1145" y="170" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="1145" y="170" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1151 176) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1230" y="200" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Codex App Server</text>
+        <text data-detail="context" x="1230" y="216" class="t-muted" font-size="9" text-anchor="middle">Owner process</text>
+        </g>
+
+        <g id="node-guest-runtime" data-node-id="guest-runtime" data-node-label="Guest runtime" tabindex="0" role="button" aria-label="Focus Guest runtime, auto-start · fail-closed, Guest process · isolated lease" aria-pressed="false" data-node-kind="security" data-node-sublabel="auto-start · fail-closed" data-node-tag="/guest-api/*" data-node-context="Guest process · isolated lease">
+          <title>Guest runtime · auto-start · fail-closed · Guest process · isolated lease · /guest-api/*</title>
+          <rect x="940" y="395" width="160" height="64" rx="6" class="c-mask"/>
+          <rect x="940" y="395" width="160" height="64" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(946 401) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1020" y="425" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Guest runtime</text>
+        <text data-detail="context" x="1020" y="441" class="t-muted" font-size="9" text-anchor="middle">auto-start · fail-closed</text>
+        <text data-detail="fine" x="1020" y="451" class="t-security" font-size="7" text-anchor="middle">/guest-api/*</text>
+        </g>
+
+        <g id="node-guest-server" data-node-id="guest-server" data-node-label="Codex App Server" tabindex="0" role="button" aria-label="Focus Codex App Server, workspaceWrite, Guest process · isolated lease" aria-pressed="false" data-node-kind="external" data-node-sublabel="workspaceWrite" data-node-context="Guest process · isolated lease">
+          <title>Codex App Server · workspaceWrite · Guest process · isolated lease</title>
+          <rect x="1145" y="395" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="1145" y="395" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1151 401) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1230" y="425" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Codex App Server</text>
+        <text data-detail="context" x="1230" y="441" class="t-muted" font-size="9" text-anchor="middle">workspaceWrite</text>
+        </g>
+
+        <g id="node-guest-workspace" data-node-id="guest-workspace" data-node-label="Private workspace" tabindex="0" role="button" aria-label="Focus Private workspace, networkAccess: false, Guest process · isolated lease" aria-pressed="false" data-node-kind="security" data-node-sublabel="networkAccess: false" data-node-context="Guest process · isolated lease">
+          <title>Private workspace · networkAccess: false · Guest process · isolated lease</title>
+          <rect x="1145" y="535" width="170" height="60" rx="6" class="c-mask"/>
+          <rect x="1145" y="535" width="170" height="60" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(1151 541) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1230" y="563" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Private workspace</text>
+        <text data-detail="context" x="1230" y="579" class="t-muted" font-size="9" text-anchor="middle">networkAccess: false</text>
+        </g>
+
+        <!-- Connection labels -->
+        <g data-detail="context" data-edge-from="browser" data-edge-to="composition" data-edge-label="navigation + state" data-edge-key="0" data-edge-id="browser-composition">
+          <rect x="156.8" y="353" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
+          <text x="205" y="363" class="t-muted" font-size="8" text-anchor="middle">navigation + state</text>
+        </g>
+        <g data-detail="context" data-edge-from="composition" data-edge-to="bridge" data-edge-label="fetch + EventSource" data-edge-key="1" data-edge-id="composition-bridge">
+          <rect x="394.4" y="353" width="101.2" height="14" rx="3" class="c-mask"/>
+          <text x="445" y="363" class="t-backend" font-size="8" text-anchor="middle">fetch + EventSource</text>
+        </g>
+        <g data-detail="context" data-edge-from="bridge" data-edge-to="auth" data-edge-label="session checks" data-edge-key="2" data-edge-id="bridge-auth">
+          <rect x="529.4" y="241" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="568" y="251" class="t-muted" font-size="8" text-anchor="middle">session checks</text>
+        </g>
+        <g data-detail="context" data-edge-from="bridge" data-edge-to="database" data-edge-label="owned persistence" data-edge-key="3" data-edge-id="bridge-db">
+          <rect x="522.2" y="353" width="91.6" height="14" rx="3" class="c-mask"/>
+          <text x="568" y="363" class="t-muted" font-size="8" text-anchor="middle">owned persistence</text>
+        </g>
+        <g data-detail="context" data-edge-from="bridge" data-edge-to="projection" data-edge-label="safe allowlist" data-edge-key="4" data-edge-id="bridge-projection">
+          <rect x="641.4" y="297" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="680" y="307" class="t-muted" font-size="8" text-anchor="middle">safe allowlist</text>
+        </g>
+        <g data-detail="context" data-edge-from="projection" data-edge-to="eventhub" data-edge-label="replayable events" data-edge-key="5" data-edge-id="projection-eventhub">
+          <rect x="764.2" y="357" width="91.6" height="14" rx="3" class="c-mask"/>
+          <text x="810" y="367" class="t-muted" font-size="8" text-anchor="middle">replayable events</text>
+        </g>
+        <g data-detail="context" data-edge-from="projection" data-edge-to="owner-runtime" data-edge-label="Owner control" data-edge-key="6" data-edge-id="projection-owner">
+          <rect x="883.8" y="236" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="920" y="246" class="t-muted" font-size="8" text-anchor="middle">Owner control</text>
+        </g>
+        <g data-detail="context" data-edge-from="owner-runtime" data-edge-to="owner-server" data-edge-label="JSON-RPC" data-edge-key="7" data-edge-id="owner-server">
+          <rect x="1098.3" y="182" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="1122.5" y="192" class="t-muted" font-size="8" text-anchor="middle">JSON-RPC</text>
+        </g>
+        <g data-detail="context" data-edge-from="projection" data-edge-to="guest-runtime" data-edge-label="Guest control" data-edge-key="8" data-edge-id="projection-guest">
+          <rect x="883.8" y="355.5" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="920" y="365.5" class="t-muted" font-size="8" text-anchor="middle">Guest control</text>
+        </g>
+        <g data-detail="context" data-edge-from="guest-runtime" data-edge-to="guest-server" data-edge-label="JSON-RPC" data-edge-key="9" data-edge-id="guest-server">
+          <rect x="1098.3" y="407" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="1122.5" y="417" class="t-muted" font-size="8" text-anchor="middle">JSON-RPC</text>
+        </g>
+        <g data-detail="context" data-edge-from="guest-server" data-edge-to="guest-workspace" data-edge-label="writable root" data-edge-key="10" data-edge-id="guest-workspace">
+          <rect x="1193.8" y="467" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="1230" y="477" class="t-muted" font-size="8" text-anchor="middle">writable root</text>
+        </g>
+        <g data-detail="context" data-edge-from="eventhub" data-edge-to="composition" data-edge-label="SSE + snapshot replay" data-edge-key="11" data-edge-id="eventhub-composition">
+          <rect x="512.1" y="625" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="567.5" y="635" class="t-messagebus" font-size="8" text-anchor="middle">SSE + snapshot replay</text>
+        </g>
+
+        <!-- Boundary labels (foreground masks keep routes out of titles) -->
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Browser boundary">
+          <rect data-graph-role="structural-frame-label-mask" x="18" y="265" width="96.39999999999999" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="22" y="278" class="t-cloud" font-size="9" font-weight="600">Browser boundary</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Fastify process">
+          <rect data-graph-role="structural-frame-label-mask" x="444" y="85" width="91" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="448" y="98" class="t-cloud" font-size="9" font-weight="600">Fastify process</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="security-group" data-composition-frame-label="Owner process">
+          <rect data-graph-role="structural-frame-label-mask" x="920" y="150" width="80.2" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="924" y="163" class="t-security" font-size="9" font-weight="600">Owner process</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="3" data-composition-frame-kind="security-group" data-composition-frame-label="Guest process · isolated lease">
+          <rect data-graph-role="structural-frame-label-mask" x="920" y="375" width="172" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="924" y="388" class="t-security" font-size="9" font-weight="600">Guest process · isolated lease</text>
+        </g></svg>

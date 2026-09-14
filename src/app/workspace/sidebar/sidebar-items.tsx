@@ -2,6 +2,7 @@ import * as React from 'react'
 import {
   AlertCircle,
   Archive,
+  Trash2,
   Ellipsis,
   FolderClosed,
   Loader2,
@@ -40,6 +41,7 @@ export function ProjectItem({
   onSelectThread,
   onRetry,
   onArchiveThread,
+  onDeleteThread,
   onOpenProjectChat,
   onRenameProject,
   onDeleteProject,
@@ -50,6 +52,7 @@ export function ProjectItem({
   onSelectThread: (projectId: string, threadId: string) => void
   onRetry: () => void
   onArchiveThread: (projectId: string | null, threadId: string) => Promise<void>
+  onDeleteThread: (projectId: string | null, threadId: string) => Promise<void>
   onOpenProjectChat: (projectId: string) => void
   onRenameProject: (projectId: string, name: string) => Promise<void>
   onDeleteProject: (projectId: string) => Promise<void>
@@ -212,6 +215,7 @@ export function ProjectItem({
                     exiting={threadExiting || disabled}
                     onClick={() => onSelectThread(project.id, thread.id)}
                     onArchive={() => onArchiveThread(project.id, thread.id)}
+                    onDelete={() => onDeleteThread(project.id, thread.id)}
                   />
                 )}
               </FadePresenceList>
@@ -228,6 +232,7 @@ export function ThreadItem({
   active,
   onClick,
   onArchive,
+  onDelete,
   exiting = false,
   archiveAvailable = true,
 }: {
@@ -235,11 +240,13 @@ export function ThreadItem({
   active: boolean
   onClick: () => void
   onArchive: () => Promise<void>
+  onDelete: () => Promise<void>
   exiting?: boolean
   archiveAvailable?: boolean
 }) {
   const [archiving, setArchiving] = React.useState(false)
   const showWorkingIndicator = thread.status === 'active' && !archiving
+  const isFailedPlaceholder = thread.isPlaceholder && thread.status === 'systemError'
   return (
     <div
       className={cn(
@@ -251,7 +258,7 @@ export function ThreadItem({
         variant="ghost"
         className="min-w-0 flex-1 justify-start bg-transparent! font-normal"
         onClick={onClick}
-        disabled={exiting}
+        disabled={exiting || thread.status === 'creating'}
         aria-current={active ? 'page' : undefined}
         aria-label={thread.title}
       >
@@ -284,10 +291,12 @@ export function ThreadItem({
                   onClick={(event) => {
                     event.stopPropagation()
                     setArchiving(true)
-                    void onArchive()
+                    void (isFailedPlaceholder ? onDelete() : onArchive())
                       .catch((error: unknown) => {
                         toast.add({
-                          title: 'Could not archive chat',
+                          title: isFailedPlaceholder
+                            ? 'Could not delete chat'
+                            : 'Could not archive chat',
                           description:
                             error instanceof Error
                               ? error.message
@@ -297,14 +306,36 @@ export function ThreadItem({
                       })
                       .finally(() => setArchiving(false))
                   }}
-                  aria-label={archiving ? 'Archiving chat' : 'Archive chat'}
+                  aria-label={
+                    archiving
+                      ? isFailedPlaceholder
+                        ? 'Deleting chat'
+                        : 'Archiving chat'
+                      : isFailedPlaceholder
+                        ? 'Delete failed chat'
+                        : 'Archive chat'
+                  }
                 />
               }
             >
-              {archiving ? <Loader2 className="animate-spin" /> : <Archive />}
+              {archiving ? (
+                <Loader2 className="animate-spin" />
+              ) : isFailedPlaceholder ? (
+                <Trash2 />
+              ) : (
+                <Archive />
+              )}
             </TooltipTrigger>
             <TooltipContent>
-              <p>{archiving ? 'Archiving' : 'Archive chat'}</p>
+              <p>
+                {archiving
+                  ? isFailedPlaceholder
+                    ? 'Deleting'
+                    : 'Archiving'
+                  : isFailedPlaceholder
+                    ? 'Delete failed chat'
+                    : 'Archive chat'}
+              </p>
             </TooltipContent>
           </Tooltip>
         </div>

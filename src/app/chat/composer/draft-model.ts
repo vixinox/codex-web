@@ -83,6 +83,16 @@ export function serializeDraftBody(draft: InputDraft) {
   )
 }
 
+/** The text sent to Codex includes card contents, while skills remain protocol items. */
+export function serializeDraftSubmission(draft: InputDraft) {
+  const body = serializeDraftBody(draft)
+  const attachments = draft.attachments.map((attachment) => fenceCode(attachment.text)).join('\n\n')
+  if (!attachments) return body
+  if (!body) return attachments
+  const trailingNewlines = body.match(/\n+$/)?.[0].length ?? 0
+  return `${body}${'\n'.repeat(Math.max(0, 2 - trailingNewlines))}${attachments}`
+}
+
 export function draftSkills(draft: InputDraft) {
   const seen = new Set<string>()
   return draft.blocks.flatMap((block) => {

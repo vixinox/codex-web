@@ -15,13 +15,13 @@ export type QuestionnaireQuestion = {
   header?: string
   question: string
   options?:
-    | readonly {
-        value?: string
-        label: string
-        description: string
-        recommended?: boolean
-      }[]
-    | null
+  | readonly {
+    value?: string
+    label: string
+    description: string
+    recommended?: boolean
+  }[]
+  | null
   isSecret?: boolean
 }
 
@@ -212,14 +212,14 @@ export function Questionnaire({
 
   return (
     <form
-      className="flex w-full flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface-raised p-2 text-app-text shadow-[0_2px_12px_var(--app-shadow)]"
+      className="flex w-full flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface-raised py-2 text-app-text shadow-[0_2px_12px_var(--app-shadow)]"
       onSubmit={(event) => {
         event.preventDefault()
         submitCurrentInput()
       }}
     >
       <div className="flex items-center justify-center gap-3 px-4 pt-4">
-        <h2 className="min-w-0 flex-1 text-lg leading-snug font-semibold text-foreground">
+        <h2 className="min-w-0 flex-1 text-lg leading-snug font-semibold text-foreground ml-4">
           {activeQuestion.question}
         </h2>
         <div className="flex items-center gap-1">
@@ -264,7 +264,7 @@ export function Questionnaire({
 
       <div
         className={cn(
-          'mt-5 flex flex-col gap-2 transition-opacity duration-200 ease-out motion-reduce:transition-none',
+          'mt-4 flex flex-col gap-2 transition-opacity duration-200 ease-out motion-reduce:transition-none px-2',
           transitioning ? 'opacity-0' : 'opacity-100',
         )}
       >
@@ -311,7 +311,7 @@ export function Questionnaire({
           </div>
         ) : null}
 
-        <FieldGroup className="gap-0 px-2 pb-4">
+        <FieldGroup className="gap-0 px-2 pb-1">
           <Field
             orientation="horizontal"
             className={cn(

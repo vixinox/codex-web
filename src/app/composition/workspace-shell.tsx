@@ -51,6 +51,11 @@ function WorkspaceShellContents({
     onTurnAccepted: orchestration.onTurnAccepted,
     onUnavailable: runtime.reportUnavailable,
     onThreadLifecycle: route.handleThreadLifecycle,
+    onThreadCreationStart: (projectId, title) =>
+      controllerRef.current?.beginThreadCreation(projectId, title) ?? '',
+    onThreadCreationFailed: (id, message) => controllerRef.current?.failThreadCreation(id, message),
+    onThreadCreationResolved: (id, projectId, threadId) =>
+      controllerRef.current?.resolveThreadCreation(id, projectId, threadId),
   })
   const activeThread =
     route.selection && page.model.status === 'ready'

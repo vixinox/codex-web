@@ -82,7 +82,7 @@ export const MOCK_COMPOSER: ComposerViewModel = {
   draft: '',
   model: 'gpt-5.6-sol',
   effort: 'medium',
-  collaborationMode: 'default',
+  collaborationMode: 'plan',
   submitting: false,
   working: false,
   error: null,

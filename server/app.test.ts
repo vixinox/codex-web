@@ -704,7 +704,7 @@ test('starts a root Thread in the controlled user workspace', async (context) =>
         input: [{ type: 'text', text: 'Work across the user workspace' }],
         effort: 'medium',
         collaborationMode: {
-          mode: 'default',
+          mode: 'plan',
           settings: { model: 'gpt-5.6-terra', reasoning_effort: 'medium' },
         },
       },
@@ -1641,9 +1641,7 @@ test('adds validated selected Skills to a new Turn in selection order', async (c
   context.after(() => app.close())
 
   const listed = await app.inject({ method: 'GET', url: '/api/skills?projectId=project-id' })
-  const handles = (listed.json()).data.map(
-    (skill) => skill.handle,
-  )
+  const handles = listed.json().data.map((skill) => skill.handle)
   const response = await app.inject({
     method: 'POST',
     url: '/api/threads',
@@ -1668,7 +1666,7 @@ test('adds validated selected Skills to a new Turn in selection order', async (c
       ],
       effort: 'medium',
       collaborationMode: {
-        mode: 'default',
+        mode: 'plan',
         settings: { model: 'gpt-5.6-sol', reasoning_effort: 'medium' },
       },
     },
@@ -1721,7 +1719,7 @@ test('adds validated selected Skills to an owned existing Turn', async (context)
   context.after(() => app.close())
 
   const listed = await app.inject({ method: 'GET', url: '/api/skills?projectId=project-id' })
-  const handle = (listed.json()).data[0]?.handle
+  const handle = listed.json().data[0]?.handle
   const response = await app.inject({
     method: 'POST',
     url: '/api/threads/thread-id/turns',
@@ -1746,7 +1744,7 @@ test('adds validated selected Skills to an owned existing Turn', async (context)
       model: 'gpt-5.6-sol',
       effort: 'medium',
       collaborationMode: {
-        mode: 'default',
+        mode: 'plan',
         settings: { model: 'gpt-5.6-sol', reasoning_effort: 'medium' },
       },
     },
@@ -1802,7 +1800,7 @@ test('rejects stale selected Skills before creating a Thread', async (context) =
   context.after(() => app.close())
 
   const listed = await app.inject({ method: 'GET', url: '/api/skills' })
-  const handle = (listed.json()).data[0]?.handle
+  const handle = listed.json().data[0]?.handle
   const response = await app.inject({
     method: 'POST',
     url: '/api/threads',

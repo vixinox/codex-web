@@ -3,6 +3,7 @@ import type {
   ChatThreadPresentation,
   ChatTurnPresentation,
 } from '@/app/chat/model/types'
+import { parseMarkdownBlocks } from '@/app/chat/composer/chat-input-markdown'
 
 export function pendingMatchesTarget(
   pending: ChatPendingTurn,
@@ -45,11 +46,26 @@ export function reconcilePendingThread(
     turns: thread.turns.map((turn, index) => {
       if (index !== nativeTurnIndex) return turn
       const hasNativeUser = turn.blocks.some((block) => block.type === 'user')
+      const blocks = hasNativeUser
+        ? turn.blocks.map((block) =>
+            block.type === 'user' &&
+            pending.content?.some((part) => part.type === 'codeSnippet') &&
+            !block.content.some((part) => part.type === 'codeSnippet')
+              ? {
+                  ...block,
+                  content: [
+                    ...pending.content.filter((part) => part.type === 'codeSnippet'),
+                    ...block.content,
+                  ],
+                }
+              : block,
+          )
+        : [optimisticUserBlock(pending), ...turn.blocks]
       return {
         ...turn,
         presentationId: pending.clientTurnId,
         startedAt: turn.status === 'inProgress' ? pending.startedAt : turn.startedAt,
-        blocks: hasNativeUser ? turn.blocks : [optimisticUserBlock(pending), ...turn.blocks],
+        blocks,
       }
     }),
   }
@@ -60,10 +76,12 @@ function findMatchingUserTurn(thread: ChatThreadPresentation, pending: ChatPendi
     const user = thread.turns[index]?.blocks.find((block) => block.type === 'user')
     if (!user || user.type !== 'user') continue
     const text = user.content
-      .filter((part) => part.type === 'text')
-      .map((part) => part.text)
+      .map((part) => (part.type === 'text' || part.type === 'codeSnippet' ? part.text : ''))
       .join('')
-    if (text === pending.text) return index
+    const pendingText = parseMarkdownBlocks(pending.text)
+      .flatMap((part) => (part.kind === 'skill' ? [] : [part.text]))
+      .join('')
+    if (text === pendingText || text === pending.text) return index
   }
   return -1
 }

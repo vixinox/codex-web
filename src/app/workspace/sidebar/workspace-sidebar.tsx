@@ -28,6 +28,7 @@ export function WorkspaceSidebar({
   onRetryThreads,
   onRetryRootThreads,
   onArchiveThread,
+  onDeleteThread,
   onOpenProjectChat,
   onCreateProject,
   onRenameProject,
@@ -56,6 +57,7 @@ export function WorkspaceSidebar({
   onRetryThreads: (projectId: string) => void
   onRetryRootThreads: () => void
   onArchiveThread: (projectId: string | null, threadId: string) => Promise<void>
+  onDeleteThread?: (projectId: string | null, threadId: string) => Promise<void>
   onOpenProjectChat: (projectId: string) => void
   onCreateProject: (name: string) => Promise<void>
   onRenameProject: (projectId: string, name: string) => Promise<void>
@@ -201,6 +203,7 @@ export function WorkspaceSidebar({
                             onSelectThread={onSelectThread}
                             onRetry={() => onRetryThreads(project.id)}
                             onArchiveThread={onArchiveThread}
+                            onDeleteThread={onDeleteThread ?? onArchiveThread}
                             onOpenProjectChat={onOpenProjectChat}
                             onRenameProject={onRenameProject}
                             onDeleteProject={onDeleteProject}
@@ -256,6 +259,7 @@ export function WorkspaceSidebar({
                             exiting={exiting}
                             onClick={() => onSelectRootThread(thread.id)}
                             onArchive={() => onArchiveThread(null, thread.id)}
+                            onDelete={() => (onDeleteThread ?? onArchiveThread)(null, thread.id)}
                             archiveAvailable={archiveAvailable}
                           />
                         )}
