@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { projectNativeThread } from '../codex/native-protocol.js'
+import { parseRequestId } from '../codex/request-id.js'
 import { createThreadDomain } from '../threads/index.js'
 import type { SkillHandleStore } from '../skills.js'
 import { turnInput } from '../skills.js'
@@ -522,24 +523,21 @@ export async function registerThreadRoutes(
         )
           return reply.status(400).send(apiError('INVALID_USER_INPUT', 'Invalid user input'))
       }
-      const numericRequestId = Number(requestIdText)
-      const parsedRequestId =
-        Number.isSafeInteger(numericRequestId) && requestIdText === String(numericRequestId)
-          ? numericRequestId
-          : requestIdText
+      const parsedRequestId = parseRequestId(requestIdText)
       if (
         (typeof parsedRequestId !== 'number' && typeof parsedRequestId !== 'string') ||
         !dependencies.codex.respondToServerRequest
       )
         throw new Error('Invalid user input request id')
-      dependencies.codex.respondToServerRequest(session.user.id, threadId, parsedRequestId, {
-        answers: body.answers,
-      })
+      const resolvedRequestId =
+        dependencies.codex.respondToServerRequest(session.user.id, threadId, parsedRequestId, {
+          answers: body.answers,
+        }) ?? parsedRequestId
       await dependencies.codex.events.publish?.(session.user.id, {
         method: 'webcodex/userInput/answered',
         params: {
           threadId,
-          requestId: parsedRequestId,
+          requestId: resolvedRequestId,
           answers: body.answers,
         },
       })

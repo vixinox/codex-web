@@ -6,9 +6,8 @@ import {
 import { optimisticThread } from './thread-pending-reconciliation'
 import { usePendingThreadPresentation } from './use-pending-thread-presentation'
 import { useThreadSessionSnapshot } from './thread-session-store'
+import { buildThreadComposerSlot } from './thread-composer-slot'
 import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
-import type { ChatPlanPresentation, ChatUserInputRequest } from '@/app/chat/model/types'
-import type { ThreadComposerSlotModel } from '@/app/chat/model/composer-types'
 
 export type { ThreadPageTarget } from './use-thread-composer-controller'
 export type ThreadPageControllerOptions = {
@@ -106,24 +105,8 @@ export function useThreadPageController({
           return turn ? [turn] : []
         })
       : []
-  const activePlan = turns.find((turn) => turn.status === 'inProgress')?.plan as
-    | ChatPlanPresentation
-    | undefined
   const userInput = detail.model.status === 'ready' ? detailSnapshot.userInput : undefined
-  const finalPlan = turns.at(-1)?.plan?.final
-    ? (turns.at(-1)?.plan as ChatPlanPresentation)
-    : undefined
-  const composerSlot: ThreadComposerSlotModel = composer.viewModel.error
-    ? { kind: 'error', message: composer.viewModel.error }
-    : userInput
-      ? { kind: 'questionnaire', request: userInput as unknown as ChatUserInputRequest }
-      : finalPlan
-        ? { kind: 'final-plan', plan: finalPlan }
-        : {
-            kind: 'input',
-            composer: composer.viewModel,
-            ...(activePlan ? { plan: activePlan } : {}),
-          }
+  const composerSlot = buildThreadComposerSlot(composer.viewModel, turns, userInput)
 
   return {
     model,

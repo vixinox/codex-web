@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 
 import type { GuestIdentity, GuestService, GuestTurnInput } from '../guest-service.js'
+import { parseRequestId } from '../codex/request-id.js'
 import {
   apiError,
   authHeaders,
@@ -168,15 +169,20 @@ export async function registerGuestRoutes(
   app.post('/guest-api/threads/:guestThreadId/user-input/:requestId', async (request, reply) => {
     const identity = await requireGuest(request, reply)
     if (!identity) return
-    const { guestThreadId, requestId } = request.params as {
+    const { guestThreadId, requestId: requestIdText } = request.params as {
       guestThreadId: string
       requestId: string
     }
     const answers = (request.body as { answers?: unknown } | undefined)?.answers
-    return safeId(guestThreadId) &&
-      (await service.answerUserInput(identity, guestThreadId, requestId, answers))
-      ? reply.status(204).send()
-      : threadNotFound(reply)
+    const requestId = parseRequestId(requestIdText)
+    if (!safeId(guestThreadId)) return threadNotFound(reply)
+    try {
+      return (await service.answerUserInput(identity, guestThreadId, requestId, answers))
+        ? reply.status(204).send()
+        : threadNotFound(reply)
+    } catch (error) {
+      return reply.status(400).send(apiError('INVALID_USER_INPUT', safeMessage(error)))
+    }
   })
   app.get('/guest-api/events', async (request, reply) => {
     const identity = await requireGuest(request, reply)

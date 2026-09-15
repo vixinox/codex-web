@@ -15,13 +15,13 @@ export type QuestionnaireQuestion = {
   header?: string
   question: string
   options?:
-  | readonly {
-    value?: string
-    label: string
-    description: string
-    recommended?: boolean
-  }[]
-  | null
+    | readonly {
+        value?: string
+        label: string
+        description: string
+        recommended?: boolean
+      }[]
+    | null
   isSecret?: boolean
 }
 
@@ -73,6 +73,9 @@ export function Questionnaire({
       setSubmitting(true)
       try {
         await onSubmit(buildAnswers(nextResponses))
+        // The answer endpoint is authoritative; the SSE event will reconcile
+        // the transcript summary while the composer can leave the pending slot.
+        setDismissed(true)
       } finally {
         setSubmitting(false)
       }
@@ -203,6 +206,7 @@ export function Questionnaire({
     setSubmitting(true)
     try {
       await onCancel()
+      setDismissed(true)
     } finally {
       setSubmitting(false)
     }
@@ -219,7 +223,7 @@ export function Questionnaire({
       }}
     >
       <div className="flex items-center justify-center gap-3 px-4 pt-4">
-        <h2 className="min-w-0 flex-1 text-lg leading-snug font-semibold text-foreground ml-4">
+        <h2 className="ml-4 min-w-0 flex-1 text-lg leading-snug font-semibold text-foreground">
           {activeQuestion.question}
         </h2>
         <div className="flex items-center gap-1">
@@ -264,7 +268,7 @@ export function Questionnaire({
 
       <div
         className={cn(
-          'mt-4 flex flex-col gap-2 transition-opacity duration-200 ease-out motion-reduce:transition-none px-2',
+          'mt-4 flex flex-col gap-2 px-2 transition-opacity duration-200 ease-out motion-reduce:transition-none',
           transitioning ? 'opacity-0' : 'opacity-100',
         )}
       >
@@ -349,7 +353,7 @@ export function Questionnaire({
               }}
               placeholder={inputPlaceholder}
               disabled={submitting || transitioning}
-              className="ml-1 h-8 border-0 bg-transparent! px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
+              className="ml-1 h-8 border-0 bg-transparent! px-0 shadow-none focus-visible:border-0 focus-visible:ring-0"
             />
             <Button
               type="button"

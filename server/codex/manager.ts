@@ -7,6 +7,7 @@ import { CodexRpcClient, type RpcTransport } from './rpc-client.js'
 import { EventHub } from './event-hub.js'
 import { CodexStdioTransport } from './stdio-transport.js'
 import { projectNativeMessage } from './native-protocol.js'
+import { requestIdCandidates, type RequestId } from './request-id.js'
 import { CodexRuntimeManager } from './runtime-manager.js'
 import type { CodexCommand } from './stdio-transport.js'
 
@@ -32,7 +33,6 @@ type TurnTask = {
   timer?: NodeJS.Timeout
   settled: boolean
 }
-type RequestId = number | string
 type PendingServerRequest = { client: CodexRpcClient; threadId: string }
 type ActiveTurn = { threadId: string; turnId: string }
 export class CodexLifecycleError extends Error {
@@ -315,10 +315,12 @@ export class CodexManager {
 
   respondToServerRequest(userId: string, threadId: string, requestId: RequestId, result: unknown) {
     const requests = this.serverRequests.get(userId)
-    const pending = requests?.get(requestId)
+    const resolvedId = requestIdCandidates(requestId).find((candidate) => requests?.has(candidate))
+    const pending = resolvedId === undefined ? undefined : requests?.get(resolvedId)
     if (!pending || pending.threadId !== threadId) throw new Error('Approval request not found')
-    requests!.delete(requestId)
-    pending.client.respond(requestId, result)
+    requests!.delete(resolvedId!)
+    pending.client.respond(resolvedId!, result)
+    return resolvedId
   }
 
   enqueueTurn(

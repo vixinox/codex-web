@@ -2,6 +2,7 @@ import { ComposerContainer } from '@/app/composition/layout/composer-container'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ComposerInput } from '@/app/chat/composer/composer-input'
 import { OWNER_THREAD_COMPOSER_CAPABILITIES } from '@/app/chat/composer/composer-capabilities'
+import type { ComposerCapabilities } from '@/app/chat/composer/composer-capabilities'
 import { PlanPanel } from '@/app/chat/composer/plan-panel'
 import { Questionnaire } from '@/app/chat/questionnaire/user-input-questionnaire'
 import type { ComposerActions, ThreadComposerSlotModel } from '@/app/chat/model/composer-types'
@@ -9,6 +10,7 @@ import type { ComposerActions, ThreadComposerSlotModel } from '@/app/chat/model/
 export function ThreadComposerSlot({
   slot,
   actions,
+  capabilities = OWNER_THREAD_COMPOSER_CAPABILITIES,
 }: {
   slot: ThreadComposerSlotModel
   actions: ComposerActions & {
@@ -16,6 +18,7 @@ export function ThreadComposerSlot({
     answerUserInput: (answers: Record<string, { answers: string[] }>) => Promise<void>
     cancelUserInput: () => Promise<void>
   }
+  capabilities?: ComposerCapabilities
 }) {
   return (
     <ComposerContainer>
@@ -63,11 +66,7 @@ export function ThreadComposerSlot({
           }}
         />
       ) : slot.kind === 'input' ? (
-        <ComposerInput
-          viewModel={slot.composer}
-          actions={actions}
-          capabilities={OWNER_THREAD_COMPOSER_CAPABILITIES}
-        />
+        <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} />
       ) : null}
     </ComposerContainer>
   )

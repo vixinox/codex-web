@@ -96,9 +96,8 @@ export function ComposerInput({
               actions.onCommand?.('compact')
             }}
             onPlan={() => {
-              editorRef.current?.clear()
+              editorRef.current?.removeActiveCommand()
               setCommand(null)
-              actions.setDraft('', [])
               actions.setCollaborationMode('plan')
             }}
             skills={viewModel.skills}

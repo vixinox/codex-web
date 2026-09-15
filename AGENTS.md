@@ -9,8 +9,6 @@
 
 ## Current scope
 
-The core product mainline is complete. Remaining work is tracked in `docs/roadmap.zh-CN.md`.
-
 Owner and Guest are strictly isolated runtimes: separate process entry points, credentials, workspaces, history and backend control APIs. A Guest lease gets a fresh empty private workspace for a fixed 24-hour window; Guest turns may read, write and execute only inside it under `workspaceWrite`, with no general network access. Guest runtime auto-starts before Fastify listens and fails closed when its dedicated credential or Windows sandbox is not ready; the Owner runtime remains explicitly started by the Owner.
 
 Do not expand work into unrelated features, architecture, dependencies, or documentation.

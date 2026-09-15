@@ -46,7 +46,6 @@ pnpm test:bridge
 ## 文档
 
 - [架构与安全](PROJECT.md)
-- [剩余工作](docs/roadmap.zh-CN.md)
 - [API](docs/api/README.zh-CN.md)
 - [前端约定](docs/frontend/README.zh-CN.md)
 - [App Server](docs/app-server/README.md)

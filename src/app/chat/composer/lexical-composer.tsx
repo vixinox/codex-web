@@ -41,7 +41,11 @@ import { fenceCode, skillMarkdownLink } from './chat-input-markdown'
 import { detectCodePaste } from './paste-code-detection'
 type SerializedSkill = Spread<ComposerSkill, SerializedTextNode>
 const INSERT_COMPOSER_SKILL_COMMAND = createCommand<ComposerSkill>('INSERT_COMPOSER_SKILL')
-export type LexicalComposerHandle = { insertSkill(skill: ComposerSkill): void; clear(): void }
+export type LexicalComposerHandle = {
+  insertSkill(skill: ComposerSkill): void
+  removeActiveCommand(): void
+  clear(): void
+}
 class SkillNode extends TextNode {
   __skill: ComposerSkill
   static getType() {
@@ -204,6 +208,18 @@ function Plugins(
     p.handle,
     () => ({
       insertSkill: (skill) => e.dispatchCommand(INSERT_COMPOSER_SKILL_COMMAND, skill),
+      removeActiveCommand: () => {
+        const target = commandNode.current
+        if (!target) return
+        e.update(() => {
+          const node = $getNodeByKey(target.key)
+          if (!$isTextNode(node)) return
+          node.select(target.start, target.end)
+          const selection = $getSelection()
+          if ($isRangeSelection(selection)) selection.removeText()
+        })
+        commandNode.current = null
+      },
       clear: () => e.update(() => setDraft(parseDraft('', latest.current.skills))),
     }),
     [e],

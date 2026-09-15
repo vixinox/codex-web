@@ -388,7 +388,10 @@ describe('Codex native thread reducer', () => {
         turnId: 'turn-1',
         itemId: 'item-1',
         requestId: 42,
-        questions: [{ id: 'choice', question: 'Pick one', options: [] }],
+        questions: [
+          { id: 'choice', question: 'Pick one', options: [] },
+          { id: 'weekend', question: 'Weekend plan', options: [] },
+        ],
       }),
       historyEvent(21, 'serverRequest/resolved', {
         threadId: 'thread-1',
@@ -397,7 +400,10 @@ describe('Codex native thread reducer', () => {
       historyEvent(22, 'webcodex/userInput/answered', {
         threadId: 'thread-1',
         requestId: 42,
-        answers: { choice: { answers: ['First'] } },
+        answers: {
+          choice: { answers: ['First'] },
+          weekend: { answers: ['Travel'] },
+        },
       }),
     ])
 
@@ -405,7 +411,41 @@ describe('Codex native thread reducer', () => {
     expect(presentation.userInput).toBeUndefined()
     expect(presentation.turns[0]?.questionnaire).toMatchObject({
       requestId: 42,
-      questions: [{ id: 'choice', question: 'Pick one', answers: ['First'] }],
+      questions: [
+        { id: 'choice', question: 'Pick one', answers: ['First'] },
+        { id: 'weekend', question: 'Weekend plan', answers: ['Travel'] },
+      ],
+    })
+  })
+
+  it('merges persisted answers when JSON-RPC id types differ', () => {
+    const state = createCodexThreadState(
+      { id: 'thread-1', turns: [{ id: 'turn-1', status: 'completed', items: [] }] },
+      null,
+    )
+    applyHistoryEvents(state, [
+      historyEvent(20, 'item/tool/requestUserInput', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        requestId: 1,
+        questions: [{ id: 'weekend_choice', question: 'Choose', options: [] }],
+      }),
+      historyEvent(21, 'serverRequest/resolved', {
+        threadId: 'thread-1',
+        requestId: 1,
+      }),
+      historyEvent(22, 'webcodex/userInput/answered', {
+        threadId: 'thread-1',
+        requestId: '1',
+        answers: { weekend_choice: { answers: ['travel'] } },
+      }),
+    ])
+
+    const presentation = toChatThreadPresentation(state)
+    expect(presentation.userInput).toBeUndefined()
+    expect(presentation.turns[0]?.questionnaire).toMatchObject({
+      questions: [{ id: 'weekend_choice', answers: ['travel'] }],
     })
   })
 

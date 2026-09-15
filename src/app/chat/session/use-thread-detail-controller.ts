@@ -197,10 +197,18 @@ export function useThreadDetailController(
   const answer = React.useCallback(
     async (answers: Record<string, { answers: string[] }>) => {
       const request = snapshot.userInput
-      if (!threadId || !request) return
+      if (!threadId || !request || !session) return
       await client.answerUserInput(threadId, request.requestId, answers)
+      // Do not make the composer wait for the transport event to clear. The
+      // persisted answered event remains the source of truth on reconnect,
+      // while this same notification keeps the live session deterministic if
+      // resolved/answered SSE events arrive in either order.
+      session.applyEvent({
+        method: 'webcodex/userInput/answered',
+        params: { threadId, requestId: request.requestId, answers },
+      })
     },
-    [client, snapshot.userInput, threadId],
+    [client, session, snapshot.userInput, threadId],
   )
   const cancelUserInput = React.useCallback(async () => {
     const request = snapshot.userInput

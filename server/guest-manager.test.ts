@@ -6,7 +6,11 @@ import test from 'node:test'
 
 import type { ServerConfig } from './config.js'
 import { CodexRuntimeManager } from './codex/runtime-manager.js'
-import { extractWindowsConfig, GuestCodexManager } from './guest-manager.js'
+import {
+  extractWindowsConfig,
+  GuestCodexManager,
+  normalizeUserInputAnswers,
+} from './guest-manager.js'
 
 function manager(dataRoot: string) {
   const config: ServerConfig = {
@@ -77,4 +81,24 @@ test('rejects invalid lease ids', async () => {
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('normalizes Guest questionnaire answers from the wrapped request payload', () => {
+  assert.deepEqual(
+    normalizeUserInputAnswers(
+      { answers: { weekend_choice: { answers: ['travel'] } } },
+      new Set(['weekend_choice']),
+    ),
+    { weekend_choice: { answers: ['travel'] } },
+  )
+})
+
+test('normalizes legacy inner Guest questionnaire answer maps', () => {
+  assert.deepEqual(
+    normalizeUserInputAnswers(
+      { weekend_choice: { answers: ['travel'] } },
+      new Set(['weekend_choice']),
+    ),
+    { weekend_choice: { answers: ['travel'] } },
+  )
 })

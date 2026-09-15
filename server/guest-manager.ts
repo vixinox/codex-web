@@ -7,6 +7,7 @@ import type { GuestRuntimeContract, GuestRuntimeStatus } from '../src/lib/bridge
 import { CodexRpcClient, type RpcTransport } from './codex/rpc-client.js'
 import { EventHub } from './codex/event-hub.js'
 import { CodexStdioTransport } from './codex/stdio-transport.js'
+import { requestIdCandidates, type RequestId } from './codex/request-id.js'
 import type { CodexRuntimeManager } from './codex/runtime-manager.js'
 import { describeUnknown, log } from './logger.js'
 
@@ -31,6 +32,10 @@ export const GUEST_DEVELOPER_INSTRUCTIONS = [
 ].join(' ')
 
 type GuestInstance = { client: CodexRpcClient; home: string }
+export type GuestUserInputResponse = {
+  requestId: RequestId
+  answers: Record<string, { answers: string[] }>
+}
 
 export class GuestCodexManager {
   readonly events = new EventHub()
@@ -200,18 +205,23 @@ export class GuestCodexManager {
     await client.request('thread/compact/start', { threadId: nativeThreadId })
   }
 
-  async respondUserInput(requestId: number | string, nativeThreadId: string, answers: unknown) {
-    const numericId =
-      typeof requestId === 'string' && /^\d+$/.test(requestId) ? Number(requestId) : requestId
-    const resolvedId = this.pendingUserInput.has(requestId) ? requestId : numericId
-    const pending = this.pendingUserInput.get(resolvedId)
+  async respondUserInput(
+    requestId: RequestId,
+    nativeThreadId: string,
+    answers: unknown,
+  ): Promise<GuestUserInputResponse> {
+    const resolvedId = requestIdCandidates(requestId).find((candidate) =>
+      this.pendingUserInput.has(candidate),
+    )
+    const pending = resolvedId === undefined ? undefined : this.pendingUserInput.get(resolvedId)
     if (!pending || pending.threadId !== nativeThreadId)
       throw new Error('Guest user input request is unavailable')
     const safeAnswers = normalizeUserInputAnswers(answers, pending.questionIds)
     if (!safeAnswers) throw new Error('Guest user input answer is invalid')
     const client = await this.ready()
-    client.respond(resolvedId, { answers: safeAnswers })
-    this.pendingUserInput.delete(resolvedId)
+    client.respond(resolvedId!, { answers: safeAnswers })
+    this.pendingUserInput.delete(resolvedId!)
+    return { requestId: resolvedId!, answers: safeAnswers }
   }
 
   async prepareWorkspace(guestPublicId: string) {
@@ -447,9 +457,13 @@ function isInside(root: string, candidate: string) {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
 }
 
-function normalizeUserInputAnswers(value: unknown, questionIds: Set<string>) {
+export function normalizeUserInputAnswers(value: unknown, questionIds: Set<string>) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const answers = (value as Record<string, unknown>).answers
+  const record = value as Record<string, unknown>
+  const answers =
+    record.answers && typeof record.answers === 'object' && !Array.isArray(record.answers)
+      ? record.answers
+      : value
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null
   const normalized: Record<string, { answers: string[] }> = {}
   for (const [questionId, response] of Object.entries(answers)) {

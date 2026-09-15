@@ -18,6 +18,8 @@ import { usePendingThreadPresentation } from '@/app/chat/session/use-pending-thr
 import { ThreadHeader } from '@/app/composition/layout/thread-header'
 import { ThreadEmptyState } from '@/app/composition/layout/thread-empty-state'
 import { ComposerContainer } from '@/app/composition/layout/composer-container'
+import { ThreadComposerSlot } from '@/app/composition/screens/thread-composer'
+import { buildThreadComposerSlot } from '@/app/chat/session/thread-composer-slot'
 import { promoteGuestThread, reconcileGuestThreads } from './guest-thread-order'
 import { toast } from '@/components/ui/toast'
 
@@ -63,6 +65,7 @@ export function GuestWorkspaceScreen() {
   const threadLoading = Boolean(
     requestedThreadId && detail.model.status !== 'ready' && !activeThread,
   )
+  const detailSession = detail.model.status === 'ready' ? detail.model.session : undefined
 
   React.useEffect(() => {
     let disposed = false
@@ -161,6 +164,15 @@ export function GuestWorkspaceScreen() {
       : undefined,
     onPendingChange: pending.onPendingChange,
   })
+  const composerSlot = activeThread
+    ? buildThreadComposerSlot(composer.viewModel, activeThread.turns, activeThread.userInput)
+    : undefined
+  const threadComposerActions = {
+    ...composer.actions,
+    retry: detail.retry,
+    answerUserInput: detail.answerUserInput,
+    cancelUserInput: detail.cancelUserInput,
+  }
 
   const unavailable = React.useCallback(
     () =>
@@ -267,7 +279,7 @@ export function GuestWorkspaceScreen() {
                   className="relative flex min-h-full flex-col"
                   aria-label="Guest chat conversation"
                 >
-                  <ThreadAssets thread={activeThread} />
+                  <ThreadAssets thread={activeThread} session={detailSession} />
                 </section>
               ) : (
                 <ThreadEmptyState
@@ -278,14 +290,22 @@ export function GuestWorkspaceScreen() {
             </div>
             {!threadLoading ? (
               <div className="z-10 flex-none pb-4">
-                <ComposerContainer>
-                  <ComposerInput
-                    viewModel={composer.viewModel}
-                    actions={composer.actions}
-                    placeholder="Explore the isolated guest workspace"
+                {activeThread && composerSlot ? (
+                  <ThreadComposerSlot
+                    slot={composerSlot}
+                    actions={threadComposerActions}
                     capabilities={composer.capabilities}
                   />
-                </ComposerContainer>
+                ) : (
+                  <ComposerContainer>
+                    <ComposerInput
+                      viewModel={composer.viewModel}
+                      actions={composer.actions}
+                      placeholder="Explore the isolated guest workspace"
+                      capabilities={composer.capabilities}
+                    />
+                  </ComposerContainer>
+                )}
               </div>
             ) : null}
           </>

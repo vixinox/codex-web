@@ -423,10 +423,10 @@ function finalizeUserInput(
 ): CodexThreadChange {
   const request = state.userInput
   const answers = isRecord(rawAnswers) ? rawAnswers : {}
-  if (!request || request.requestId !== requestId) {
+  if (!request || !sameRequestId(request.requestId, requestId)) {
     if (rawAnswers === undefined) return { scope: 'thread' }
-    const existing = Object.entries(state.questionnaireSummaries ?? {}).find(
-      ([, summary]) => summary.requestId === requestId,
+    const existing = Object.entries(state.questionnaireSummaries ?? {}).find(([, summary]) =>
+      sameRequestId(summary.requestId, requestId),
     )
     if (!existing) return { scope: 'thread' }
     const [turnId, summary] = existing
@@ -592,4 +592,12 @@ function safeCode(value: unknown) {
 }
 function validRequestId(value: unknown): value is number | string {
   return typeof value === 'number' || typeof value === 'string'
+}
+
+function sameRequestId(left: unknown, right: unknown) {
+  if (left === right) return true
+  return (
+    (typeof left === 'number' && typeof right === 'string' && String(left) === right) ||
+    (typeof left === 'string' && typeof right === 'number' && left === String(right))
+  )
 }

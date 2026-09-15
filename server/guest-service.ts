@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 
 import {
   guest,
@@ -271,7 +271,7 @@ export class GuestService {
       .from(guestTurnJob)
       .where(
         and(
-          eq(guestTurnJob.id, jobId),
+          or(eq(guestTurnJob.id, jobId), eq(guestTurnJob.nativeTurnId, jobId)),
           eq(guestTurnJob.guestId, identity.id),
           eq(guestTurnJob.guestThreadId, guestThreadId),
           inArray(guestTurnJob.status, [...ACTIVE_JOB_STATES]),
@@ -301,10 +301,16 @@ export class GuestService {
   ) {
     const record = await this.thread(identity.id, guestThreadId)
     if (!record) return false
-    await this.manager.respondUserInput(requestId, record.nativeThreadId, answers)
+    const response = await this.manager.respondUserInput(requestId, record.nativeThreadId, {
+      answers,
+    })
     await this.publish(identity.id, guestThreadId, {
       method: 'webcodex/userInput/answered',
-      params: { threadId: guestThreadId, requestId, answers },
+      params: {
+        threadId: guestThreadId,
+        requestId: response.requestId,
+        answers: response.answers,
+      },
     })
     return true
   }

@@ -37,7 +37,7 @@ export type CodexBridge = {
     threadId: string,
     requestId: number | string,
     result: unknown,
-  ) => void
+  ) => number | string | void
   getStatus?: (userId: string) => {
     status: string
     projectId: string | null
