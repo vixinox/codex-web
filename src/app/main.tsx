@@ -1,9 +1,9 @@
 import '../index.css'
 
-import { Component, lazy, type ReactNode, StrictMode, Suspense, useEffect } from 'react'
+import { Component, lazy, type ReactNode, StrictMode, Suspense, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { toast, Toaster } from '@/components/ui/toast'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { ThemeProvider } from '@/components/shared/theme-provider'
 import {
   ForbiddenPage,
@@ -11,7 +11,8 @@ import {
   ServerErrorPage,
   ServiceUnavailablePage,
 } from '@/app/error-pages'
-import { useSession } from '@/lib/auth/auth-client'
+import { signOut, useSession } from '@/lib/auth/auth-client'
+import { AUTH_EXPIRED_EVENT, installAuthExpiryInterceptor } from '@/lib/auth/auth-expiry'
 import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
 import { CodexStartupScreen } from '@/app/composition/screens/codex-startup-screen'
@@ -36,6 +37,8 @@ const GuestWorkspaceScreen = lazy(() =>
 )
 
 const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
+
+installAuthExpiryInterceptor()
 
 export function App() {
   return (
@@ -149,6 +152,7 @@ createRoot(document.getElementById('root')!).render(
     <RootErrorBoundary>
       <BrowserRouter>
         <ThemeProvider>
+          <AuthExpiryHandler />
           <App />
           <Toaster />
         </ThemeProvider>
@@ -156,3 +160,33 @@ createRoot(document.getElementById('root')!).render(
     </RootErrorBoundary>
   </StrictMode>,
 )
+
+function AuthExpiryHandler() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { refetch } = useSession()
+  const refetchRef = useRef(refetch)
+  const handlingRef = useRef(false)
+
+  refetchRef.current = refetch
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      if (handlingRef.current || location.pathname === '/login') return
+      handlingRef.current = true
+      void signOut()
+        .catch(() => undefined)
+        .then(() => refetchRef.current())
+        .catch(() => undefined)
+        .finally(() => {
+          void navigate('/login', { replace: true })
+          handlingRef.current = false
+        })
+    }
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+  }, [location.pathname, navigate])
+
+  return null
+}

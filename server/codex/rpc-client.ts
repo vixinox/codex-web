@@ -11,7 +11,7 @@ export type RpcTransport = {
 export class CodexRpcClient {
   private nextId = 1
   private readonly pending = new Map<
-    number,
+    number | string,
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >()
   private readonly eventListeners = new Set<(message: JsonRpcMessage) => void>()
@@ -107,7 +107,7 @@ export class CodexRpcClient {
   }
 
   private receive(message: JsonRpcMessage) {
-    if (typeof message.id === 'number' && ('result' in message || 'error' in message)) {
+    if (isRequestId(message.id) && ('result' in message || 'error' in message)) {
       const pending = this.pending.get(message.id)
       if (!pending) return
       this.pending.delete(message.id)
@@ -115,7 +115,7 @@ export class CodexRpcClient {
       else pending.resolve(message.result)
       return
     }
-    if (typeof message.method === 'string' && typeof message.id === 'number') {
+    if (typeof message.method === 'string' && isRequestId(message.id)) {
       for (const listener of this.requestListeners) listener(message)
     } else for (const listener of this.eventListeners) listener(message)
   }
@@ -128,4 +128,8 @@ export class CodexRpcClient {
     for (const listener of this.closeListeners) listener(error)
     this.closeListeners.clear()
   }
+}
+
+function isRequestId(value: unknown): value is number | string {
+  return typeof value === 'number' || typeof value === 'string'
 }

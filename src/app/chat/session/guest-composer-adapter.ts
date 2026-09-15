@@ -17,7 +17,7 @@ export const guestComposerAdapter: ComposerRuntimeAdapter = {
   selection: createMemorySelectionStore({
     model: 'gpt-5.6-terra',
     effort: 'medium',
-    collaborationMode: 'plan',
+    collaborationMode: 'default',
   } satisfies ComposerPreferences),
   listSkills: async () => fetchGuestSkills(),
   readContextWindow: async (signal) => {

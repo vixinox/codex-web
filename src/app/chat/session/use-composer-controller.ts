@@ -57,7 +57,7 @@ const MAX_RETRIES = 5
 const FALLBACK_PREFERENCES: ComposerPreferences = {
   model: 'gpt-5.6-sol',
   effort: 'medium',
-  collaborationMode: 'plan',
+  collaborationMode: 'default',
 }
 
 /**

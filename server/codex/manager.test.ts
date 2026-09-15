@@ -167,6 +167,20 @@ test('routes server requests by user and thread and responds with the original J
   )
   manager.respondToServerRequest('user-a', 'thread-a', 42, 'accept')
   assert.deepEqual(transport.sent.at(-1), { id: 42, result: 'accept' })
+
+  transport.receive({
+    id: 'request-43',
+    method: 'item/tool/requestUserInput',
+    params: {
+      threadId: 'thread-a',
+      turnId: 'turn-a',
+      itemId: 'item-a',
+      isBlocking: true,
+      questions: [],
+    },
+  })
+  manager.respondToServerRequest('user-a', 'thread-a', 'request-43', { answers: {} })
+  assert.deepEqual(transport.sent.at(-1), { id: 'request-43', result: { answers: {} } })
   await manager.shutdown()
 })
 

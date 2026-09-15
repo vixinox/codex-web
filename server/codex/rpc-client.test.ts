@@ -56,6 +56,31 @@ test('correlates JSON-RPC responses and forwards notifications', async () => {
   assert.equal(events.length, 1)
 })
 
+test('forwards string-id server requests to request listeners', () => {
+  const transport = new FakeTransport()
+  const client = new CodexRpcClient(transport)
+  const requests: JsonRpcMessage[] = []
+  const events: JsonRpcMessage[] = []
+  client.onRequest((request) => requests.push(request))
+  client.onEvent((event) => events.push(event))
+
+  transport.receive({
+    id: 'request-42',
+    method: 'item/tool/requestUserInput',
+    params: {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      isBlocking: true,
+      questions: [],
+    },
+  })
+
+  assert.equal(requests.length, 1)
+  assert.equal(events.length, 0)
+  assert.equal(requests[0]?.id, 'request-42')
+})
+
 test('rejects pending requests when the process exits', async () => {
   const transport = new FakeTransport()
   const client = new CodexRpcClient(transport)

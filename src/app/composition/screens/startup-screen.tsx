@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useNavigate } from 'react-router'
 import { ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,46 @@ export function StartupScreen() {
 
   const containerRef = useRef<HTMLDivElement>(null)
   const pipelineLineRef = useRef<HTMLDivElement>(null)
+  const architectureFrameRef = useRef<HTMLDivElement>(null)
+  const architectureImageRef = useRef<HTMLImageElement>(null)
+
+  useLayoutEffect(() => {
+    const frame = architectureFrameRef.current
+    const image = architectureImageRef.current
+    if (!frame || !image) return
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (prefersReducedMotion || image.complete) {
+      gsap.set(frame, { autoAlpha: 1 })
+      return
+    }
+
+    gsap.set(frame, { autoAlpha: 0 })
+    let cancelled = false
+
+    const reveal = () => {
+      if (cancelled) return
+      gsap.to(frame, {
+        autoAlpha: 1,
+        duration: 0.5,
+        delay: 0.1,
+        ease: 'power2.out',
+        overwrite: 'auto',
+        onComplete: () => ScrollTrigger.refresh(),
+      })
+    }
+    const revealWithoutAnimation = () => {
+      if (cancelled) return
+      gsap.set(frame, { autoAlpha: 1 })
+      ScrollTrigger.refresh()
+    }
+
+    image.addEventListener('load', reveal)
+    image.addEventListener('error', revealWithoutAnimation)
+    if (image.complete) {
+      revealWithoutAnimation()
+    }
+  }, [])
 
   useEffect(() => {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -194,11 +234,19 @@ export function StartupScreen() {
               </p>
             </div>
 
-            <img
-              src={architectureDiagram}
-              alt="Codex Web Architecture"
-              className="block h-auto w-full rounded-3xl border border-border bg-white p-4"
-            />
+            <div
+              ref={architectureFrameRef}
+              className="w-full rounded-3xl border border-border bg-white p-4"
+            >
+              <img
+                ref={architectureImageRef}
+                src={architectureDiagram}
+                alt="Codex Web Architecture"
+                width={1379}
+                height={683}
+                className="block h-auto w-full"
+              />
+            </div>
           </section>
 
           <section className="workspace-section relative w-full space-y-4">
@@ -222,7 +270,9 @@ export function StartupScreen() {
                 {isZh ? '系统设置' : 'System Settings'}
               </h2>
               <p className="split settings-description max-w-3xl text-sm leading-relaxed text-muted-foreground">
-                {isZh ? '可在面板中切换主题，或查看其他设置。' : 'Switch themes or view other settings in the panel.'}
+                {isZh
+                  ? '可在面板中切换主题，或查看其他设置。'
+                  : 'Switch themes or view other settings in the panel.'}
               </p>
             </div>
             <MockSettingsPreview className="settings-component" />

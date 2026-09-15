@@ -42,7 +42,7 @@ describe('chat model selection storage', () => {
     expect(readNewChatSelection('user-a')).toMatchObject({ model: 'gpt-5.6-sol', effort: 'low' })
   })
 
-  it('persists Plan mode per Thread and defaults older selections', () => {
+  it('persists Plan mode per Thread and defaults older selections to default mode', () => {
     writeThreadSelection('user-a', 'thread-plan', {
       model: 'gpt-5.6-sol',
       effort: 'high',
@@ -50,7 +50,7 @@ describe('chat model selection storage', () => {
     })
 
     expect(readThreadSelection('user-a', 'thread-plan').collaborationMode).toBe('plan')
-    expect(readThreadSelection('user-a', 'thread-old').collaborationMode).toBe('plan')
+    expect(readThreadSelection('user-a', 'thread-old').collaborationMode).toBe('default')
   })
 
   it('isolates the same Thread id across projects', () => {

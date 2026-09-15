@@ -314,7 +314,6 @@ export class CodexManager {
   }
 
   respondToServerRequest(userId: string, threadId: string, requestId: RequestId, result: unknown) {
-    if (typeof requestId !== 'number') throw new Error('Approval request id must be numeric')
     const requests = this.serverRequests.get(userId)
     const pending = requests?.get(requestId)
     if (!pending || pending.threadId !== threadId) throw new Error('Approval request not found')
