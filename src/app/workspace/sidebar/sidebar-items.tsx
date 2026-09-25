@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils'
 import type { WorkspaceProject, WorkspaceThread } from '@/app/workspace/workspace-model'
 import { ProjectNameDialog } from '../project-name-dialog'
 import { removeStoredValue, useStoredBoolean } from './sidebar-storage'
-import { useGsapFadePulse } from '@/lib/platform/browser/use-gsap-enter'
+import { useNativeFadePulse } from '@/lib/platform/browser/use-native-enter'
 import { FadePresenceList } from './fade-presence-list'
 import { toast } from '@/components/ui/toast'
 
@@ -66,7 +66,7 @@ export function ProjectItem({
   const [removeError, setRemoveError] = React.useState<string | null>(null)
   const nameRef = React.useRef<HTMLSpanElement>(null)
   const disabled = project.pending || exiting
-  useGsapFadePulse(nameRef, [project.name])
+  useNativeFadePulse(nameRef, [project.name])
   return (
     <Collapsible open={open} onOpenChange={disabled ? undefined : setOpen}>
       <div className="group/project relative flex items-center rounded-lg">

@@ -30,6 +30,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['lucide-react', 'gsap', 'react-markdown', 'remark-gfm'],
+    include: ['lucide-react', 'react-markdown', 'remark-gfm'],
   },
 })

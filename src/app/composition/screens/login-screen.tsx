@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { gsap } from 'gsap'
 import { Loader2, User, KeyRound } from 'lucide-react'
 import { startGuestSession } from '@/lib/bridge/http/guest'
 
@@ -22,8 +21,6 @@ export function LoginScreen() {
   const [error, setError] = React.useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [runtimeProfile, setRuntimeProfile] = React.useState<'owner' | 'guest' | null>(null)
-
-  const contentRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     const controller = new AbortController()
@@ -66,20 +63,6 @@ export function LoginScreen() {
     return () => controller.abort()
   }, [])
 
-  React.useEffect(() => {
-    if (!contentRef.current || mode === 'initializing') return
-
-    const ctx = gsap.context(() => {
-      gsap.fromTo(
-        '.gsap-fade',
-        { opacity: 0, filter: 'blur(4px)' },
-        { opacity: 1, filter: 'blur(0px)', duration: 0.35, ease: 'power2.out', clearProps: 'all' },
-      )
-    }, contentRef)
-
-    return () => ctx.revert()
-  }, [mode])
-
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
@@ -120,14 +103,14 @@ export function LoginScreen() {
     <div className="flex min-h-svh flex-col items-center justify-center bg-zinc-50 p-6 md:p-10 dark:bg-zinc-950">
       <div className="flex w-full max-w-sm flex-col gap-6">
         <Card className="border-zinc-200/60 bg-white/90 shadow-xl shadow-zinc-200/40 backdrop-blur-sm dark:border-zinc-800/60 dark:bg-zinc-900/90 dark:shadow-black/40">
-          <CardContent className="p-6 transition-all duration-300" ref={contentRef}>
+          <CardContent className="p-6 transition-all duration-300">
             {mode === 'initializing' ? (
               <div className="flex flex-col items-center justify-center gap-3 py-10">
                 <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
                 <span className="text-sm text-zinc-500">Connecting...</span>
               </div>
             ) : (
-              <div className="gsap-fade flex flex-col">
+              <div key={mode} className="native-fade-blur flex flex-col">
                 <form onSubmit={handleSubmit}>
                   {mode === 'sign-up' && (
                     <div className="mb-6 text-center">

@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { MessageContent } from '@/app/chat/content/message-content'
 import { repairInterruptedCodeFence } from './markdown-repair'
-import { gsap } from 'gsap'
 import { transcriptDebug } from './transcript-debug'
 
 type MarkdownBlock = { id: string; text: string }
@@ -120,32 +119,26 @@ const MarkdownBlockView = React.memo(function MarkdownBlockView({
     const root = ref.current
     if (!root) return undefined
     animatedRef.current = true
-    transcriptDebug({ phase: 'gsap', elementCount: 1, settled: false })
+    transcriptDebug({ phase: 'animation', elementCount: 1, settled: false })
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      gsap.set(root, { opacity: 1 })
-      transcriptDebug({ phase: 'gsap', elementCount: 1, settled: true })
+      transcriptDebug({ phase: 'animation', elementCount: 1, settled: true })
       onCompleteRef.current?.()
       return undefined
     }
-    const context = gsap.context(() => {
-      gsap.fromTo(
-        root,
-        { opacity: 0 },
-        {
-          opacity: 1,
-          duration: 0.3,
-          ease: 'power2.out',
-          overwrite: 'auto',
-          onComplete: () => {
-            transcriptDebug({ phase: 'gsap', elementCount: 1, settled: true })
-            onCompleteRef.current?.()
-          },
-        },
-      )
-    }, root)
+    root.classList.remove('native-markdown-enter')
+    void root.offsetWidth
+    root.classList.add('native-markdown-enter')
+    const handleEnd = (event: AnimationEvent) => {
+      if (event.animationName !== 'native-markdown-enter') return
+      root.classList.remove('native-markdown-enter')
+      transcriptDebug({ phase: 'animation', elementCount: 1, settled: true })
+      onCompleteRef.current?.()
+    }
+    root.addEventListener('animationend', handleEnd)
     return () => {
       animatedRef.current = false
-      context.revert()
+      root.removeEventListener('animationend', handleEnd)
+      root.classList.remove('native-markdown-enter')
     }
   }, [animate, block.id])
 

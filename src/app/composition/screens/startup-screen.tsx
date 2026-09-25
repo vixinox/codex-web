@@ -1,4 +1,3 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useNavigate } from 'react-router'
 import { ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -6,174 +5,12 @@ import architectureDiagram from '@/assets/codex-web-architecture.svg'
 import { MockWorkspacePreview } from './mock/mock-workspace-preview'
 import { MockSettingsPreview } from './mock/mock-settings-preview'
 
-import { gsap } from 'gsap'
-import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { SplitText } from 'gsap/SplitText'
-
-if (typeof window !== 'undefined') {
-  gsap.registerPlugin(ScrollTrigger, SplitText)
-}
-
 export function StartupScreen() {
   const navigate = useNavigate()
   const isZh = typeof navigator !== 'undefined' && /^zh\b/i.test(navigator.language)
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  const pipelineLineRef = useRef<HTMLDivElement>(null)
-  const architectureFrameRef = useRef<HTMLDivElement>(null)
-  const architectureImageRef = useRef<HTMLImageElement>(null)
-
-  useLayoutEffect(() => {
-    const frame = architectureFrameRef.current
-    const image = architectureImageRef.current
-    if (!frame || !image) return
-
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (prefersReducedMotion || image.complete) {
-      gsap.set(frame, { autoAlpha: 1 })
-      return
-    }
-
-    gsap.set(frame, { autoAlpha: 0 })
-    let cancelled = false
-
-    const reveal = () => {
-      if (cancelled) return
-      gsap.to(frame, {
-        autoAlpha: 1,
-        duration: 0.5,
-        delay: 0.1,
-        ease: 'power2.out',
-        overwrite: 'auto',
-        onComplete: () => ScrollTrigger.refresh(),
-      })
-    }
-    const revealWithoutAnimation = () => {
-      if (cancelled) return
-      gsap.set(frame, { autoAlpha: 1 })
-      ScrollTrigger.refresh()
-    }
-
-    image.addEventListener('load', reveal)
-    image.addEventListener('error', revealWithoutAnimation)
-    if (image.complete) {
-      revealWithoutAnimation()
-    }
-  }, [])
-
-  useEffect(() => {
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const ctx = gsap.context(() => {
-      const createTextReveal = (
-        selector: string,
-        trigger: string | Element | null,
-        delay = 0.2,
-      ) => {
-        SplitText.create(selector, {
-          type: 'words,lines',
-          linesClass: 'line',
-          autoSplit: true,
-          mask: 'lines',
-          onSplit: (self) => {
-            const animation = gsap.from(self.lines, {
-              duration: 1,
-              delay,
-              yPercent: prefersReducedMotion ? 0 : 100,
-              stagger: prefersReducedMotion ? 0 : 0.1,
-              ease: 'expo.out',
-              paused: true,
-              scrollTrigger: trigger
-                ? {
-                    trigger,
-                    start: 'top 90%',
-                    toggleActions: 'play none none none',
-                  }
-                : undefined,
-            })
-
-            if (!trigger) {
-              animation.play()
-            }
-
-            return animation
-          },
-        })
-      }
-
-      createTextReveal('.hero-text', null)
-      createTextReveal('.architecture-title', '.arch-section')
-      createTextReveal('.architecture-description', '.arch-section', 0.4)
-      createTextReveal('.workspace-title', '.workspace-section')
-      createTextReveal('.workspace-description', '.workspace-section', 0.4)
-      createTextReveal('.settings-title', '.settings-section')
-      createTextReveal('.settings-description', '.settings-section', 0.4)
-
-      if (pipelineLineRef.current) {
-        gsap.fromTo(
-          pipelineLineRef.current,
-          { scaleY: 0 },
-          {
-            scaleY: 1,
-            delay: 0.2,
-            ease: 'none',
-            scrollTrigger: {
-              trigger: containerRef.current,
-              start: 'top top',
-              end: 'bottom bottom',
-              scrub: 0.5,
-            },
-          },
-        )
-      }
-
-      gsap.fromTo(
-        '.workspace-component',
-        {
-          borderColor: 'var(--border)',
-          boxShadow: '0 0 0 0px transparent',
-        },
-        {
-          borderColor: 'var(--primary)',
-          boxShadow: '0 10px 30px -10px rgba(0,0,0,0.05)',
-          duration: 1.2,
-          delay: 0.2,
-          ease: 'power2.out',
-          scrollTrigger: {
-            trigger: '.workspace-section',
-            start: 'top 60%',
-            toggleActions: 'play reverse play reverse',
-          },
-        },
-      )
-
-      gsap.fromTo(
-        '.settings-component',
-        {
-          borderColor: 'var(--border)',
-          boxShadow: '0 0 0 0px transparent',
-        },
-        {
-          borderColor: 'var(--primary)',
-          boxShadow: '0 10px 30px -10px rgba(0,0,0,0.05)',
-          duration: 1.2,
-          delay: 0.2,
-          ease: 'power2.out',
-          scrollTrigger: {
-            trigger: '.settings-section',
-            start: 'top 60%',
-            toggleActions: 'play reverse play reverse',
-          },
-        },
-      )
-    }, containerRef)
-
-    return () => {
-      ctx.revert()
-    }
-  }, [])
-
   return (
-    <div ref={containerRef} className="relative w-full overflow-x-hidden bg-background">
+    <div className="relative w-full overflow-x-hidden bg-background">
       <div className="absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] mask-[radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] bg-size-[24px_24px] opacity-[0.15]" />
 
       <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-20 px-5 py-10 text-foreground selection:bg-foreground selection:text-background sm:px-8 sm:py-14 lg:px-12 lg:py-16">
@@ -194,7 +31,7 @@ export function StartupScreen() {
               className="group rounded-full bg-foreground px-6 font-medium text-background transition-all hover:bg-foreground/90"
               onClick={() => navigate('/login')}
             >
-              {isZh ? '开始使用' : 'Get Started'}
+              {isZh ? '在线试用' : 'Get Started'}
               <ArrowRight className="ml-1.5 size-4" />
             </Button>
             <Button
@@ -215,11 +52,7 @@ export function StartupScreen() {
 
         <div className="relative flex flex-col gap-20 pl-0 md:pl-8">
           <div className="absolute top-0 left-0 hidden h-full w-1 overflow-hidden rounded-full bg-border/40 md:block">
-            <div
-              ref={pipelineLineRef}
-              className="h-full w-full origin-top rounded-full bg-linear-to-b from-primary via-success to-border"
-              style={{ transform: 'scaleY(0)' }}
-            />
+            <div className="h-full w-full rounded-full bg-linear-to-b from-primary via-success to-border" />
           </div>
 
           <section className="arch-section relative w-full space-y-4">
@@ -234,12 +67,8 @@ export function StartupScreen() {
               </p>
             </div>
 
-            <div
-              ref={architectureFrameRef}
-              className="w-full rounded-3xl border border-border bg-white p-4"
-            >
+            <div className="w-full rounded-3xl border border-border bg-white p-4">
               <img
-                ref={architectureImageRef}
                 src={architectureDiagram}
                 alt="Codex Web Architecture"
                 width={1379}

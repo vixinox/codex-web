@@ -1,5 +1,4 @@
 import * as React from 'react'
-import { gsap } from 'gsap'
 
 type Entry<T> = { key: string; item: T; present: boolean }
 
@@ -85,24 +84,20 @@ function FadePresenceItem({
       if (!present) onExitedRef.current()
       return
     }
-    const context = gsap.context(() => {
-      if (present) {
-        gsap.fromTo(
-          element,
-          { autoAlpha: 0 },
-          { autoAlpha: 1, duration: 0.18, ease: 'power2.out', overwrite: 'auto' },
-        )
-        return
-      }
-      gsap.to(element, {
-        autoAlpha: 0,
-        duration: 0.16,
-        ease: 'power1.out',
-        overwrite: 'auto',
-        onComplete: () => onExitedRef.current(),
-      })
-    }, element)
-    return () => context.revert()
+    const className = present ? 'native-presence-enter' : 'native-presence-exit'
+    element.classList.remove('native-presence-enter', 'native-presence-exit')
+    void element.offsetWidth
+    element.classList.add(className)
+    const handleEnd = (event: AnimationEvent) => {
+      if (event.animationName !== className) return
+      element.classList.remove(className)
+      if (!present) onExitedRef.current()
+    }
+    element.addEventListener('animationend', handleEnd)
+    return () => {
+      element.removeEventListener('animationend', handleEnd)
+      element.classList.remove(className)
+    }
   }, [present])
 
   return (

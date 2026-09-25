@@ -1,5 +1,5 @@
 type TranscriptDebugPayload = {
-  phase: 'event' | 'turn' | 'split' | 'render' | 'gsap'
+  phase: 'event' | 'turn' | 'split' | 'render' | 'animation'
   threadId?: string
   turnId?: string
   itemId?: string

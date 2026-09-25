@@ -100,9 +100,9 @@ turn 进入 terminal 状态时，`StreamingAssistant` 只 flush 尚未提交的�
 
 `TranscriptCollapsibleContent` 统一折叠动画和高度约束，使 process、问答详情、活动批次和文件详情使用同一行为。
 
-assistant Markdown block 在 turn 进行中按完整 Markdown 边界提交：已经闭合的 block 立即进入 transcript 并以整块透明度淡入，未闭合的 pending 尾部继续留在内存中，不展示 broken Markdown。turn 进入终态时只 flush 尚未提交的最后 block；历史 completed turn 直接显示，不重复播放进入动画。`MarkdownBlockView` 每收到一个新 block 执行一次 GSAP opacity enter，代码块、表格和普通文字使用相同的整块行为；GSAP 不使用 `x`、`y` 或 `transform`。reduced-motion 下直接完成。
+assistant Markdown block 在 turn 进行中按完整 Markdown 边界提交：已经闭合的 block 立即进入 transcript 并以整块透明度淡入，未闭合的 pending 尾部继续留在内存中，不展示 broken Markdown。turn 进入终态时只 flush 尚未提交的最后 block；历史 completed turn 直接显示，不重复播放进入动画。`MarkdownBlockView` 每收到一个新 block 执行一次原生 CSS opacity enter，代码块、表格和普通文字使用相同的整块行为。reduced-motion 下直接完成。
 
-开发环境可通过 `[transcript]` console 日志观察 event、turn、split、render 和 gsap 阶段。日志只包含 ID、状态、数量、长度和布尔值，不包含正文、原始 payload、路径、凭据或 workspace 信息。
+开发环境可通过 `[transcript]` console 日志观察 event、turn、split、render 和 animation 阶段。日志只包含 ID、状态、数量、长度和布尔值，不包含正文、原始 payload、路径、凭据或 workspace 信息。
 
 ## Owner 与 Guest
 

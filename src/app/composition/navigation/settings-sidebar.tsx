@@ -1,4 +1,4 @@
-import { useGsapEnter } from '@/lib/platform/browser/use-gsap-enter'
+import { useNativeEnter } from '@/lib/platform/browser/use-native-enter'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -19,7 +19,7 @@ export function SettingsSidebar({
   archivedDisabledMessage?: string
   showArchived?: boolean
 }) {
-  const sidebarRef = useGsapEnter<HTMLElement>([], { duration: 0.22, y: 0 })
+  const sidebarRef = useNativeEnter<HTMLElement>([], { duration: 0.22, y: 0 })
 
   return (
     <aside ref={sidebarRef} className="flex h-full w-72 shrink-0 flex-col">

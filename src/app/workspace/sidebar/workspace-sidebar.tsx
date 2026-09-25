@@ -6,7 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import type { WorkspaceSidebarModel } from '@/app/workspace/workspace-model'
 import type { WorkspaceRuntimeModel } from '@/app/workspace/runtime/use-codex-runtime-controller'
-import { useGsapFadeEnter } from '@/lib/platform/browser/use-gsap-enter'
+import { useNativeFadeEnter } from '@/lib/platform/browser/use-native-enter'
 import { ProjectNameDialog } from '../project-name-dialog'
 import { LoadError, ProjectItem, ThreadItem } from './sidebar-items'
 import { useStoredBoolean } from './sidebar-storage'
@@ -73,7 +73,7 @@ export function WorkspaceSidebar({
   /** Fixture workspaces keep collapse state in memory rather than local storage. */
   persistUiState?: boolean
 }) {
-  const sidebarRef = useGsapFadeEnter<HTMLElement>([settingsActive], {
+  const sidebarRef = useNativeFadeEnter<HTMLElement>([settingsActive], {
     duration: 0.22,
   })
   const [createOpen, setCreateOpen] = React.useState(false)
