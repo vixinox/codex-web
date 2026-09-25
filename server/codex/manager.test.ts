@@ -51,7 +51,6 @@ class AutoTransport implements RpcTransport {
 
 const config = {
   dataRoot: './.data/test',
-  codexRuntimeVersion: '0.153.0',
 } as ServerConfig
 
 const workspace = {

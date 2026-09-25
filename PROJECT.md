@@ -7,7 +7,7 @@
 ## 架构基线
 
 - Codex Web 是本地单用户 Codex 浏览器客户端：React 只访问 Fastify bridge；Fastify 管理 Better Auth、Credential、受控 Project、Codex App Server 和 REST/SSE。Fastify 只绑定 loopback，不支持多副本或多租户部署。
-- Codex runtime 由受管 manifest 和锁定的 `codex-cli 0.153.0` 管理。active runtime 完整时支持离线启动；没有可运行 runtime 时，Fastify 不监听端口并以脱敏错误退出。
+- Codex runtime 由受管 manifest 管理，默认获取最新 stable release。active runtime 完整时支持离线启动；新 runtime 必须通过完整性和 JSON-RPC smoke test；没有可运行 runtime 时，Fastify 不监听端口并以脱敏错误退出。
 - 浏览器不会接收 API key、宿主机路径、`CODEX_HOME`、rollout 路径、Git remote 或 App Server 进程信息。敏感数据不得进入日志、错误、SSE、前端缓存或测试产物。
 - Project 是 bridge 层的逻辑分组。Project/Thread/文件访问和写操作必须执行当前用户及受控根目录归属校验。
 - 用户级 `currentCredentialId` 是持久化的默认 Credential；runtime 的 `activeCredentialId` 只表示当前进程实际使用项。Credential 不绑定 Thread 或 Turn。
@@ -33,4 +33,4 @@
 ## 不可逆决策
 
 - 锁定版本的 App Server schema 和原始资料位于 [`docs/vendor/`](docs/vendor/)。
-- 锁定的 0.153.0 schema 没有 `readOnlyAccess` 参数，因此 bridge 不发送未验证的 read-root 格式。
+- 当前 bridge 不发送未验证的 `readOnlyAccess` 或 read-root 格式；runtime 协议能力以下载后的 JSON-RPC smoke test 为准。

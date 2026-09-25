@@ -41,7 +41,6 @@ type GitHubRelease = {
 
 import {
   CodexRuntimeError,
-  compatible,
   emptyManifest,
   isPathWithin,
   isSafeVersion,
@@ -55,13 +54,12 @@ import {
 } from './runtime-policy.js'
 
 export type { CodexRuntimeManifest } from './runtime-policy.js'
-export { CodexRuntimeError, SUPPORTED_CODEX_RANGE, targetFor } from './runtime-policy.js'
+export { CodexRuntimeError, targetFor } from './runtime-policy.js'
 
 export type CodexRuntimeStatus = {
   source: 'managed-release' | 'explicit-command'
   platform: string
   channel: 'stable'
-  requestedVersion: string | null
   activeVersion: string | null
   candidateVersion: string | null
   candidateStatus: 'none' | 'pending' | 'passed' | 'failed'
@@ -82,7 +80,6 @@ export class CodexRuntimeManager {
   private readonly target: PlatformTarget
   private manifest: CodexRuntimeManifest | null = null
   private checking: Promise<CodexRuntimeStatus> | null = null
-  private readonly config: ServerConfig
   private readonly request: typeof fetch
 
   constructor(
@@ -91,7 +88,6 @@ export class CodexRuntimeManager {
     platform = process.platform,
     architecture = process.arch,
   ) {
-    this.config = config
     this.request = request
     this.root = resolve(config.dataRoot, 'runtime')
     this.manifestPath = join(this.root, 'manifest.json')
@@ -109,59 +105,59 @@ export class CodexRuntimeManager {
     const manifest = await this.readManifest()
     if (
       manifest.active &&
-      compatible(manifest.active.version) &&
-      (!this.config.codexRuntimeVersion ||
-        manifest.active.version === this.config.codexRuntimeVersion) &&
+      isSafeVersion(manifest.active.version) &&
       (await this.validEntry(manifest.active))
     ) {
-      log.success(`Using verified Codex App Server ${manifest.active.version} from local cache`)
-      return {
-        version: manifest.active.version,
-        executablePath: manifest.active.executablePath,
-        platform: manifest.active.platform,
+      try {
+        const latest = await this.check()
+        if (latest.candidateVersion && latest.candidateVersion !== manifest.active.version) {
+          const installed = await this.install()
+          if (installed.candidateStatus === 'passed') {
+            const activated = await this.activate()
+            if (activated.activeVersion) {
+              const active = await this.readManifest()
+              if (active.active) return { ...active.active }
+            }
+          }
+        }
+      } catch (error) {
+        log.warn(`Latest runtime check failed; using cached runtime: ${safeError(error)}`)
+      }
+      const active = await this.readManifest()
+      if (active.active && (await this.validEntry(active.active))) {
+        log.success(`Using verified Codex App Server ${active.active.version} from local cache`)
+        return { ...active.active }
       }
     }
     if (manifest.active)
       log.warn('Cached Codex App Server runtime is missing or failed integrity validation')
 
-    const requested = this.config.codexRuntimeVersion
-    const attempts = requested ? [requested] : ['latest', '0.153.0']
-    log.info(
-      requested
-        ? `Runtime version lock is ${requested}; downloading only that version`
-        : 'No runtime version lock; trying stable/latest then 0.153.0',
-    )
     let lastError: unknown = null
-    for (const attempt of attempts) {
-      try {
-        log.info(`Runtime attempt: ${attempt}`)
-        if (attempt === 'latest') {
-          manifest.candidate = null
-          await this.writeManifest(manifest)
-        }
-        const status = await this.install(attempt === 'latest' ? undefined : attempt)
-        const next = await this.readManifest()
-        if (status.candidateStatus !== 'passed' || !next.candidate)
-          throw new CodexRuntimeError(
-            'CODEX_RUNTIME_VERIFICATION_FAILED',
-            `Codex App Server ${attempt} failed protocol verification`,
-          )
-        next.previous = next.active
-        next.active = next.candidate
-        next.candidate = null
-        next.restartRequired = false
-        await this.writeManifest(next)
-        log.success(`Codex App Server ${next.active.version} downloaded, verified, and activated`)
-        return {
-          version: next.active.version,
-          executablePath: next.active.executablePath,
-          platform: next.active.platform,
-        }
-      } catch (error) {
-        lastError = error
-        log.warn(`Runtime attempt ${attempt} failed: ${safeError(error)}`)
-        if (requested) break
+    try {
+      log.info('No usable cached runtime; downloading the latest stable release')
+      manifest.candidate = null
+      await this.writeManifest(manifest)
+      const status = await this.install()
+      const next = await this.readManifest()
+      if (status.candidateStatus !== 'passed' || !next.candidate)
+        throw new CodexRuntimeError(
+          'CODEX_RUNTIME_VERIFICATION_FAILED',
+          'Latest Codex App Server release failed protocol verification',
+        )
+      next.previous = next.active
+      next.active = next.candidate
+      next.candidate = null
+      next.restartRequired = false
+      await this.writeManifest(next)
+      log.success(`Codex App Server ${next.active.version} downloaded, verified, and activated`)
+      return {
+        version: next.active.version,
+        executablePath: next.active.executablePath,
+        platform: next.active.platform,
       }
+    } catch (error) {
+      lastError = error
+      log.warn(`Latest runtime attempt failed: ${safeError(error)}`)
     }
     throw new CodexRuntimeError(
       'CODEX_RUNTIME_REQUIRED',
@@ -179,26 +175,23 @@ export class CodexRuntimeManager {
     return { executable: manifest.active.executablePath, args: ['--listen', 'stdio://'] }
   }
 
-  async check(requestedVersion?: string | null): Promise<CodexRuntimeStatus> {
+  async check(): Promise<CodexRuntimeStatus> {
     if (this.checking) return this.checking
-    this.checking = this.checkInternal(requestedVersion).finally(() => {
+    this.checking = this.checkInternal().finally(() => {
       this.checking = null
     })
     return this.checking
   }
 
-  async install(version?: string): Promise<CodexRuntimeStatus> {
+  async install(): Promise<CodexRuntimeStatus> {
     const manifest = await this.readManifest()
-    const requested = version ?? manifest.candidate?.version ?? manifest.requestedVersion
-    log.info(
-      `Looking up Codex App Server release${requested ? ` ${requested}` : ' (stable/latest)'}`,
-    )
-    const release = await this.releaseFor(requested ?? undefined)
+    log.info('Looking up the latest stable Codex App Server release')
+    const release = await this.releaseFor(undefined)
     const releaseVersionValue = releaseVersion(release)
-    if (!releaseVersionValue || !compatible(releaseVersionValue))
+    if (!releaseVersionValue)
       throw new CodexRuntimeError(
         'CODEX_RUNTIME_UNSUPPORTED',
-        `Codex App Server ${releaseVersionValue ?? 'release'} is outside this Codex Web compatibility range`,
+        'Latest Codex App Server release has an invalid version',
       )
     const asset = release.assets.find((entry) => entry.name === this.target.assetName)
     if (!asset)
@@ -309,23 +302,15 @@ export class CodexRuntimeManager {
     await this.writeManifest(manifest)
   }
 
-  private async checkInternal(requestedVersion?: string | null): Promise<CodexRuntimeStatus> {
+  private async checkInternal(): Promise<CodexRuntimeStatus> {
     const manifest = await this.readManifest()
-    if (requestedVersion !== undefined) {
-      if (requestedVersion !== null && !isSafeVersion(requestedVersion))
-        throw new CodexRuntimeError(
-          'CODEX_RUNTIME_UNSUPPORTED',
-          'Codex version must use major.minor.patch',
-        )
-      manifest.requestedVersion = requestedVersion
-    }
     try {
-      const release = await this.releaseFor(manifest.requestedVersion ?? undefined)
+      const release = await this.releaseFor(undefined)
       const version = releaseVersion(release)
-      if (!version || !compatible(version))
+      if (!version)
         throw new CodexRuntimeError(
           'CODEX_RUNTIME_UNSUPPORTED',
-          `Codex App Server ${version ?? 'release'} is outside this Codex Web compatibility range`,
+          'Latest Codex App Server release has an invalid version',
         )
       if (!release.assets.some((asset) => asset.name === this.target.assetName))
         throw new CodexRuntimeError(
@@ -625,7 +610,6 @@ export class CodexRuntimeManager {
       source: 'managed-release',
       platform: this.target.id,
       channel: 'stable',
-      requestedVersion: manifest.requestedVersion,
       activeVersion: manifest.active?.version ?? null,
       candidateVersion: manifest.candidate?.version ?? null,
       candidateStatus: manifest.candidate?.verificationStatus ?? 'none',

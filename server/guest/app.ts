@@ -17,7 +17,6 @@ export async function buildGuestServer(
   app.get('/health', async () => ({
     status: 'ok',
     service: 'codex-web-guest',
-    codexRuntimeVersion: config.codexRuntimeVersion,
   }))
   app.get('/runtime-profile', async () => ({ profile: 'guest' }))
   app.route({

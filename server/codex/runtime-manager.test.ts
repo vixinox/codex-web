@@ -6,9 +6,9 @@ import path from 'node:path'
 import test from 'node:test'
 
 import type { ServerConfig } from '../config.js'
-import { CodexRuntimeManager, SUPPORTED_CODEX_RANGE, targetFor } from './runtime-manager.js'
+import { CodexRuntimeManager, targetFor } from './runtime-manager.js'
 
-function config(dataRoot: string, codexRuntimeVersion: string | null = null): ServerConfig {
+function config(dataRoot: string): ServerConfig {
   return {
     host: '127.0.0.1',
     port: 3000,
@@ -17,7 +17,6 @@ function config(dataRoot: string, codexRuntimeVersion: string | null = null): Se
     authSecret: 'test-secret-that-is-at-least-32-characters',
     authUrl: 'http://127.0.0.1:3000',
     trustedOrigins: ['http://localhost:5173'],
-    codexRuntimeVersion,
     dataRoot,
     maxActiveTasksPerUser: 2,
     credentialEncryptionKey: 'test-encryption-key',
@@ -45,7 +44,6 @@ test('maps only supported release targets', () => {
   )
   assert.equal(targetFor('linux', 'x64').id, 'linux-x64')
   assert.throws(() => targetFor('freebsd', 'x64'), /not supported/)
-  assert.deepEqual(SUPPORTED_CODEX_RANGE, { minimum: [0, 153, 0], maximum: [0, 153, 99] })
 })
 
 test('discovers a compatible candidate without changing the active runtime', async () => {
@@ -66,11 +64,10 @@ test('discovers a compatible candidate without changing the active runtime', asy
   const request: typeof fetch = async () => Response.json(release)
   try {
     const manager = new CodexRuntimeManager(config(root), request, 'win32', 'x64')
-    const checked = await manager.check('0.153.4')
+    const checked = await manager.check()
     assert.equal(checked.activeVersion, null)
     assert.equal(checked.candidateVersion, '0.153.4')
     assert.equal(checked.candidateStatus, 'pending')
-    assert.equal(checked.requestedVersion, '0.153.4')
 
     const reloaded = new CodexRuntimeManager(config(root), request, 'win32', 'x64')
     const persisted = await reloaded.status()
@@ -98,7 +95,7 @@ test('records an offline release check without discarding the usable state', asy
   }
 })
 
-test('uses a verified complete package without contacting GitHub during bootstrap', async () => {
+test('uses a verified complete package when the latest release check is offline', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'codex-web-runtime-test-'))
   let requests = 0
   const request: typeof fetch = async () => {
@@ -107,7 +104,7 @@ test('uses a verified complete package without contacting GitHub during bootstra
   }
   try {
     const runtimeRoot = path.join(root, 'runtime')
-    const packageRoot = path.join(runtimeRoot, 'releases', '0.153.0', 'windows-x64')
+    const packageRoot = path.join(runtimeRoot, 'releases', '0.200.0', 'windows-x64')
     const executable = path.join(packageRoot, 'bin', 'codex-app-server.exe')
     await mkdir(path.join(packageRoot, 'bin'), { recursive: true })
     await mkdir(path.join(packageRoot, 'codex-path'), { recursive: true })
@@ -128,9 +125,8 @@ test('uses a verified complete package without contacting GitHub during bootstra
       JSON.stringify({
         schemaVersion: 2,
         channel: 'stable',
-        requestedVersion: null,
         active: {
-          version: '0.153.0',
+          version: '0.200.0',
           platform: 'windows-x64',
           assetName: 'codex-app-server-package-x86_64-pc-windows-msvc.tar.gz',
           executablePath: executable,
@@ -146,9 +142,9 @@ test('uses a verified complete package without contacting GitHub during bootstra
     )
     const manager = new CodexRuntimeManager(config(root), request, 'win32', 'x64')
     const runtime = await manager.ensureRuntime()
-    assert.equal(runtime.version, '0.153.0')
+    assert.equal(runtime.version, '0.200.0')
     assert.equal(runtime.executablePath, executable)
-    assert.equal(requests, 0)
+    assert.equal(requests, 1)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -16,7 +16,6 @@ const config: ServerConfig = {
   authSecret: 'test-secret-that-is-at-least-32-characters',
   authUrl: 'http://127.0.0.1:3000',
   trustedOrigins: ['http://localhost:5173'],
-  codexRuntimeVersion: '0.153.0',
   dataRoot: './.data/codex',
   maxActiveTasksPerUser: 2,
   credentialEncryptionKey: 'test-encryption-key',

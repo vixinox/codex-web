@@ -12,8 +12,6 @@ export type ServerConfig = {
   authSecret: string
   authUrl: string
   trustedOrigins: string[]
-  /** Optional managed Codex App Server version lock. */
-  codexRuntimeVersion: string | null
   dataRoot: string
   maxActiveTasksPerUser: number
   credentialEncryptionKey: string
@@ -159,7 +157,6 @@ export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
     authSecret,
     authUrl,
     trustedOrigins,
-    codexRuntimeVersion: process.env.CODEX_RUNTIME_VERSION?.trim() || null,
     dataRoot,
     maxActiveTasksPerUser: positiveInt(process.env.CODEX_MAX_ACTIVE_TASKS_PER_USER, 2),
     credentialEncryptionKey: mode === 'guest' ? '' : credentialEncryptionKey(dataRoot),

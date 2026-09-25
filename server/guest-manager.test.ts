@@ -22,7 +22,6 @@ function manager(dataRoot: string) {
     authSecret: '',
     authUrl: 'http://127.0.0.1:3000',
     trustedOrigins: [],
-    codexRuntimeVersion: null,
     dataRoot,
     maxActiveTasksPerUser: 2,
     credentialEncryptionKey: '',

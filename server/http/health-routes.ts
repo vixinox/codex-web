@@ -10,7 +10,6 @@ export async function registerHealthRoutes(
   app.get('/health', async () => ({
     status: 'ok',
     service: 'codex-web-server',
-    codexRuntimeVersion: config.codexRuntimeVersion,
   }))
 
   app.get('/ready', async (_request, reply) => {
@@ -20,7 +19,6 @@ export async function registerHealthRoutes(
     return {
       status: ready ? 'ready' : 'not_ready',
       eventStoreHealthy,
-      codexRuntimeVersion: config.codexRuntimeVersion,
       codexRuntimeManaged: true,
       deployment: 'single-user-single-instance',
     }
