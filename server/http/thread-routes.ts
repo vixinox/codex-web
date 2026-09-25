@@ -8,7 +8,6 @@ import { log, safeError } from '../logger.js'
 import { apiError, codexFailure, requireSession, safeId, threadAccessFailure } from './common.js'
 import { parseSkillHandles, resolveSelectedSkills } from './skill-selection.js'
 import type { RouteContext } from './types.js'
-const reasoningEfforts = new Set(['low', 'medium', 'high', 'xhigh'])
 const MAX_INITIAL_MESSAGE_LENGTH = 256_000
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -34,6 +33,15 @@ export async function registerThreadRoutes(
   const threadDomain = createThreadDomain({
     workspace: dependencies.workspace,
     codex: dependencies.codex,
+  })
+  app.get('/api/capabilities', async (request, reply) => {
+    const session = await requireSession(request, reply, dependencies.auth)
+    if (!session) return
+    try {
+      return { models: (await dependencies.codex.modelCatalog?.(session.user.id)) ?? [] }
+    } catch {
+      return reply.status(503).send(apiError('CODEX_UNAVAILABLE', 'Codex capabilities unavailable'))
+    }
   })
   app.get('/api/threads', async (request, reply) => {
     const session = await requireSession(request, reply, dependencies.auth)
@@ -138,7 +146,7 @@ export async function registerThreadRoutes(
       text.length > MAX_INITIAL_MESSAGE_LENGTH ||
       !safeId(model) ||
       typeof reasoningEffort !== 'string' ||
-      !reasoningEfforts.has(reasoningEffort) ||
+      !safeId(reasoningEffort) ||
       selectedHandles === null
     )
       return reply
@@ -154,6 +162,16 @@ export async function registerThreadRoutes(
       const client = await (dependencies.codex.getReady
         ? dependencies.codex.getReady(session.user.id)
         : Promise.reject(new Error('CODEX_START_REQUIRED')))
+      const catalog = await dependencies.codex.modelCatalog?.(session.user.id)
+      const selectedModel = catalog?.find((entry) => entry.id === model)
+      if (
+        catalog &&
+        (!selectedModel ||
+          !selectedModel.reasoningEfforts.some((entry) => entry.id === reasoningEffort))
+      )
+        return reply
+          .status(400)
+          .send(apiError('INVALID_THREAD_REQUEST', 'Model settings are unavailable'))
       if (
         config.requireDangerousAccessConfirmation &&
         !dependencies.codex.getStatus?.(session.user.id)?.dangerousAccessConfirmed
@@ -441,7 +459,7 @@ export async function registerThreadRoutes(
         text.length > MAX_INITIAL_MESSAGE_LENGTH ||
         !safeId(model) ||
         typeof reasoningEffort !== 'string' ||
-        !reasoningEfforts.has(reasoningEffort) ||
+        !safeId(reasoningEffort) ||
         selectedHandles === null
       )
         return reply.status(400).send(apiError('INVALID_TURN_REQUEST', 'Invalid turn parameters'))
@@ -465,6 +483,16 @@ export async function registerThreadRoutes(
       })
       if (access.kind !== 'owned') return threadAccessFailure(reply, access)
       const client = access.client
+      const catalog = await dependencies.codex.modelCatalog?.(session.user.id)
+      const selectedModel = catalog?.find((entry) => entry.id === model)
+      if (
+        catalog &&
+        (!selectedModel ||
+          !selectedModel.reasoningEfforts.some((entry) => entry.id === reasoningEffort))
+      )
+        return reply
+          .status(400)
+          .send(apiError('INVALID_TURN_REQUEST', 'Model settings are unavailable'))
       const project = access.scope === 'project' ? { path: access.cwd } : null
       const userRoot = dependencies.workspace.getUserRoot(session.user.id)
       await dependencies.codex.ensureThread?.(session.user.id, threadId)

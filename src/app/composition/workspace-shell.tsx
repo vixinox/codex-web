@@ -20,6 +20,11 @@ import { WorkspaceFrame } from './workspace-frame'
 import { useGuestWorkspaceController } from '@/app/workspace/guest/use-guest-workspace-controller'
 import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
+import { fetchRuntimeCapabilities } from '@/lib/bridge/http/configuration'
+import {
+  composerCapabilitiesFromModels,
+  type ComposerCapabilities,
+} from '@/app/chat/composer/model/composer-capabilities'
 
 export type WorkspaceProfile = {
   kind: 'owner' | 'guest'
@@ -106,6 +111,18 @@ function WorkspaceShellContents({
   runtime: CodexRuntimeController
   profile?: Pick<WorkspaceProfile, 'client' | 'adapter' | 'kind'>
 }) {
+  const [capabilities, setCapabilities] = React.useState<ComposerCapabilities>()
+  React.useEffect(() => {
+    if (runtime.model.status !== 'started') return
+    void fetchRuntimeCapabilities().then((catalog) =>
+      setCapabilities(
+        composerCapabilitiesFromModels(catalog.models, 'full', {
+          attachments: true,
+          contextUsage: true,
+        }),
+      ),
+    )
+  }, [runtime.model.status])
   const route = useWorkspaceRouteController()
   const controllerRef = React.useRef<WorkspaceSidebarController | null>(null)
   const orchestration = useWorkspaceOrchestration(controllerRef, route)
@@ -128,6 +145,7 @@ function WorkspaceShellContents({
       controllerRef.current?.resolveThreadCreation(id, projectId, threadId),
     client: profile?.client,
     adapter: profile?.adapter,
+    capabilities,
   })
   const activeThread =
     route.selection && page.model.status === 'ready'
@@ -168,6 +186,7 @@ function WorkspaceShellContents({
         controller={controller}
         orchestration={orchestration}
         selectedNewChatProjectId={selectedNewChatProjectId}
+        capabilities={capabilities}
       />
     </WorkspaceFrame>
   )

@@ -8,6 +8,11 @@ import { usePendingThreadPresentation } from '@/app/chat/session/presentation/us
 import { useThreadDetailController } from '@/app/chat/session/controllers/use-thread-detail-controller'
 import type { WorkspaceSidebarModel } from '@/app/workspace/workspace-model'
 import { readGuestSession } from '@/lib/bridge/http/guest'
+import { fetchRuntimeCapabilities } from '@/lib/bridge/http/configuration'
+import {
+  composerCapabilitiesFromModels,
+  type ComposerCapabilities,
+} from '@/app/chat/composer/model/composer-capabilities'
 import { guestThreadClient } from '@/lib/bridge/thread-adapters'
 import { toast } from '@/components/ui/toast'
 import {
@@ -50,6 +55,7 @@ export function useGuestWorkspaceController(): GuestWorkspaceController {
   )
   const [ready, setReady] = React.useState(false)
   const [leaseId, setLeaseId] = React.useState<string | null>(null)
+  const [capabilities, setCapabilities] = React.useState<ComposerCapabilities | undefined>()
   const requestedThreadId = guestThreadIdFromPath(location.pathname)
   const settingsActive = location.pathname === '/app/settings'
   const refreshThreads = React.useCallback(async () => {
@@ -85,6 +91,13 @@ export function useGuestWorkspaceController(): GuestWorkspaceController {
         if (!session) throw new Error('Guest session unavailable')
         if (disposed) return
         setLeaseId(session.guestId)
+        const catalog = await fetchRuntimeCapabilities('/guest-api/capabilities')
+        setCapabilities(
+          composerCapabilitiesFromModels(catalog.models, 'workspaceWrite', {
+            attachments: false,
+            contextUsage: true,
+          }),
+        )
         await refreshThreads()
         if (!disposed) setReady(true)
       } catch {
@@ -128,6 +141,7 @@ export function useGuestWorkspaceController(): GuestWorkspaceController {
   const composer = useComposerController({
     userId: leaseId ?? 'guest',
     adapter: guestComposerAdapter,
+    capabilities,
     host: {
       target: { projectId: null, threadId: requestedThreadId },
       activeTurnId: activeTurn?.turnId ?? null,

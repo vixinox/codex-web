@@ -11,6 +11,7 @@ import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
 import type { ThreadClient } from '@/lib/bridge/thread-client'
 import type { ComposerRuntimeAdapter } from '../adapters/composer-adapter'
 import { ownerComposerAdapter } from '../adapters/owner-composer-adapter'
+import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 
 export type { ThreadPageTarget } from './use-thread-composer-controller'
 export type ThreadPageControllerOptions = {
@@ -35,6 +36,7 @@ export type ThreadPageControllerOptions = {
   ) => void
   client?: ThreadClient
   adapter?: ComposerRuntimeAdapter
+  capabilities?: ComposerCapabilities
 }
 
 export function useThreadPageController({
@@ -51,6 +53,7 @@ export function useThreadPageController({
   onThreadCreationResolved,
   client = ownerThreadClient,
   adapter = ownerComposerAdapter,
+  capabilities,
 }: ThreadPageControllerOptions) {
   const isThread = target.threadId !== null
   const detail = useThreadDetailController(
@@ -94,6 +97,7 @@ export function useThreadPageController({
     onThreadCreationFailed,
     onThreadCreationResolved,
     adapter,
+    capabilities,
   })
 
   const model = isThread

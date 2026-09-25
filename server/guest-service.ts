@@ -21,8 +21,6 @@ import {
 } from './codex/native-protocol.js'
 
 const ACTIVE_JOB_STATES = ['queued', 'running'] as const
-const GUEST_MODELS = new Set(['gpt-5.6-terra', 'gpt-5.5'])
-const GUEST_EFFORTS = new Set(['low', 'medium'])
 
 export type GuestIdentity = { id: string; userId: string; expiresAt: Date }
 export type GuestThreadRecord = {
@@ -67,6 +65,10 @@ export class GuestService {
 
   runtime() {
     return this.manager.getRuntime()
+  }
+
+  async modelCatalog() {
+    return this.manager.modelCatalog()
   }
 
   async subscribe(
@@ -187,7 +189,7 @@ export class GuestService {
   }
 
   async createThread(identity: GuestIdentity, input: GuestTurnInput) {
-    validateTurnInput(input)
+    await validateTurnInput(input, await this.modelCatalog())
     if (input.skillHandles && !this.manager.validateSkillHandles(identity.id, input.skillHandles))
       throw new Error('Selected guest skills are no longer available')
     const workspace = await this.ensureWorkspace(identity.id)
@@ -254,7 +256,7 @@ export class GuestService {
   }
 
   async startThreadTurn(identity: GuestIdentity, guestThreadId: string, input: GuestTurnInput) {
-    validateTurnInput(input)
+    await validateTurnInput(input, await this.modelCatalog())
     if (input.skillHandles && !this.manager.validateSkillHandles(identity.id, input.skillHandles))
       throw new Error('Selected guest skills are no longer available')
     const record = await this.thread(identity.id, guestThreadId)
@@ -794,13 +796,16 @@ export function guestTokenCapacity(limit: number, used: number) {
   return { available: Math.max(0, limit - used) }
 }
 
-function validateTurnInput(input: GuestTurnInput) {
+function validateTurnInput(
+  input: GuestTurnInput,
+  models: Array<{ id: string; reasoningEfforts: Array<{ id: string }> }>,
+) {
+  const model = models.find((entry) => entry.id === input.model)
   if (
     !input.text.trim() ||
     input.text.length > 32_000 ||
-    !GUEST_MODELS.has(input.model) ||
-    !GUEST_EFFORTS.has(input.reasoningEffort) ||
-    (input.collaborationMode && !['default', 'plan'].includes(input.collaborationMode))
+    (input.collaborationMode && !['default', 'plan'].includes(input.collaborationMode)) ||
+    !model?.reasoningEfforts.some((effort) => effort.id === input.reasoningEffort)
   )
     throw new Error('Invalid guest turn parameters')
 }

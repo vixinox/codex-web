@@ -18,18 +18,8 @@ import type { ChatAccess, ChatEffort, ChatModel } from '@/app/chat/model/compose
 import type { ComposerCapabilities } from '../model/composer-capabilities'
 import { contextUsagePercent, formatContextUsage, formatTokenTotals } from '../logic/usage-format'
 
-const MODEL_OPTIONS = [
-  { value: 'gpt-6-sol', label: '6 Sol' },
-  { value: 'gpt-5.6-sol', label: '5.6 Sol' },
-  { value: 'gpt-5.6-terra', label: '5.6 Terra' },
-  { value: 'gpt-5.5', label: '5.5' },
-] as const satisfies readonly { value: ChatModel; label: string }[]
-const EFFORT_OPTIONS = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' },
-] as const satisfies readonly { value: ChatEffort; label: string }[]
+const labelFromId = (value: string) =>
+  value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 const ACCESS_OPTIONS = [
   { value: 'full', label: 'Full access' },
   { value: 'readOnly', label: 'Read-only' },
@@ -84,9 +74,14 @@ export function ComposerControls({
   const visibleAccessOptions = ACCESS_OPTIONS.filter((option) =>
     capabilities.accessOptions.includes(option.value),
   )
-  const visibleModelOptions = MODEL_OPTIONS.filter((option) =>
-    capabilities.availableModels.includes(option.value),
-  )
+  const visibleModelOptions = capabilities.availableModels.map((value) => ({
+    value,
+    label: labelFromId(value),
+  }))
+  const effortOptions = capabilities.availableEfforts.map((value) => ({
+    value,
+    label: labelFromId(value),
+  }))
   const showAccessMode = visibleAccessOptions.length > 0
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -195,7 +190,7 @@ export function ComposerControls({
             }
           >
             <span className="truncate">
-              {labelFor(MODEL_OPTIONS, model)} {labelFor(EFFORT_OPTIONS, effort)}
+              {labelFromId(model)} {labelFromId(effort)}
             </span>
           </PopoverTrigger>
           <PopoverContent
@@ -235,7 +230,7 @@ export function ComposerControls({
               <Separator />
             </div>
             <div role="group" aria-label="Reasoning effort">
-              {EFFORT_OPTIONS.map((option) => {
+              {effortOptions.map((option) => {
                 const effortDisabled = capabilities.disabledEfforts.includes(option.value)
                 return (
                   <span

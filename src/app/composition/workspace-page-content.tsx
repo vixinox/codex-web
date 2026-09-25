@@ -16,6 +16,7 @@ import type { GuestWorkspaceController } from '@/app/workspace/guest/use-guest-w
 import { ThreadEmptyState } from '@/app/composition/layout/thread-empty-state'
 import { ComposerContainer } from '@/app/composition/layout/composer-container'
 import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
+import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 
 type ThreadPageController = ReturnType<typeof useThreadPageController>
 type WorkspaceOrchestration = ReturnType<typeof useWorkspaceOrchestration>
@@ -28,6 +29,7 @@ export function WorkspacePageContent({
   orchestration,
   selectedNewChatProjectId,
   guest,
+  capabilities,
 }: {
   route?: WorkspaceRouteController
   runtime?: CodexRuntimeController
@@ -36,6 +38,7 @@ export function WorkspacePageContent({
   orchestration?: WorkspaceOrchestration
   selectedNewChatProjectId?: string | null
   guest?: GuestWorkspaceController
+  capabilities?: ComposerCapabilities
 }) {
   if (guest) return <GuestWorkspacePageContent guest={guest} />
   if (!runtime || !route || !page || !controller || !orchestration) return null
@@ -88,7 +91,7 @@ export function WorkspacePageContent({
                   onCreateProject={orchestration.createProject}
                 />
               }
-              capabilities={OWNER_NEW_CHAT_COMPOSER_CAPABILITIES}
+              capabilities={capabilities ?? OWNER_NEW_CHAT_COMPOSER_CAPABILITIES}
             />
           ) : (
             <ThreadComposerSlot slot={page.composerSlot} actions={page.actions} />

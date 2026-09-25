@@ -1,4 +1,16 @@
 const DEFAULT_MODEL_CONTEXT_WINDOW = 256_000
+export type RuntimeModel = {
+  id: string
+  displayName: string
+  defaultReasoningEffort?: string
+  reasoningEfforts: Array<{ id: string; description?: string }>
+  inputModalities: string[]
+  supportsPersonality?: boolean
+}
+
+export async function fetchRuntimeCapabilities(path = '/api/capabilities') {
+  return requestJson<{ models: RuntimeModel[] }>(path, { method: 'GET' })
+}
 
 export type ContextWindowConfig = {
   modelContextWindow: number

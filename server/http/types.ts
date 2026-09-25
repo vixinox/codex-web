@@ -4,8 +4,10 @@ import type { NativeCodexMessage } from '../codex/native-protocol.js'
 import type { ThreadRuntimeStatus } from '../codex/event-hub.js'
 import type { GuestService } from '../guest-service.js'
 import type { WorkspaceService } from '../workspace.js'
+import type { RuntimeModel } from '../codex/model-catalog.js'
 
 export type CodexBridge = {
+  modelCatalog?: (userId: string) => Promise<RuntimeModel[]>
   get(
     userId: string,
     projectId: string,

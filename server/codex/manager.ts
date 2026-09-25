@@ -10,6 +10,7 @@ import { projectNativeMessage } from './native-protocol.js'
 import { requestIdCandidates, type RequestId } from './request-id.js'
 import { CodexRuntimeManager } from './runtime-manager.js'
 import type { CodexCommand } from './stdio-transport.js'
+import { projectModelCatalog, type RuntimeModel } from './model-catalog.js'
 
 type Instance = { client: CodexRpcClient; credentialId: string }
 export type CodexLifecycleStatus = 'stopped' | 'starting' | 'ready' | 'restarting' | 'failed'
@@ -188,6 +189,13 @@ export class CodexManager {
     } catch {
       throw new CodexLifecycleError('CODEX_UNAVAILABLE', 'Codex App Server unavailable')
     }
+  }
+
+  async modelCatalog(userId: string): Promise<RuntimeModel[]> {
+    const client = await this.getReady(userId)
+    return projectModelCatalog(
+      await client.request('model/list', { limit: 100, includeHidden: false }),
+    )
   }
 
   markCredentialPending(userId: string, credentialId: string) {

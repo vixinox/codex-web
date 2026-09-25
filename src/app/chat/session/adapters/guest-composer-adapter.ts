@@ -15,7 +15,7 @@ export const guestComposerAdapter: ComposerRuntimeAdapter = {
   threads: guestThreadClient,
   acceptedTurnIdIsNative: false,
   selection: createMemorySelectionStore({
-    model: 'gpt-6-sol',
+    model: 'gpt-5.6-terra',
     effort: 'medium',
     collaborationMode: 'default',
   } satisfies ComposerPreferences),

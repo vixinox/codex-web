@@ -10,6 +10,7 @@ import { CodexStdioTransport } from './codex/stdio-transport.js'
 import { requestIdCandidates, type RequestId } from './codex/request-id.js'
 import type { CodexRuntimeManager } from './codex/runtime-manager.js'
 import { describeUnknown, log } from './logger.js'
+import { projectModelCatalog, type RuntimeModel } from './codex/model-catalog.js'
 
 export type { GuestRuntimeStatus }
 export type GuestRuntime = GuestRuntimeContract
@@ -129,6 +130,15 @@ export class GuestCodexManager {
   async ready() {
     if (this.status !== 'ready' || !this.instance) throw new Error('Guest runtime is unavailable')
     return (await this.instance).client
+  }
+
+  async modelCatalog(): Promise<RuntimeModel[]> {
+    const client = await this.ready()
+    return projectModelCatalog(
+      await client.request('model/list', { limit: 100, includeHidden: false }),
+      this.guest.allowedModels,
+      this.guest.allowedReasoningEfforts,
+    )
   }
 
   async createThread(guestWorkspace: string) {

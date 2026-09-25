@@ -6,6 +6,7 @@ import type { ComposerHost } from '../adapters/composer-adapter'
 import type { ComposerRuntimeAdapter } from '../adapters/composer-adapter'
 import type { ChatPendingTurn } from '@/app/chat/model/types'
 import type { ComposerViewModel } from '@/app/chat/model/composer-types'
+import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 
 export type ThreadPageTarget = { projectId: string | null; threadId: string | null }
 export type ThreadComposerHost = {
@@ -35,6 +36,7 @@ type ThreadComposerOptions = {
     threadId: string,
   ) => void
   adapter?: ComposerRuntimeAdapter
+  capabilities?: ComposerCapabilities
 }
 
 /**
@@ -54,6 +56,7 @@ export function useThreadComposerController({
   onThreadCreationFailed,
   onThreadCreationResolved,
   adapter,
+  capabilities,
 }: ThreadComposerOptions) {
   const composerHost = React.useMemo<ComposerHost>(
     () => ({
@@ -70,6 +73,7 @@ export function useThreadComposerController({
   return useComposerController({
     userId,
     adapter: adapter ?? ownerComposerAdapter,
+    capabilities,
     host: composerHost,
     runtimeReady,
     runtimeStatus,

@@ -52,7 +52,7 @@ export function toChatThreadMetadata(
   }
 }
 
-const CHAT_MODELS = ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'] as const
+const CHAT_MODELS = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'] as const
 const CHAT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 
 function chatModel(value: unknown): ChatThreadPresentation['model'] {

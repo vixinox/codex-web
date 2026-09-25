@@ -14,8 +14,8 @@ describe('composer capability config', () => {
 
   it('keeps Guest attachments and high reasoning unavailable', () => {
     expect(GUEST_COMPOSER_CAPABILITIES.attachments).toBe(false)
-    expect(GUEST_COMPOSER_CAPABILITIES.availableModels).toContain('gpt-6-sol')
-    expect(GUEST_COMPOSER_CAPABILITIES.disabledModels).toEqual([])
+    expect(GUEST_COMPOSER_CAPABILITIES.availableModels).toContain('gpt-5.6-sol')
+    expect(GUEST_COMPOSER_CAPABILITIES.disabledModels).toContain('gpt-5.6-sol')
     expect(GUEST_COMPOSER_CAPABILITIES.disabledEfforts).toContain('high')
     expect(GUEST_COMPOSER_CAPABILITIES.disabledEfforts).toContain('xhigh')
     expect(GUEST_COMPOSER_CAPABILITIES.disabledEffortMessage).toBeTruthy()
@@ -23,7 +23,7 @@ describe('composer capability config', () => {
 
   it('keeps every configured access and effort value within the shared unions', () => {
     const accessValues = new Set(['full', 'readOnly', 'workspaceWrite'])
-    const modelValues = new Set(['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'])
+    const modelValues = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'])
     const effortValues = ['low', 'medium', 'high', 'xhigh']
     for (const capability of [
       GUEST_COMPOSER_CAPABILITIES,

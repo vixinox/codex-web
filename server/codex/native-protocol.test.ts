@@ -104,7 +104,7 @@ test('projects the Guest token-limit event with only safe numeric fields', () =>
   )
 })
 
-test('projects only supported Thread model and reasoning settings', () => {
+test('projects safe Thread model and reasoning settings', () => {
   assert.deepEqual(
     projectNativeThread({
       id: 'thread-1',
@@ -129,7 +129,7 @@ test('projects only supported Thread model and reasoning settings', () => {
       reasoningEffort: 'extreme',
       turns: [],
     }),
-    { id: 'thread-2', turns: [] },
+    { id: 'thread-2', model: 'future-model', turns: [] },
   )
 })
 
@@ -171,7 +171,10 @@ test('projects Thread settings updates without runtime or filesystem fields', ()
     }),
     {
       ok: true,
-      value: { method: 'thread/settings/updated', params: { threadId: 'thread-1' } },
+      value: {
+        method: 'thread/settings/updated',
+        params: { threadId: 'thread-1', model: 'x'.repeat(65) },
+      },
     },
   )
 })

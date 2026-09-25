@@ -33,6 +33,15 @@ export type GuestConfig = {
   maxQueue: number
   maxTokensPerTurn: number
   modelContextWindow: number
+  allowedModels: string[]
+  allowedReasoningEfforts: string[]
+}
+
+function csv(value: string | undefined) {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
 }
 
 function positiveInt(value: string | undefined, fallback: number) {
@@ -146,6 +155,8 @@ export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
             process.env.GUEST_MODEL_CONTEXT_WINDOW,
             256_000,
           ),
+          allowedModels: csv(process.env.GUEST_ALLOWED_MODELS),
+          allowedReasoningEfforts: csv(process.env.GUEST_ALLOWED_REASONING_EFFORTS),
         }
       : undefined
   return {

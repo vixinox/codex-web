@@ -87,6 +87,17 @@ export async function registerGuestRoutes(
     const identity = await requireGuest(request, reply)
     return identity ? service.capacity(identity) : undefined
   })
+  app.get('/guest-api/capabilities', async (request, reply) => {
+    const identity = await requireGuest(request, reply)
+    if (!identity) return
+    try {
+      return { models: await service.modelCatalog() }
+    } catch {
+      return reply
+        .status(503)
+        .send(apiError('GUEST_RUNTIME_UNAVAILABLE', 'Guest capabilities unavailable'))
+    }
+  })
   app.get('/guest-api/threads', async (request, reply) => {
     const identity = await requireGuest(request, reply)
     if (!identity) return
