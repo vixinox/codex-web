@@ -17,7 +17,7 @@ import type {
   WorkspaceProject,
   WorkspaceSidebarModel,
   WorkspaceThread,
-} from '@/app/workspace/model/types'
+} from '@/app/workspace/workspace-model'
 import type { WorkspaceRuntimeModel } from '@/app/workspace/runtime/use-codex-runtime-controller'
 
 type WorkspaceSidebarRuntimeSource = {

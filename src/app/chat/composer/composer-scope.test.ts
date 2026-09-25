@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { composerScopeForTarget } from './composer-scope'
+import { composerScopeForTarget } from './state/composer-scope'
 
 describe('composer scope keys', () => {
   it('keeps a Thread scope distinct from the New Chat draft scope for the same project', () => {

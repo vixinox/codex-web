@@ -1,10 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { composerStore, type ComposerPreferences } from '@/app/chat/composer/composer-store'
-import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/composer-capabilities'
-import { useComposerController } from './use-composer-controller'
-import type { ComposerRuntimeAdapter } from './composer-adapter'
+import { composerStore, type ComposerPreferences } from '@/app/chat/composer/state/composer-store'
+import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
+import { useComposerController } from './controllers/use-composer-controller'
+import type { ComposerRuntimeAdapter } from './adapters/composer-adapter'
 
 const skill = {
   handle: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',

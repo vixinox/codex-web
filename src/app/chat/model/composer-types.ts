@@ -1,5 +1,5 @@
 import type { ChatPlanPresentation, ChatTokenUsage, ChatUserInputRequest } from './types'
-import type { CodeSnippetAttachment } from '../composer/draft-model'
+import type { CodeSnippetAttachment } from '../composer/model/draft-model'
 
 export type ComposerSkill = {
   handle: string
@@ -14,7 +14,7 @@ export type SkillPickerViewModel =
   | { status: 'error'; items: readonly ComposerSkill[]; message: string }
   | { status: 'ready'; items: readonly ComposerSkill[] }
 
-export type ChatModel = 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.5'
+export type ChatModel = 'gpt-6-sol' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.5'
 export type ChatEffort = 'low' | 'medium' | 'high' | 'xhigh'
 /**
  * The owner workspace is allowed to opt into full access. Other workspace

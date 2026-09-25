@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ComposerViewModel } from '@/app/chat/model/composer-types'
-import { buildThreadComposerSlot } from './thread-composer-slot'
+import { buildThreadComposerSlot } from './presentation/thread-composer-slot'
 
 const composer = (error: string | null = null) => ({ error }) as ComposerViewModel
 

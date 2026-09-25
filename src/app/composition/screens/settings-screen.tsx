@@ -1,8 +1,8 @@
-import { AppearanceSection } from '@/app/settings/appearance/appearance-section'
-// import { ConfigurationSection } from '@/app/settings/configuration/configuration-section'
+import { AppearanceSection } from '@/app/settings/appearance-section'
+// import { ConfigurationSection } from '@/app/settings/configuration-section'
 import { CredentialPanel } from '@/app/settings/credential/credential-panel'
 import { useSettingsController } from '@/app/settings/credential/use-settings-controller'
-import { GuestCapacitySection } from '@/app/settings/guest-capacity/guest-capacity-section'
+import { GuestCapacitySection } from '@/app/settings/guest-capacity-section'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 
 export function SettingsScreen({

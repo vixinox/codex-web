@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   GUEST_COMPOSER_CAPABILITIES,
   OWNER_THREAD_COMPOSER_CAPABILITIES,
-} from './composer-capabilities'
+} from './model/composer-capabilities'
 import { syncComposerPreferences } from './model-selection-sync'
 
 const current = {

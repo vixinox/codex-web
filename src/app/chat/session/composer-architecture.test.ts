@@ -5,9 +5,9 @@ import { describe, expect, it } from 'vitest'
 import {
   GUEST_COMPOSER_CAPABILITIES,
   OWNER_THREAD_COMPOSER_CAPABILITIES,
-} from '../composer/composer-capabilities'
-import { guestComposerAdapter } from './guest-composer-adapter'
-import { ownerComposerAdapter } from './owner-composer-adapter'
+} from '../composer/model/composer-capabilities'
+import { guestComposerAdapter } from './adapters/guest-composer-adapter'
+import { ownerComposerAdapter } from './adapters/owner-composer-adapter'
 import { guestThreadClient, ownerThreadClient } from '@/lib/bridge/thread-adapters'
 
 const source = (path: string) =>
@@ -16,13 +16,13 @@ const source = (path: string) =>
 describe('Composer architecture boundaries', () => {
   it('keeps shared Composer and Thread lifecycle modules transport agnostic', () => {
     const shared = [
-      '../composer/composer-view-model.ts',
-      '../composer/model-selection-sync.ts',
-      './use-composer-controller.ts',
-      './use-thread-detail-controller.ts',
-      './use-pending-thread-presentation.ts',
-      './thread-pending-reconciliation.ts',
-      './thread-session-store.ts',
+      '../composer/model/composer-view-model.ts',
+      '../composer/state/model-selection-sync.ts',
+      './controllers/use-composer-controller.ts',
+      './controllers/use-thread-detail-controller.ts',
+      './presentation/use-pending-thread-presentation.ts',
+      './state/thread-pending-reconciliation.ts',
+      './state/thread-session-store.ts',
     ].map(source)
 
     for (const contents of shared) {
@@ -42,8 +42,8 @@ describe('Composer architecture boundaries', () => {
   })
 
   it('prevents runtime adapters from importing the other runtime transport', () => {
-    const owner = source('./owner-composer-adapter.ts')
-    const guest = source('./guest-composer-adapter.ts')
+    const owner = source('./adapters/owner-composer-adapter.ts')
+    const guest = source('./adapters/guest-composer-adapter.ts')
 
     expect(owner).not.toMatch(/http\/guest|guestThreadClient|\/guest-api\//)
     expect(guest).not.toMatch(/http\/threads|http\/configuration|ownerThreadClient|['"]\/api\//)

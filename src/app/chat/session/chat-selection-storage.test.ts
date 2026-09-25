@@ -5,7 +5,7 @@ import {
   readThreadSelection,
   writeNewChatSelection,
   writeThreadSelection,
-} from './chat-selection-storage'
+} from './state/chat-selection-storage'
 
 describe('chat model selection storage', () => {
   beforeEach(() => localStorage.clear())

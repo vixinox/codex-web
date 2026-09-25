@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { openGuestEventStream, readGuestSession } from './guest'
-import { guestComposerAdapter } from '@/app/chat/session/guest-composer-adapter'
+import { guestComposerAdapter } from '@/app/chat/session/adapters/guest-composer-adapter'
 
 class FakeEventSource {
   static latest: FakeEventSource | null = null

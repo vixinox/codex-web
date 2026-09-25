@@ -1,0 +1,549 @@
+import * as React from 'react'
+
+import {
+  clearComposerDraft,
+  clearComposerSkills,
+  ensureComposerScope,
+  setComposerDraft,
+  updateComposerPreferences,
+  useComposerScopeSnapshot,
+  type ComposerPreferences,
+} from '@/app/chat/composer/state/composer-store'
+import { composerScopeForTarget } from '@/app/chat/composer/state/composer-scope'
+import { toComposerUsageView } from '@/app/chat/composer/model/composer-view-model'
+import {
+  syncComposerPreferences,
+  type ThreadComposerSelection,
+} from '@/app/chat/composer/state/model-selection-sync'
+import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
+import type {
+  ChatEffort,
+  ChatModel,
+  CollaborationMode,
+  ComposerActions,
+  ComposerSkill,
+  ComposerViewModel,
+  SkillPickerViewModel,
+} from '@/app/chat/model/composer-types'
+import type { ChatPendingTurn, ChatTokenUsage } from '@/app/chat/model/types'
+import type { CodeSnippetAttachment } from '@/app/chat/composer/model/draft-model'
+import { waitForThreadAvailability } from '@/lib/bridge/thread-client'
+import type {
+  AcceptedTurn,
+  ComposerHost,
+  ComposerRuntimeAdapter,
+} from '../adapters/composer-adapter'
+
+export type {
+  AcceptedTurn,
+  ComposerHost,
+  ComposerRuntimeAdapter,
+} from '../adapters/composer-adapter'
+
+type ComposerControllerOptions = {
+  userId: string
+  adapter: ComposerRuntimeAdapter
+  host: ComposerHost
+  /** Screen-level override of the adapter capability config, e.g. New Chat. */
+  capabilities?: ComposerCapabilities
+  runtimeReady: boolean
+  runtimeStatus?: string
+  working: boolean
+  tokenUsage?: ChatTokenUsage
+  threadSelection?: ThreadComposerSelection
+  onPendingChange?: (pending: ChatPendingTurn | null, key: string | null) => void
+  onThreadCreationStart?: (projectId: string | null, title: string) => string
+  onThreadCreationFailed?: (placeholderId: string, message: string) => void
+  onThreadCreationResolved?: (
+    placeholderId: string,
+    projectId: string | null,
+    threadId: string,
+  ) => void
+}
+
+const MAX_RETRIES = 5
+const FALLBACK_PREFERENCES: ComposerPreferences = {
+  model: 'gpt-5.6-sol',
+  effort: 'medium',
+  collaborationMode: 'default',
+}
+
+/**
+ * The single Composer state machine for both runtimes. Runtime differences
+ * arrive through `adapter` (transport, capability config, selection storage)
+ * and composition differences through `host` (navigation, refresh, feedback).
+ *
+ * Host callbacks are read through a ref so a host that rebuilds its callback
+ * object each render does not re-run the Skill and context-window loads.
+ */
+export function useComposerController({
+  userId,
+  adapter,
+  host,
+  capabilities,
+  runtimeReady,
+  runtimeStatus,
+  working,
+  tokenUsage,
+  threadSelection,
+  onPendingChange,
+  onThreadCreationStart,
+  onThreadCreationFailed,
+  onThreadCreationResolved,
+}: ComposerControllerOptions) {
+  const hostRef = React.useRef(host)
+  React.useEffect(() => {
+    hostRef.current = host
+  }, [host])
+  const scope = composerScopeForTarget(userId, host.target)
+  const targetProjectId = host.target.projectId
+  const selection = adapter.selection
+  ensureComposerScope(scope, selection ? selection.read(userId, host.target) : FALLBACK_PREFERENCES)
+  const snapshot = useComposerScopeSnapshot(scope)
+  const resolvedCapabilities = capabilities ?? adapter.capabilities
+  const appliedThreadSelections = React.useRef(
+    new Map<string, ThreadComposerSelection | undefined>(),
+  )
+  const createdThreadScopes = React.useRef(new Set<string>())
+  const [error, setError] = React.useState<string | null>(null)
+  const [retryAttempt, setRetryAttempt] = React.useState(0)
+  // local: optimistic compact intent, not an App Server turn field.
+  const [compacting, setCompacting] = React.useState(false)
+  const [submitting, setSubmitting] = React.useState(false)
+  const [skills, setSkills] = React.useState<SkillPickerViewModel>({
+    status: 'loading',
+    items: [],
+  })
+  const [skillRetryKey, setSkillRetryKey] = React.useState(0)
+  const [settledSkillRequest, setSettledSkillRequest] = React.useState<string | null>(null)
+  const [contextWindow, setContextWindow] = React.useState<number | undefined>(undefined)
+  const operation = React.useRef<AbortController | null>(null)
+  const sequence = React.useRef(0)
+  const targetGeneration = React.useRef(0)
+  const targetKey = `${host.target.projectId ?? '<root>'}\0${host.target.threadId ?? '<new>'}`
+  const previousTargetKey = React.useRef(targetKey)
+  // Invalidate old async callbacks during the render that observes a route
+  // change. An effect runs too late for requests that settle immediately.
+  if (previousTargetKey.current !== targetKey) {
+    previousTargetKey.current = targetKey
+    targetGeneration.current += 1
+    // Keep the old request running, but let the new route submit independently.
+    operation.current = null
+  }
+  React.useEffect(() => {
+    setSubmitting(false)
+    setError(null)
+  }, [targetKey])
+
+  React.useEffect(() => {
+    const hasApplied = appliedThreadSelections.current.has(scope)
+    const applied = appliedThreadSelections.current.get(scope)
+    const createdThread = createdThreadScopes.current.has(scope)
+    if (createdThread && !threadSelection) return
+    if (createdThread) {
+      createdThreadScopes.current.delete(scope)
+      appliedThreadSelections.current.set(scope, threadSelection)
+      return
+    }
+    if (
+      hasApplied &&
+      applied?.model === threadSelection?.model &&
+      applied?.reasoningEffort === threadSelection?.reasoningEffort
+    )
+      return
+    const preferences = syncComposerPreferences(
+      snapshot.preferences,
+      threadSelection,
+      resolvedCapabilities,
+      hasApplied ? applied : undefined,
+    )
+    appliedThreadSelections.current.set(scope, threadSelection)
+    if (
+      preferences.model === snapshot.preferences.model &&
+      preferences.effort === snapshot.preferences.effort
+    )
+      return
+    updateComposerPreferences(scope, () => preferences)
+    if (host.target.threadId) selection?.write(userId, host.target, preferences)
+  }, [
+    host.target,
+    resolvedCapabilities,
+    scope,
+    selection,
+    snapshot.preferences,
+    threadSelection,
+    userId,
+  ])
+
+  // Selection defaults follow the scope the user is actually looking at.
+  const persistSelection = React.useCallback(
+    (threadId: string | null, preferences: ComposerPreferences) => {
+      if (!selection) return
+      selection.write(
+        userId,
+        { projectId: hostRef.current.target.projectId, threadId },
+        preferences,
+      )
+    },
+    [selection, userId],
+  )
+
+  const updatePreferences = React.useCallback(
+    (update: (preferences: ComposerPreferences) => ComposerPreferences) => {
+      const next = updateComposerPreferences(scope, update)
+      persistSelection(hostRef.current.target.threadId, next)
+    },
+    [persistSelection, scope],
+  )
+
+  const setDraft = React.useCallback(
+    (draft: string, nextSkills?: readonly ComposerSkill[]) => {
+      setComposerDraft(scope, draft, nextSkills)
+      setError(null)
+    },
+    [scope],
+  )
+  const setModel = React.useCallback(
+    (model: ChatModel) => {
+      updatePreferences((current) => ({ ...current, model }))
+    },
+    [updatePreferences],
+  )
+  const setEffort = React.useCallback(
+    (effort: ChatEffort) => {
+      updatePreferences((current) => ({ ...current, effort }))
+    },
+    [updatePreferences],
+  )
+  const setCollaborationMode = React.useCallback(
+    (collaborationMode: CollaborationMode) => {
+      updatePreferences((current) => ({ ...current, collaborationMode }))
+    },
+    [updatePreferences],
+  )
+
+  React.useEffect(() => {
+    if (!runtimeReady) return
+    const controller = new AbortController()
+    const requestKey = `${targetProjectId ?? '<root>'}\0${skillRetryKey}`
+    void adapter
+      .listSkills(targetProjectId, controller.signal)
+      .then((items) => {
+        if (controller.signal.aborted) return undefined
+        setSkills({ status: 'ready', items })
+        setSettledSkillRequest(requestKey)
+        return undefined
+      })
+      .catch((nextError: unknown) => {
+        if (
+          controller.signal.aborted ||
+          (nextError instanceof DOMException && nextError.name === 'AbortError')
+        )
+          return
+        if (isCodexUnavailable(nextError)) hostRef.current.onUnavailable?.()
+        setSkills({
+          status: 'error',
+          items: [],
+          message:
+            adapter.messages?.skillsError ??
+            (nextError instanceof Error && nextError.message
+              ? nextError.message
+              : 'Could not load skills right now.'),
+        })
+        setSettledSkillRequest(requestKey)
+      })
+    return () => controller.abort()
+  }, [adapter, runtimeReady, skillRetryKey, targetProjectId])
+
+  React.useEffect(
+    () => adapter.subscribeToSkillChanges?.(() => setSkillRetryKey((value) => value + 1)),
+    [adapter],
+  )
+
+  const readContextWindow = adapter.readContextWindow
+  React.useEffect(() => {
+    if (!runtimeReady || !readContextWindow) return
+    const controller = new AbortController()
+    void readContextWindow(controller.signal)
+      .then((window) => {
+        if (!controller.signal.aborted) setContextWindow(window)
+        return undefined
+      })
+      .catch((nextError: unknown) => {
+        if (
+          controller.signal.aborted ||
+          (nextError instanceof DOMException && nextError.name === 'AbortError')
+        )
+          return
+        if (isCodexUnavailable(nextError)) hostRef.current.onUnavailable?.()
+        setContextWindow(undefined)
+      })
+    return () => controller.abort()
+  }, [readContextWindow, runtimeReady, runtimeStatus])
+
+  const submit = React.useCallback(
+    async (
+      text: string,
+      submittedSkills: readonly ComposerSkill[] = snapshot.skills,
+      mode = snapshot.preferences.collaborationMode,
+      attachments: readonly Pick<
+        CodeSnippetAttachment,
+        'text' | 'title' | 'lineCount' | 'characterCount'
+      >[] = [],
+    ) => {
+      if (!text.trim() || operation.current) return
+      const target = hostRef.current.target
+      const generation = targetGeneration.current
+      const controller = new AbortController()
+      operation.current = controller
+      const clientTurnId = `client-turn-${++sequence.current}`
+      const placeholderId = !target.threadId
+        ? onThreadCreationStart?.(target.projectId, text)
+        : undefined
+      const optimisticTurn: ChatPendingTurn = {
+        clientTurnId,
+        projectId: target.projectId,
+        optimisticThreadId: `optimistic-thread-${sequence.current}`,
+        ...(target.threadId ? { nativeThreadId: target.threadId } : {}),
+        text,
+        content: [
+          ...submittedSkills.map((skill) => ({
+            type: 'reference' as const,
+            kind: 'skill' as const,
+            label: skill.displayName,
+          })),
+          ...attachments.map((attachment) => ({ type: 'codeSnippet' as const, ...attachment })),
+          { type: 'text' as const, text },
+        ],
+        startedAt: Date.now(),
+      }
+      onPendingChange?.(
+        optimisticTurn,
+        target.threadId ? `${target.projectId ?? '<root>'}\0${target.threadId}` : scope,
+      )
+      setSubmitting(true)
+      setError(null)
+      setRetryAttempt(0)
+      const input = {
+        projectId: target.projectId,
+        text,
+        model: snapshot.preferences.model,
+        reasoningEffort: snapshot.preferences.effort,
+        collaborationMode: mode,
+        skillHandles: submittedSkills.map((skill) => skill.handle),
+      }
+      let accepted: AcceptedTurn | undefined
+      try {
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
+          try {
+            if (target.threadId) {
+              const result = await adapter.threads.startTurn(
+                target.threadId,
+                input,
+                controller.signal,
+              )
+              accepted = {
+                projectId: target.projectId,
+                threadId: target.threadId,
+                turnId: result.turnId,
+              }
+            } else {
+              accepted = await adapter.threads.createThread(input, controller.signal)
+            }
+            break
+          } catch (nextError) {
+            if (!isNetworkError(nextError) || attempt === MAX_RETRIES) throw nextError
+            setRetryAttempt(attempt)
+            await waitForRetry(controller.signal, 2 ** (attempt - 1) * 1000)
+          }
+        }
+        if (!accepted) return
+        const acceptedTurn = accepted
+        if (placeholderId)
+          onThreadCreationResolved?.(placeholderId, acceptedTurn.projectId, acceptedTurn.threadId)
+        if (generation !== targetGeneration.current) return
+        hostRef.current.onTurnAccepted(acceptedTurn)
+        // local: optimistic turn shaped like native presentation until reconciliation.
+        const pendingTurn: ChatPendingTurn = {
+          ...optimisticTurn,
+          projectId: acceptedTurn.projectId,
+          nativeThreadId: acceptedTurn.threadId,
+          ...(adapter.acceptedTurnIdIsNative ? { nativeTurnId: acceptedTurn.turnId } : {}),
+        }
+        if (generation !== targetGeneration.current) return
+        onPendingChange?.(
+          pendingTurn,
+          composerScopeForTarget(userId, {
+            projectId: acceptedTurn.projectId,
+            threadId: acceptedTurn.threadId,
+          }),
+        )
+        clearComposerDraft(scope)
+        clearComposerSkills(scope)
+        updateComposerPreferences(scope, (current) => ({ ...current, collaborationMode: mode }))
+        const submitted: ComposerPreferences = {
+          ...snapshot.preferences,
+          collaborationMode: mode,
+        }
+        persistSelection(target.threadId ?? acceptedTurn.threadId, submitted)
+        if (!target.threadId) {
+          const createdScope = composerScopeForTarget(userId, {
+            projectId: acceptedTurn.projectId,
+            threadId: acceptedTurn.threadId,
+          })
+          updateComposerPreferences(createdScope, () => submitted)
+          createdThreadScopes.current.add(createdScope)
+        }
+        // Establish the native Thread URL as soon as creation is accepted so
+        // Settings/back navigation never loses the source while availability
+        // polling is still in progress. Keep the local preference/pending
+        // updates above synchronous with the accepted response.
+        if (!target.threadId) hostRef.current.onThreadCreated?.(acceptedTurn)
+        if (!target.threadId)
+          await waitForThreadAvailability(
+            (signal) =>
+              adapter.threads.readThread(acceptedTurn.projectId, acceptedTurn.threadId, signal),
+            controller.signal,
+          )
+        if (target.threadId) hostRef.current.onTurnFollowed?.(acceptedTurn)
+      } catch (nextError) {
+        if (generation === targetGeneration.current) onPendingChange?.(null, null)
+        if (nextError instanceof DOMException && nextError.name === 'AbortError') return
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : (adapter.messages?.submitError ?? 'Codex could not send this message.')
+        if (generation === targetGeneration.current) {
+          setError(message)
+          if (placeholderId) onThreadCreationFailed?.(placeholderId, message)
+          hostRef.current.onError?.(message)
+          if (isCodexUnavailable(nextError)) hostRef.current.onUnavailable?.()
+        }
+      } finally {
+        if (operation.current === controller) operation.current = null
+        if (generation === targetGeneration.current) {
+          setSubmitting(false)
+          setRetryAttempt(0)
+        }
+      }
+    },
+    [
+      adapter,
+      onPendingChange,
+      persistSelection,
+      scope,
+      snapshot.preferences,
+      snapshot.skills,
+      userId,
+    ],
+  )
+
+  const stop = React.useCallback(async () => {
+    const current = hostRef.current
+    // Composition-owned cancel (e.g. the Guest lease) clears its own active Turn
+    // even when cancel fails; a route-owned cancel only refreshes on success.
+    if (current.cancelActiveTurn) {
+      try {
+        await current.cancelActiveTurn()
+      } finally {
+        current.onTurnCancelled?.()
+      }
+      return
+    }
+    if (!current.target.threadId || !working || !current.activeTurnId) return
+    await adapter.threads.cancelTurn(current.target.threadId, current.activeTurnId)
+    current.onTurnCancelled?.()
+  }, [adapter, working])
+
+  const compact = React.useCallback(async () => {
+    const current = hostRef.current
+    if (!current.target.threadId || compacting || working) return
+    setCompacting(true)
+    try {
+      await adapter.threads.compactThread(current.target.threadId)
+      setCompacting(false)
+    } catch (nextError) {
+      setCompacting(false)
+      const message =
+        adapter.messages?.compactError ??
+        (nextError instanceof Error ? nextError.message : 'Codex could not compact this chat.')
+      setError(message)
+      current.onError?.(message)
+      if (isCodexUnavailable(nextError)) current.onUnavailable?.()
+    }
+  }, [adapter, compacting, working])
+
+  const actions: ComposerActions = {
+    setDraft,
+    setModel,
+    setEffort,
+    setCollaborationMode,
+    retrySkills: () => setSkillRetryKey((value) => value + 1),
+    submit: (text, skills, attachments) =>
+      submit(text, skills, snapshot.preferences.collaborationMode, attachments),
+    submitWithMode: (text, mode) => submit(text, snapshot.skills, mode),
+    onCommand: (command) => {
+      if (command === 'compact') void compact()
+      else setCollaborationMode('plan')
+    },
+    stop,
+  }
+  const skillRequestKey = `${targetProjectId ?? '<root>'}\0${skillRetryKey}`
+  const viewSkills: SkillPickerViewModel = !runtimeReady
+    ? { status: 'ready', items: [] }
+    : settledSkillRequest === skillRequestKey
+      ? skills
+      : { status: 'loading', items: skills.items }
+  const usage = toComposerUsageView({
+    thread: tokenUsage ? { tokenUsage } : null,
+    contextWindow,
+    runtimeReady,
+  })
+  const viewModel: ComposerViewModel = {
+    draft: snapshot.draft,
+    model: snapshot.preferences.model,
+    effort: snapshot.preferences.effort,
+    collaborationMode: snapshot.preferences.collaborationMode,
+    submitting,
+    working: working || compacting,
+    error,
+    ...usage,
+    skills: viewSkills,
+    selectedSkills: snapshot.skills,
+  }
+  return {
+    scope,
+    viewModel,
+    actions,
+    capabilities: resolvedCapabilities,
+    retryState: retryAttempt ? { attempt: retryAttempt, maxAttempts: MAX_RETRIES } : null,
+    compacting,
+  }
+}
+
+function isNetworkError(error: unknown) {
+  const status = (error as { status?: unknown })?.status
+  return (
+    typeof status === 'number' &&
+    (status === 0 || status === 408 || status === 429 || status >= 500)
+  )
+}
+
+function isCodexUnavailable(error: unknown) {
+  const value = error as { status?: unknown; code?: unknown }
+  return value?.code === 'CODEX_UNAVAILABLE' || value?.status === 502
+}
+
+function waitForRetry(signal: AbortSignal, delay: number) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(resolve, delay)
+    signal.addEventListener(
+      'abort',
+      () => {
+        window.clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+}

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import { ComposerInput } from '@/app/chat/composer/composer-input'
-import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/composer-capabilities'
+import { ComposerInput } from '@/app/chat/composer/ui/composer-input'
+import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
 import { cn } from '@/lib/utils'
@@ -45,7 +45,7 @@ export function MockWorkspacePreview({ className }: { className?: string }) {
           activeThreadId={MOCK_THREAD_ID}
           settingsActive={false}
           newChatActive={false}
-          onOpenSettings={() => { }}
+          onOpenSettings={() => {}}
           onStartCodex={async () => true}
           onSignOut={async () => undefined}
           onOpenNewChat={() => undefined}
@@ -62,7 +62,6 @@ export function MockWorkspacePreview({ className }: { className?: string }) {
           persistUiState={false}
         />
         <main className="flex min-w-0 flex-1 flex-col rounded-tl-3xl bg-app-surface">
-
           <header className="relative z-10 -mb-14 min-h-14 rounded-tl-3xl bg-linear-to-b from-app-surface from-70% to-transparent p-4 pb-6">
             <h1 className="max-w-[40ch] truncate font-medium">{MOCK_THREAD.title}</h1>
           </header>
@@ -70,12 +69,7 @@ export function MockWorkspacePreview({ className }: { className?: string }) {
             ref={scrollContainerRef}
             className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto"
           >
-            <ThreadAssets
-              thread={MOCK_THREAD}
-              retryState={null}
-              lockEpoch={0}
-              compacting={false}
-            />
+            <ThreadAssets thread={MOCK_THREAD} retryState={null} lockEpoch={0} compacting={false} />
           </div>
           <div className="z-10 flex-none pb-4">
             <div className="relative z-10 -mt-14 flex-none bg-linear-to-t from-app-surface from-80% to-transparent">

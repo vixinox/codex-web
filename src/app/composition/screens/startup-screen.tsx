@@ -84,10 +84,10 @@ export function StartupScreen() {
               paused: true,
               scrollTrigger: trigger
                 ? {
-                  trigger,
-                  start: 'top 90%',
-                  toggleActions: 'play none none none',
-                }
+                    trigger,
+                    start: 'top 90%',
+                    toggleActions: 'play none none none',
+                  }
                 : undefined,
             })
 

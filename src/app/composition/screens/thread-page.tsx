@@ -2,7 +2,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
 import { ThreadEmptyState } from '@/app/composition/layout/thread-empty-state'
-import type { useThreadPageController } from '@/app/chat/session/use-thread-page-controller'
+import type { useThreadPageController } from '@/app/chat/session/controllers/use-thread-page-controller'
 
 export function ThreadPageSurface({
   controller,

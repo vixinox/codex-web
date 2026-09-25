@@ -3,7 +3,7 @@ import {
   optimisticThread,
   pendingMatchesTarget,
   reconcilePendingThread,
-} from './thread-pending-reconciliation'
+} from './state/thread-pending-reconciliation'
 import type { ChatPendingTurn, ChatThreadPresentation } from '@/app/chat/model/types'
 
 const pending: ChatPendingTurn = {

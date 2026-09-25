@@ -1,8 +1,8 @@
 import type { CodexThreadState } from '@/app/chat/native/codex-thread'
 import type { CodexRecord } from '@/lib/protocol/protocol'
 import { countDiffStats } from '@/app/chat/native/diff-stats'
-import { createAttachment, shouldUseCard } from '@/app/chat/composer/draft-model'
-import { parseMarkdownBlocks } from '@/app/chat/composer/chat-input-markdown'
+import { createAttachment, shouldUseCard } from '@/app/chat/composer/model/draft-model'
+import { parseMarkdownBlocks } from '@/app/chat/composer/logic/chat-input-markdown'
 import type {
   ChatActivity,
   ChatActivityKind,
@@ -52,7 +52,7 @@ export function toChatThreadMetadata(
   }
 }
 
-const CHAT_MODELS = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'] as const
+const CHAT_MODELS = ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'] as const
 const CHAT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 
 function chatModel(value: unknown): ChatThreadPresentation['model'] {

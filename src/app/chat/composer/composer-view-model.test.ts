@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { toComposerUsageView } from './composer-view-model'
+import { toComposerUsageView } from './model/composer-view-model'
 import type { ChatTokenUsage } from '@/app/chat/model/types'
 
 function usage(modelContextWindow: number | null): ChatTokenUsage {

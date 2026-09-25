@@ -1,9 +1,8 @@
-import { AppearanceSection } from "@/app/settings/appearance/appearance-section";
-import { cn } from "@/lib/utils";
-import { SettingsSidebar } from "../../navigation/settings-sidebar";
+import { AppearanceSection } from '@/app/settings/appearance-section'
+import { cn } from '@/lib/utils'
+import { SettingsSidebar } from '../../navigation/settings-sidebar'
 
 export function MockSettingsPreview({ className }: { className?: string }) {
-
   return (
     <div
       className={cn(
@@ -14,8 +13,8 @@ export function MockSettingsPreview({ className }: { className?: string }) {
       <div className="absolute inset-0 flex min-w-230">
         <SettingsSidebar
           archivedActive={false}
-          onBack={() => { }}
-          onGeneral={() => { }}
+          onBack={() => {}}
+          onGeneral={() => {}}
           onArchived={() => undefined}
           showArchived={false}
         />

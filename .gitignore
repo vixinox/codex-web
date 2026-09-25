@@ -12,6 +12,7 @@ dist-ssr
 *.local
 .data/
 /docs/vendor
+/docs/diagrams
 .env
 .env.*
 !.env.example

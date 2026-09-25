@@ -23,7 +23,7 @@ import {
 } from '../native/codex-thread'
 import { toChatThreadPresentation } from '../projection/thread-presentation'
 import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
-import { useThreadDetailController } from './use-thread-detail-controller'
+import { useThreadDetailController } from './controllers/use-thread-detail-controller'
 
 const historyEvent = (id: number, method: string, params: Record<string, unknown>) => ({
   id,

@@ -23,7 +23,7 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { TableCell, TableRow } from '@/components/ui/table'
 import { RadioGroupItem } from '@/components/ui/radio-group'
-import type { SettingsCredential } from '../model/types'
+import type { SettingsCredential } from '../model-types'
 
 export type CredentialTestState = {
   status: 'loading' | 'success' | 'error'

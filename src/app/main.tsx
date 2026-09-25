@@ -30,12 +30,6 @@ const AdminScreen = lazy(() =>
   })),
 )
 
-const GuestWorkspaceScreen = lazy(() =>
-  import('@/app/composition/screens/guest-workspace-screen').then(
-    ({ GuestWorkspaceScreen: screen }) => ({ default: screen }),
-  ),
-)
-
 const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
 installAuthExpiryInterceptor()
@@ -78,11 +72,7 @@ function CandidateRoute() {
   if (!session) return <Navigate to="/login" replace />
 
   if ((session.user as { kind?: string }).kind === 'guest')
-    return (
-      <Suspense fallback={pageFallback}>
-        <GuestWorkspaceScreen />
-      </Suspense>
-    )
+    return <WorkspaceShell userId="guest" profile={{ kind: 'guest' }} />
   return <AuthenticatedWorkspace userId={session.user.id} />
 }
 

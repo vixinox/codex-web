@@ -153,7 +153,7 @@ export function LiveRow({
       ) : kind ? (
         <ActivityIcon kind={kind} />
       ) : null}
-      <span className="thinking-shimmer w-fit truncate text-sm mt-1">{label}</span>
+      <span className="thinking-shimmer mt-1 w-fit truncate text-sm">{label}</span>
     </div>
   )
 }

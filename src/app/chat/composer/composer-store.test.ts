@@ -8,7 +8,7 @@ import {
   setComposerDraft,
   toggleComposerSkill,
   updateComposerPreferences,
-} from './composer-store'
+} from './state/composer-store'
 
 describe('composer store', () => {
   it('isolates scopes by user and can reset one user without affecting another', () => {

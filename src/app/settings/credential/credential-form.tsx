@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import type { CredentialFormErrors } from '../model/types'
+import type { CredentialFormErrors } from '../model-types'
 import type { SettingsController } from './use-settings-controller'
 
 function formText(data: FormData, name: string) {

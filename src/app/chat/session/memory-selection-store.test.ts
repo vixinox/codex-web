@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_COMPOSER_PREFERENCES } from '@/app/chat/composer/composer-store'
-import { createMemorySelectionStore } from './memory-selection-store'
+import { DEFAULT_COMPOSER_PREFERENCES } from '@/app/chat/composer/state/composer-store'
+import { createMemorySelectionStore } from './state/memory-selection-store'
 
 describe('memory Composer selection store', () => {
   it('keeps New Chat and every Thread target independent', () => {

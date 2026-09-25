@@ -4,7 +4,7 @@ import type {
   WorkspaceProject,
   WorkspaceSidebarModel,
   WorkspaceThread,
-} from '@/app/workspace/model/types'
+} from '@/app/workspace/workspace-model'
 
 import {
   COMMAND_FIXTURES,

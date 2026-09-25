@@ -6,7 +6,7 @@ import {
   createCodexThreadState,
   reduceCodexNotification,
 } from '@/app/chat/native/codex-thread'
-import { ThreadSessionRegistry } from './thread-session-store'
+import { ThreadSessionRegistry } from './state/thread-session-store'
 
 describe('Thread session store', () => {
   it('keeps a stable session and Turn proxy while syncing a streamed delta', () => {

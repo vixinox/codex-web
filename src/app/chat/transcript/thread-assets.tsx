@@ -8,7 +8,7 @@ import { MessageContent } from '@/app/chat/content/message-content'
 import {
   useThreadSessionSnapshot,
   type ThreadSession,
-} from '@/app/chat/session/thread-session-store'
+} from '@/app/chat/session/state/thread-session-store'
 import type {
   ChatBlock,
   ChatThreadPresentation,

@@ -24,15 +24,15 @@ vi.mock('@/lib/bridge/http/threads', () => ({
   compactThread: bridge.compactThread,
   answerUserInput: bridge.answerUserInput,
 }))
-vi.mock('./chat-selection-storage', () => ({
+vi.mock('./state/chat-selection-storage', () => ({
   readNewChatSelection: () => ({ model: 'gpt-5.6-sol', effort: 'medium' }),
   readThreadSelection: () => ({ model: 'gpt-5.6-sol', effort: 'medium' }),
   writeNewChatSelection: vi.fn(),
   writeThreadSelection: vi.fn(),
 }))
 
-import { composerStore } from '@/app/chat/composer/composer-store'
-import { useThreadComposerController } from './use-thread-composer-controller'
+import { composerStore } from '@/app/chat/composer/state/composer-store'
+import { useThreadComposerController } from './controllers/use-thread-composer-controller'
 
 const skill = {
   handle: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',

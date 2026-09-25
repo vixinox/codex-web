@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import type { ChatPendingTurn, ChatThreadPresentation } from '@/app/chat/model/types'
-import { usePendingThreadPresentation } from './use-pending-thread-presentation'
+import { usePendingThreadPresentation } from './presentation/use-pending-thread-presentation'
 
 const pending: ChatPendingTurn = {
   clientTurnId: 'client-1',

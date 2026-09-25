@@ -8,7 +8,7 @@ import {
   testCredential,
   type CredentialSummary,
 } from '@/lib/bridge/http/credentials'
-import type { CredentialFormErrors, SettingsCollection } from '@/app/settings/model/types'
+import type { CredentialFormErrors, SettingsCollection } from '@/app/settings/model-types'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 
 export type SettingsController = {

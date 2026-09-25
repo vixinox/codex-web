@@ -4,7 +4,7 @@ import type { ProjectSummary } from '@/lib/bridge/http/projects'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import type { SettingsCollection } from '../model/types'
+import type { SettingsCollection } from '../model-types'
 
 export function ProjectSection({
   projects,
