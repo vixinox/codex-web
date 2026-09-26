@@ -141,11 +141,7 @@ export function WorkspaceSidebar({
             <>
               <Collapsible open={projectsOpen} onOpenChange={setProjectsOpen}>
                 <div className="group/projects flex items-center px-2 py-2">
-                  <CollapsibleTrigger
-                    render={
-                      <div className="flex w-full items-center gap-1 text-sm font-medium text-muted-foreground select-none" />
-                    }
-                  >
+                  <CollapsibleTrigger className="flex w-full items-center gap-1 text-sm font-medium text-muted-foreground select-none">
                     <span>Projects</span>
                     <ChevronRight
                       className={cn('size-4 transition-transform', projectsOpen && 'rotate-90')}
@@ -223,11 +219,7 @@ export function WorkspaceSidebar({
                 />
               ) : null}
               <Collapsible open={threadsOpen} onOpenChange={setThreadsOpen}>
-                <CollapsibleTrigger
-                  render={
-                    <div className="flex w-full items-center gap-1 p-2 text-sm font-medium text-muted-foreground select-none" />
-                  }
-                >
+                <CollapsibleTrigger className="flex w-full items-center gap-1 p-2 text-sm font-medium text-muted-foreground select-none">
                   <p>Threads</p>
                   <ChevronRight
                     className={cn('size-4 transition-transform', threadsOpen && 'rotate-90')}
