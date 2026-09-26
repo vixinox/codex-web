@@ -81,7 +81,7 @@ export function ComposerInput({
         const next = event.relatedTarget
         if (!(next instanceof Node) || !event.currentTarget.contains(next)) setCommand(null)
       }}
-      className="relative mx-auto flex w-full max-w-3xl flex-col items-center justify-center px-2"
+      className="relative mx-auto flex w-full max-w-3xl flex-col items-center justify-center"
     >
       {command === null && leadingContent ? (
         <div className="absolute inset-x-4 bottom-full z-10 flex justify-center">

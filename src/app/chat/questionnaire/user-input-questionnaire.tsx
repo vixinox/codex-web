@@ -18,7 +18,7 @@ export type QuestionnaireQuestion = {
     | readonly {
         value?: string
         label: string
-        description: string
+        description?: string
         recommended?: boolean
       }[]
     | null
@@ -32,11 +32,15 @@ export function Questionnaire({
   inputPlaceholder,
   onSubmit,
   onCancel,
+  onSkip,
+  showSkip = true,
 }: {
   questions: readonly QuestionnaireQuestion[]
   inputPlaceholder: string
   onSubmit: (answers: QuestionnaireAnswer) => Promise<void>
   onCancel?: () => Promise<void>
+  onSkip?: () => Promise<void>
+  showSkip?: boolean
 }) {
   const [activeIndex, setActiveIndex] = React.useState(0)
   const [responses, setResponses] = React.useState<Record<string, Response>>({})
@@ -143,6 +147,14 @@ export function Questionnaire({
 
   const skipCurrentQuestion = React.useCallback(() => {
     if (!activeQuestion || submitting || transitioning) return
+    if (onSkip) {
+      setSubmitting(true)
+      void onSkip().then(
+        () => setDismissed(true),
+        () => setSubmitting(false),
+      )
+      return
+    }
     const nextResponses = { ...responses, [activeQuestion.id]: { input: '' } }
     setResponses(nextResponses)
     setEmptySubmitError(false)
@@ -157,6 +169,7 @@ export function Questionnaire({
     submitAnswers,
     submitting,
     transitioning,
+    onSkip,
   ])
 
   const submitCurrentInput = React.useCallback(() => {
@@ -305,9 +318,11 @@ export function Questionnaire({
                       {option.label}
                       {recommended ? <span className="ml-2">(Recommended)</span> : null}
                     </span>
-                    <span className="text-base leading-6 text-app-text-muted">
-                      {option.description}
-                    </span>
+                    {option.description ? (
+                      <span className="text-base leading-6 text-app-text-muted">
+                        {option.description}
+                      </span>
+                    ) : null}
                   </span>
                 </Button>
               )
@@ -355,15 +370,17 @@ export function Questionnaire({
               disabled={submitting || transitioning}
               className="ml-1 h-8 border-0 bg-transparent! px-0 shadow-none focus-visible:border-0 focus-visible:ring-0"
             />
-            <Button
-              type="button"
-              variant="outline"
-              className="rounded-full text-sm font-medium"
-              onClick={skipCurrentQuestion}
-              disabled={submitting || transitioning}
-            >
-              Skip
-            </Button>
+            {showSkip ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-full text-sm font-medium"
+                onClick={skipCurrentQuestion}
+                disabled={submitting || transitioning}
+              >
+                Skip
+              </Button>
+            ) : null}
           </Field>
         </FieldGroup>
       </div>

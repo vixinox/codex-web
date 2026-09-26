@@ -1,6 +1,12 @@
 import * as React from 'react'
 import { ThreadBlock, UserContent, LiveRow } from './thread-block'
-import { AlertCircleIcon, BracesIcon, CheckIcon } from 'lucide-react'
+import {
+  AlertCircleIcon,
+  BracesIcon,
+  LightbulbIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+} from 'lucide-react'
 import { CopyButton } from '@/components/shared/copy-button'
 import { Separator } from '@/components/ui/separator'
 import { Collapsible } from '@/components/ui/collapsible'
@@ -230,6 +236,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
   pendingQuestionnaire?: ChatUserInputRequest
 }) {
   const [detailsOpen, setDetailsOpen] = React.useState(false)
+  const [planOpen, setPlanOpen] = React.useState(false)
   const [animateAssistant, setAnimateAssistant] = React.useState(false)
   const previousStatusRef = React.useRef(turn.status)
   React.useLayoutEffect(() => {
@@ -263,6 +270,15 @@ const ThreadTurn = React.memo(function ThreadTurn({
     .filter((block) => block.type === 'assistant')
     .map((block) => block.text)
     .concat(finalPlan?.text ?? [])
+    .join('\n\n')
+  const planCopyText = [
+    finalPlan?.explanation,
+    finalPlan?.text,
+    finalPlan?.steps.length
+      ? finalPlan.steps.map((step, index) => `${index + 1}. ${step.step}`).join('\n')
+      : undefined,
+  ]
+    .filter(Boolean)
     .join('\n\n')
   const userCopyText = firstUser ? formatUserContentForCopy(firstUser.content) : ''
   const working = turn.status === 'inProgress'
@@ -400,24 +416,62 @@ const ThreadTurn = React.memo(function ThreadTurn({
       ) : null}
       {showThinking ? <LiveRow label="Thinking" /> : null}
       {finalPlan ? (
-        <section className="mt-2 flex min-w-0 flex-col gap-3 rounded-lg border border-app-border bg-app-surface-raised p-4 text-foreground">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <CheckPlanIcon />
-            <span>{turn.planPhase === 'plan-ready' ? 'Plan ready' : 'Plan completed'}</span>
+        <section className="mt-2 flex min-w-0 flex-col rounded-lg border border-app-border bg-app-surface-raised p-4 text-foreground">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+            <PlanIcon />
+            <span>Plan</span>
+            <div className="ml-auto flex items-center gap-1">
+              {planCopyText ? (
+                <CopyButton
+                  variant="ghost"
+                  size="icon"
+                  text={planCopyText}
+                  className="size-8"
+                  aria-label="Copy plan"
+                />
+              ) : null}
+              <button
+                type="button"
+                className="app-interactive inline-flex size-8 shrink-0 items-center justify-center rounded-full text-app-text-muted"
+                aria-label={planOpen ? 'Collapse plan' : 'Expand plan'}
+                aria-expanded={planOpen}
+                onClick={() => setPlanOpen((open) => !open)}
+              >
+                {planOpen ? (
+                  <Minimize2Icon className="size-4" aria-hidden="true" />
+                ) : (
+                  <Maximize2Icon className="size-4" aria-hidden="true" />
+                )}
+              </button>
+            </div>
           </div>
-          {finalPlan.explanation ? (
-            <p className="text-sm text-app-text-muted">{finalPlan.explanation}</p>
-          ) : null}
-          {finalPlan.text ? <MessageContent text={finalPlan.text} /> : null}
-          {!finalPlan.text && finalPlan.steps.length ? (
-            <ol className="flex flex-col gap-2 text-sm">
-              {finalPlan.steps.map((step, index) => (
-                <li key={`${step.step}-${index}`}>
-                  {index + 1}. {step.step}
-                </li>
-              ))}
-            </ol>
-          ) : null}
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label={planOpen ? 'Collapse plan details' : 'Expand plan details'}
+            onClick={() => setPlanOpen((open) => !open)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                setPlanOpen((open) => !open)
+              }
+            }}
+            className={`mt-3 min-w-0 overflow-hidden border-t border-app-border pt-3 transition-[max-height,opacity] duration-300 ease-out motion-reduce:transition-none ${planOpen ? 'max-h-[80rem] opacity-100' : 'max-h-16 opacity-75'}`}
+          >
+            {finalPlan.explanation ? (
+              <p className="text-sm text-app-text-muted">{finalPlan.explanation}</p>
+            ) : null}
+            {finalPlan.text ? <MessageContent text={finalPlan.text} /> : null}
+            {!finalPlan.text && finalPlan.steps.length ? (
+              <ol className="flex flex-col gap-2 text-sm">
+                {finalPlan.steps.map((step, index) => (
+                  <li key={`${step.step}-${index}`}>
+                    {index + 1}. {step.step}
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </div>
         </section>
       ) : null}
       {turn.error ? (
@@ -447,10 +501,10 @@ const ThreadTurn = React.memo(function ThreadTurn({
   )
 })
 
-function CheckPlanIcon() {
+function PlanIcon() {
   return (
-    <span className="inline-flex size-5 items-center justify-center rounded-full bg-app-surface-subtle text-success">
-      <CheckIcon className="size-3.5" aria-hidden="true" />
+    <span className="inline-flex size-5 items-center justify-center text-app-text-subtle">
+      <LightbulbIcon className="size-3.5" aria-hidden="true" />
     </span>
   )
 }
