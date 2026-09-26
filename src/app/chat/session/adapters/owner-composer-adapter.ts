@@ -2,7 +2,7 @@ import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
 import { fetchSkills } from '@/lib/bridge/http/skills'
 import { fetchContextWindow } from '@/lib/bridge/http/configuration'
 import { subscribeToEvents } from '@/lib/bridge/events/event-source'
-import { OWNER_THREAD_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
+import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import {
   readNewChatSelection,
   readThreadSelection,
@@ -13,7 +13,7 @@ import type { ComposerRuntimeAdapter } from './composer-adapter'
 
 /** Owner runtime: `/api/*` transport, Owner capabilities, durable selection. */
 export const ownerComposerAdapter: ComposerRuntimeAdapter = {
-  capabilities: OWNER_THREAD_COMPOSER_CAPABILITIES,
+  capabilities: EMPTY_OWNER_COMPOSER_CAPABILITIES,
   threads: ownerThreadClient,
   acceptedTurnIdIsNative: true,
   selection: {

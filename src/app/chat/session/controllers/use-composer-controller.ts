@@ -3,6 +3,7 @@ import * as React from 'react'
 import {
   clearComposerDraft,
   clearComposerSkills,
+  DEFAULT_COMPOSER_PREFERENCES,
   ensureComposerScope,
   setComposerDraft,
   updateComposerPreferences,
@@ -16,6 +17,7 @@ import {
   type ThreadComposerSelection,
 } from '@/app/chat/composer/state/model-selection-sync'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
+import { defaultComposerPreferences } from '@/app/chat/composer/model/composer-capabilities'
 import type {
   ChatEffort,
   ChatModel,
@@ -62,11 +64,6 @@ type ComposerControllerOptions = {
 }
 
 const MAX_RETRIES = 5
-const FALLBACK_PREFERENCES: ComposerPreferences = {
-  model: 'gpt-5.6-sol',
-  effort: 'medium',
-  collaborationMode: 'default',
-}
 
 /**
  * The single Composer state machine for both runtimes. Runtime differences
@@ -98,9 +95,14 @@ export function useComposerController({
   const scope = composerScopeForTarget(userId, host.target)
   const targetProjectId = host.target.projectId
   const selection = adapter.selection
-  ensureComposerScope(scope, selection ? selection.read(userId, host.target) : FALLBACK_PREFERENCES)
-  const snapshot = useComposerScopeSnapshot(scope)
   const resolvedCapabilities = capabilities ?? adapter.capabilities
+  const storedSelection = selection?.read(userId, host.target)
+  const initialSelection = storedSelection ?? defaultComposerPreferences(resolvedCapabilities)
+  ensureComposerScope(
+    scope,
+    initialSelection.model ? initialSelection : DEFAULT_COMPOSER_PREFERENCES,
+  )
+  const snapshot = useComposerScopeSnapshot(scope)
   const appliedThreadSelections = React.useRef(
     new Map<string, ThreadComposerSelection | undefined>(),
   )
@@ -174,6 +176,21 @@ export function useComposerController({
     threadSelection,
     userId,
   ])
+
+  React.useEffect(() => {
+    const preferences = syncComposerPreferences(
+      snapshot.preferences,
+      undefined,
+      resolvedCapabilities,
+    )
+    if (
+      preferences.model === snapshot.preferences.model &&
+      preferences.effort === snapshot.preferences.effort
+    )
+      return
+    updateComposerPreferences(scope, () => preferences)
+    selection?.write(userId, host.target, preferences)
+  }, [resolvedCapabilities, scope, selection, snapshot.preferences, userId, host.target])
 
   // Selection defaults follow the scope the user is actually looking at.
   const persistSelection = React.useCallback(

@@ -13,18 +13,31 @@ export function syncComposerPreferences(
   capabilities: ComposerCapabilities,
   previous?: ThreadComposerSelection,
 ): ComposerPreferences {
+  if (capabilities.availableModels.length === 0 || capabilities.availableEfforts.length === 0)
+    return current
+  const defaultModel = capabilities.availableModels[0] ?? ''
   const model =
     thread?.model &&
     thread.model !== previous?.model &&
     capabilities.availableModels.includes(thread.model) &&
-    !capabilities.disabledModels.includes(thread.model)
+    thread.model
       ? thread.model
-      : current.model
+      : capabilities.availableModels.includes(current.model)
+        ? current.model
+        : defaultModel
+  const defaultEffort =
+    capabilities.modelDefaultEfforts[model] &&
+    capabilities.availableEfforts.includes(capabilities.modelDefaultEfforts[model])
+      ? capabilities.modelDefaultEfforts[model]
+      : (capabilities.availableEfforts[0] ?? '')
   const effort =
     thread?.reasoningEffort &&
     thread.reasoningEffort !== previous?.reasoningEffort &&
-    !capabilities.disabledEfforts.includes(thread.reasoningEffort)
+    capabilities.availableEfforts.includes(thread.reasoningEffort) &&
+    thread.reasoningEffort
       ? thread.reasoningEffort
-      : current.effort
+      : capabilities.availableEfforts.includes(current.effort)
+        ? current.effort
+        : defaultEffort
   return { ...current, model, effort }
 }

@@ -1,6 +1,6 @@
 import { guestThreadClient } from '@/lib/bridge/thread-adapters'
 import { fetchGuestSkills, readGuestSession } from '@/lib/bridge/http/guest'
-import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
+import { EMPTY_GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { createMemorySelectionStore } from '../state/memory-selection-store'
 import type { ComposerPreferences } from '@/app/chat/composer/state/composer-store'
 import type { ComposerRuntimeAdapter } from './composer-adapter'
@@ -11,12 +11,12 @@ import type { ComposerRuntimeAdapter } from './composer-adapter'
  * is ever consulted.
  */
 export const guestComposerAdapter: ComposerRuntimeAdapter = {
-  capabilities: GUEST_COMPOSER_CAPABILITIES,
+  capabilities: EMPTY_GUEST_COMPOSER_CAPABILITIES,
   threads: guestThreadClient,
   acceptedTurnIdIsNative: false,
   selection: createMemorySelectionStore({
-    model: 'gpt-5.6-terra',
-    effort: 'medium',
+    model: '',
+    effort: '',
     collaborationMode: 'default',
   } satisfies ComposerPreferences),
   listSkills: async () => fetchGuestSkills(),

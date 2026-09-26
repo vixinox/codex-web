@@ -65,6 +65,24 @@ Project 是按受控 `cwd` 建立的逻辑分组；删除 Project 不删除目�
 | `GET`  | `/api/configuration/context-window` | 读取 context window |
 | `PUT`  | `/api/configuration/context-window` | 更新 context window |
 
+`GET /api/capabilities` 和 `GET /guest-api/capabilities` 返回当前 App Server `model/list` 的安全投影：
+
+```json
+{
+  "models": [
+    {
+      "id": "gpt-5.6-sol",
+      "displayName": "...",
+      "defaultReasoningEffort": "medium",
+      "reasoningEfforts": [{ "id": "low", "description": "..." }],
+      "inputModalities": ["text"]
+    }
+  ]
+}
+```
+
+Owner 使用 runtime 返回的全部模型和推理强度。Guest 在相同 runtime catalog 基础上应用 `GUEST_ALLOWED_MODELS` 和 `GUEST_ALLOWED_REASONING_EFFORTS` 环境变量过滤；空值表示不额外过滤。
+
 `credentialId` 可选；省略时使用持久化的 `currentCredentialId`。启动必须显式确认 `danger-full-access`。当前用户没有 Credential 时返回 `409 CODEX_PROFILE_REQUIRED`，缺少确认时返回 `428 CODEX_DANGEROUS_ACCESS_CONFIRMATION_REQUIRED`。
 
 ## Thread 与 Turn

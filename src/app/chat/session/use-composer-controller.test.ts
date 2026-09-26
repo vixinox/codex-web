@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { composerStore, type ComposerPreferences } from '@/app/chat/composer/state/composer-store'
-import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
+import { composerCapabilitiesFromModels } from '@/app/chat/composer/model/composer-capabilities'
 import { useComposerController } from './controllers/use-composer-controller'
 import type { ComposerRuntimeAdapter } from './adapters/composer-adapter'
 
@@ -13,10 +13,19 @@ const skill = {
   description: 'Create PDFs',
   scope: 'system' as const,
 }
+const testCapabilities = composerCapabilitiesFromModels(
+  [
+    { id: 'gpt-5.6-sol', displayName: '5.6 Sol', reasoningEfforts: ['low', 'medium', 'high'] },
+    { id: 'gpt-5.6-terra', displayName: '5.6 Terra', reasoningEfforts: ['low', 'medium', 'high'] },
+    { id: 'gpt-5.5', displayName: '5.5', reasoningEfforts: ['low', 'medium', 'high'] },
+  ],
+  'workspaceWrite',
+  { attachments: false, contextUsage: true },
+)
 
 function createAdapter(overrides: Partial<ComposerRuntimeAdapter> = {}): ComposerRuntimeAdapter {
   return {
-    capabilities: GUEST_COMPOSER_CAPABILITIES,
+    capabilities: testCapabilities,
     selection: {
       read: () => ({ model: 'gpt-5.6-sol', effort: 'medium', collaborationMode: 'default' }),
       write: vi.fn(),
@@ -230,7 +239,7 @@ describe('shared composer controller', () => {
 
   it('exposes the adapter capability config to the renderer unchanged', async () => {
     const adapter = createAdapter({
-      capabilities: { ...GUEST_COMPOSER_CAPABILITIES, contextUsage: false },
+      capabilities: { ...testCapabilities, contextUsage: false },
     })
     const { result } = renderHook(() =>
       useComposerController({
@@ -362,7 +371,7 @@ describe('shared composer controller', () => {
 
   it('applies a settings event update without changing the other Thread preference', async () => {
     const adapter = createAdapter({
-      capabilities: { ...GUEST_COMPOSER_CAPABILITIES, disabledEfforts: [] },
+      capabilities: testCapabilities,
     })
     const { result, rerender } = renderHook(
       ({ model, effort }) =>

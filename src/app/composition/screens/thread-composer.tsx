@@ -1,16 +1,18 @@
 import { ComposerContainer } from '@/app/composition/layout/composer-container'
+import * as React from 'react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ComposerInput } from '@/app/chat/composer/ui/composer-input'
-import { OWNER_THREAD_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
+import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 import { PlanPanel } from '@/app/chat/composer/ui/plan-panel'
+import { FinalPlanCard } from '@/app/chat/composer/ui/final-plan-card'
 import { Questionnaire } from '@/app/chat/questionnaire/user-input-questionnaire'
 import type { ComposerActions, ThreadComposerSlotModel } from '@/app/chat/model/composer-types'
 
 export function ThreadComposerSlot({
   slot,
   actions,
-  capabilities = OWNER_THREAD_COMPOSER_CAPABILITIES,
+  capabilities = EMPTY_OWNER_COMPOSER_CAPABILITIES,
 }: {
   slot: ThreadComposerSlotModel
   actions: ComposerActions & {
@@ -20,6 +22,12 @@ export function ThreadComposerSlot({
   }
   capabilities?: ComposerCapabilities
 }) {
+  const [dismissedPlan, setDismissedPlan] = React.useState<string | null>(null)
+  const planKey = slot.kind === 'final-plan' ? JSON.stringify(slot.plan) : null
+  React.useEffect(() => {
+    if (planKey !== dismissedPlan && slot.kind !== 'final-plan') setDismissedPlan(null)
+  }, [dismissedPlan, planKey, slot.kind])
+  const visibleFinalPlan = slot.kind === 'final-plan' && planKey !== dismissedPlan
   return (
     <ComposerContainer>
       {slot.kind === 'error' ? (
@@ -36,35 +44,22 @@ export function ThreadComposerSlot({
           onSubmit={actions.answerUserInput}
           onCancel={actions.cancelUserInput}
         />
-      ) : slot.kind === 'final-plan' ? (
-        <Questionnaire
-          key="final-plan"
-          questions={[
-            {
-              id: 'action',
-              question: 'Continue with this plan?',
-              options: [
-                {
-                  value: 'execute',
-                  label: 'Yes, implement this plan',
-                  description: 'Start a new turn with write access.',
-                },
-              ],
-            },
-          ]}
-          inputPlaceholder="No, and tell Codex what to do differently"
-          onSubmit={async (answers) => {
-            const answer = answers.action?.answers[0]
-            if (answer === 'execute') {
+      ) : visibleFinalPlan && slot.kind === 'final-plan' ? (
+        <>
+          <FinalPlanCard
+            plan={slot.plan}
+            onClose={() => setDismissedPlan(planKey)}
+            onRevise={() => actions.setCollaborationMode('plan')}
+            onExecute={() => {
               if (actions.submitWithMode)
-                await actions.submitWithMode('Execute the plan above.', 'default')
-              else await actions.submit('Execute the plan above.', [])
-            } else if (answer) {
-              if (actions.submitWithMode) await actions.submitWithMode(answer, 'plan')
-              else await actions.submit(answer, [])
-            }
-          }}
-        />
+                void actions.submitWithMode('Execute the plan above.', 'default')
+              else void actions.submit('Execute the plan above.', [])
+            }}
+          />
+          <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} />
+        </>
+      ) : slot.kind === 'final-plan' ? (
+        <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} />
       ) : slot.kind === 'input' ? (
         <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} />
       ) : null}

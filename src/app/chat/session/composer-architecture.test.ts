@@ -2,10 +2,6 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import {
-  GUEST_COMPOSER_CAPABILITIES,
-  OWNER_THREAD_COMPOSER_CAPABILITIES,
-} from '../composer/model/composer-capabilities'
 import { guestComposerAdapter } from './adapters/guest-composer-adapter'
 import { ownerComposerAdapter } from './adapters/owner-composer-adapter'
 import { guestThreadClient, ownerThreadClient } from '@/lib/bridge/thread-adapters'
@@ -34,10 +30,10 @@ describe('Composer architecture boundaries', () => {
 
   it('wires each runtime to its own Thread client and capability contract', () => {
     expect(ownerComposerAdapter.threads).toBe(ownerThreadClient)
-    expect(ownerComposerAdapter.capabilities).toBe(OWNER_THREAD_COMPOSER_CAPABILITIES)
+    expect(ownerComposerAdapter.capabilities.availableModels).toEqual([])
     expect(ownerComposerAdapter.acceptedTurnIdIsNative).toBe(true)
     expect(guestComposerAdapter.threads).toBe(guestThreadClient)
-    expect(guestComposerAdapter.capabilities).toBe(GUEST_COMPOSER_CAPABILITIES)
+    expect(guestComposerAdapter.capabilities.availableModels).toEqual([])
     expect(guestComposerAdapter.acceptedTurnIdIsNative).toBe(false)
   })
 

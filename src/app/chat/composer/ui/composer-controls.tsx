@@ -18,7 +18,14 @@ import type { ChatAccess, ChatEffort, ChatModel } from '@/app/chat/model/compose
 import type { ComposerCapabilities } from '../model/composer-capabilities'
 import { contextUsagePercent, formatContextUsage, formatTokenTotals } from '../logic/usage-format'
 
-const labelFromId = (value: string) =>
+const modelDisplayName = (value: string) => {
+  return value
+    .replace(/^gpt-/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+const effortDisplayName = (value: string) =>
   value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 const ACCESS_OPTIONS = [
   { value: 'full', label: 'Full access' },
@@ -76,11 +83,11 @@ export function ComposerControls({
   )
   const visibleModelOptions = capabilities.availableModels.map((value) => ({
     value,
-    label: labelFromId(value),
+    label: modelDisplayName(capabilities.modelDisplayNames[value] ?? value),
   }))
   const effortOptions = capabilities.availableEfforts.map((value) => ({
     value,
-    label: labelFromId(value),
+    label: effortDisplayName(value),
   }))
   const showAccessMode = visibleAccessOptions.length > 0
   return (
@@ -136,6 +143,8 @@ export function ComposerControls({
           type="button"
           onClick={() => onCollaborationModeChange?.('default')}
           className="app-interactive group inline-flex cursor-pointer items-center gap-2 rounded-full px-2 py-1 text-sm text-muted-foreground"
+          aria-pressed="true"
+          aria-label="Plan mode enabled. Switch to Default mode"
         >
           <span className="relative flex size-4 items-center justify-center">
             <Lightbulb className="absolute inset-0 size-4 group-hover:opacity-0" />
@@ -145,7 +154,7 @@ export function ComposerControls({
         </button>
       ) : null}
       <div className="ml-auto flex items-center gap-2">
-        {capabilities.contextUsage ? (
+        {capabilities.contextUsage && contextUsagePercent(tokenUsage, contextWindow) !== null ? (
           <HoverCard>
             <HoverCardTrigger
               delay={100}
@@ -154,11 +163,7 @@ export function ComposerControls({
                 <button
                   type="button"
                   className="app-interactive inline-flex size-4 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                  aria-label={
-                    contextUsagePercent(tokenUsage, contextWindow) === null
-                      ? 'Context window unavailable'
-                      : `${contextUsagePercent(tokenUsage, contextWindow)}% context used`
-                  }
+                  aria-label={`${contextUsagePercent(tokenUsage, contextWindow)}% context used`}
                 />
               }
             >
@@ -190,7 +195,8 @@ export function ComposerControls({
             }
           >
             <span className="truncate">
-              {labelFromId(model)} {labelFromId(effort)}
+              {modelDisplayName(capabilities.modelDisplayNames[model] ?? model)}{' '}
+              {effortDisplayName(effort)}
             </span>
           </PopoverTrigger>
           <PopoverContent
@@ -203,27 +209,17 @@ export function ComposerControls({
           >
             <div role="group" aria-label="Models">
               {visibleModelOptions.map((option) => (
-                <span
+                <OptionButton
                   key={option.value}
-                  title={
-                    capabilities.disabledModels.includes(option.value)
-                      ? capabilities.disabledModelMessage
-                      : undefined
-                  }
+                  selected={option.value === model}
+                  selectedBackground={false}
+                  onClick={() => {
+                    onModelChange(option.value)
+                    setModelOpen(false)
+                  }}
                 >
-                  <OptionButton
-                    selected={option.value === model}
-                    selectedBackground={false}
-                    disabled={capabilities.disabledModels.includes(option.value)}
-                    onClick={() => {
-                      if (capabilities.disabledModels.includes(option.value)) return
-                      onModelChange(option.value)
-                      setModelOpen(false)
-                    }}
-                  >
-                    {option.label}
-                  </OptionButton>
-                </span>
+                  {option.label}
+                </OptionButton>
               ))}
             </div>
             <div className="px-1">
@@ -231,24 +227,17 @@ export function ComposerControls({
             </div>
             <div role="group" aria-label="Reasoning effort">
               {effortOptions.map((option) => {
-                const effortDisabled = capabilities.disabledEfforts.includes(option.value)
                 return (
-                  <span
+                  <OptionButton
                     key={option.value}
-                    title={effortDisabled ? capabilities.disabledEffortMessage : undefined}
+                    selected={option.value === effort}
+                    onClick={() => {
+                      onEffortChange(option.value)
+                      setModelOpen(false)
+                    }}
                   >
-                    <OptionButton
-                      selected={option.value === effort}
-                      disabled={effortDisabled}
-                      onClick={() => {
-                        if (effortDisabled) return
-                        onEffortChange(option.value)
-                        setModelOpen(false)
-                      }}
-                    >
-                      {option.label}
-                    </OptionButton>
-                  </span>
+                    {option.label}
+                  </OptionButton>
                 )
               })}
             </div>

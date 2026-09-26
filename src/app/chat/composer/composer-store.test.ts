@@ -46,7 +46,7 @@ describe('composer store', () => {
     expect(ensureComposerScope(first).draft).toBe('first draft')
     expect(ensureComposerScope(first).preferences.effort).toBe('high')
     expect(ensureComposerScope(second).draft).toBe('')
-    expect(ensureComposerScope(second).preferences.effort).toBe('medium')
+    expect(ensureComposerScope(second).preferences.effort).toBe('')
   })
 
   it('keeps selected skills isolated by composer scope', () => {

@@ -6,8 +6,8 @@ import {
   formatContextUsage,
   formatTokenTotals,
   resolveComposerUsage,
-} from './usage-format'
-import type { ChatTokenUsage } from '@/app/chat/model/types'
+} from './logic/usage-format'
+import type { ChatTokenUsage } from '../model/types'
 
 const usage = (lastTokens: number, totalTokens = 0): ChatTokenUsage => ({
   modelContextWindow: 1000,

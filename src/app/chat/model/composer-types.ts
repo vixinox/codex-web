@@ -74,5 +74,5 @@ export type ComposerActions = DraftEditorActions & {
 export type ThreadComposerSlotModel =
   | { kind: 'input'; composer: ComposerViewModel; plan?: ChatPlanPresentation }
   | { kind: 'questionnaire'; request: ChatUserInputRequest }
-  | { kind: 'final-plan'; plan: ChatPlanPresentation }
+  | { kind: 'final-plan'; plan: ChatPlanPresentation; composer: ComposerViewModel }
   | { kind: 'error'; message: string }

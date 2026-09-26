@@ -1,6 +1,6 @@
 import { ThreadHeader } from '@/app/composition/layout/thread-header'
 import { ComposerInput } from '@/app/chat/composer/ui/composer-input'
-import { OWNER_NEW_CHAT_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
+import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { ProjectPicker } from '@/app/chat/composer/ui/project-picker'
 import type { useThreadPageController } from '@/app/chat/session/controllers/use-thread-page-controller'
 import { RuntimePlaceholder } from '@/app/composition/screens/runtime-placeholder'
@@ -91,10 +91,14 @@ export function WorkspacePageContent({
                   onCreateProject={orchestration.createProject}
                 />
               }
-              capabilities={capabilities ?? OWNER_NEW_CHAT_COMPOSER_CAPABILITIES}
+              capabilities={capabilities ?? EMPTY_OWNER_COMPOSER_CAPABILITIES}
             />
           ) : (
-            <ThreadComposerSlot slot={page.composerSlot} actions={page.actions} />
+            <ThreadComposerSlot
+              slot={page.composerSlot}
+              actions={page.actions}
+              capabilities={capabilities ?? page.capabilities}
+            />
           )}
         </div>
       ) : null}

@@ -12,6 +12,7 @@ import type {
   ChatTurnPresentation,
   ChatUserContent,
 } from '@/app/chat/model/types'
+import { derivePlanPhase } from './plan-lifecycle'
 
 export function toChatThreadPresentation(state: CodexThreadState): ChatThreadPresentation {
   const metadata = toChatThreadMetadata(state)
@@ -25,6 +26,10 @@ export function toChatThreadPresentation(state: CodexThreadState): ChatThreadPre
         index,
         index === 0 ? state.protocolErrors : [],
         state.questionnaireSummaries?.[stringValue(isRecord(turn) ? turn.id : undefined) ?? ''],
+        state.userInput &&
+          stringValue(isRecord(turn) ? turn.id : undefined) === state.userInput.turnId
+          ? adaptUserInput(state.userInput)
+          : undefined,
       ),
     ),
   }
@@ -52,17 +57,12 @@ export function toChatThreadMetadata(
   }
 }
 
-const CHAT_MODELS = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'] as const
-const CHAT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
-
 function chatModel(value: unknown): ChatThreadPresentation['model'] {
-  if (typeof value !== 'string') return undefined
-  return CHAT_MODELS.find((model) => model === value)
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined
 }
 
 function chatEffort(value: unknown): ChatThreadPresentation['reasoningEffort'] {
-  if (typeof value !== 'string') return undefined
-  return CHAT_EFFORTS.find((effort) => effort === value)
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined
 }
 
 function adaptUserInput(value: NonNullable<CodexThreadState['userInput']>) {
@@ -126,6 +126,7 @@ export function toChatTurnPresentation(
   index: number,
   errors: readonly string[],
   questionnaire?: ChatTurnPresentation['questionnaire'],
+  userInput?: ChatThreadPresentation['userInput'],
 ): ChatTurnPresentation {
   const turn = isRecord(value) ? value : {}
   const id = stringValue(turn.id) ?? `turn-${index}`
@@ -220,6 +221,22 @@ export function toChatTurnPresentation(
   const fileChanges = blocks.flatMap((block) =>
     block.type === 'activity' ? block.activities.flatMap((activity) => activity.changes ?? []) : [],
   )
+  const presentationPlan =
+    plan.length || finalPlanText
+      ? {
+          steps: plan,
+          diffStats: countDiffStats(
+            typeof turn.diff === 'string' ? turn.diff : undefined,
+            fileChanges,
+          ),
+          ...(finalPlanText ? { text: finalPlanText } : {}),
+          ...(typeof turn.planExplanation === 'string'
+            ? { explanation: turn.planExplanation }
+            : {}),
+          final: status === 'completed' && Boolean(finalPlan),
+        }
+      : undefined
+  const planPhase = derivePlanPhase({ status, plan: presentationPlan, userInput })
   return {
     id,
     status,
@@ -233,22 +250,8 @@ export function toChatTurnPresentation(
       : {}),
     ...(typeof turn.durationMs === 'number' ? { durationMs: turn.durationMs } : {}),
     ...(error ? { error } : {}),
-    ...(plan.length || finalPlanText
-      ? {
-          plan: {
-            steps: plan,
-            diffStats: countDiffStats(
-              typeof turn.diff === 'string' ? turn.diff : undefined,
-              fileChanges,
-            ),
-            ...(finalPlanText ? { text: finalPlanText } : {}),
-            ...(typeof turn.planExplanation === 'string'
-              ? { explanation: turn.planExplanation }
-              : {}),
-            final: status === 'completed' && Boolean(finalPlan),
-          },
-        }
-      : {}),
+    ...(presentationPlan ? { plan: presentationPlan } : {}),
+    planPhase,
   }
 }
 

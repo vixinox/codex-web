@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ComposerInput } from '@/app/chat/composer/ui/composer-input'
-import { GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
+import { EMPTY_GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
 import { cn } from '@/lib/utils'
@@ -77,7 +77,7 @@ export function MockWorkspacePreview({ className }: { className?: string }) {
                 <ComposerInput
                   viewModel={MOCK_COMPOSER}
                   actions={MOCK_ACTIONS}
-                  capabilities={GUEST_COMPOSER_CAPABILITIES}
+                  capabilities={EMPTY_GUEST_COMPOSER_CAPABILITIES}
                 />
               </div>
             </div>

@@ -9,7 +9,7 @@ export type RuntimeModel = {
 }
 
 export async function fetchRuntimeCapabilities(path = '/api/capabilities') {
-  return requestJson<{ models: RuntimeModel[] }>(path, { method: 'GET' })
+  return requestJson<{ models: RuntimeModel[] }>(path, { method: 'GET' }, isRuntimeCapabilities)
 }
 
 export type ContextWindowConfig = {
@@ -18,23 +18,69 @@ export type ContextWindowConfig = {
 }
 
 export async function fetchContextWindow(signal?: AbortSignal): Promise<ContextWindowConfig> {
-  return requestJson<ContextWindowConfig>('/api/configuration/context-window', {
-    method: 'GET',
-    signal,
-  })
+  return requestJson<ContextWindowConfig>(
+    '/api/configuration/context-window',
+    {
+      method: 'GET',
+      signal,
+    },
+    isContextWindowConfig,
+  )
 }
 
 export async function updateContextWindow(
   modelContextWindow: number,
 ): Promise<ContextWindowConfig> {
-  return requestJson<ContextWindowConfig>('/api/configuration/context-window', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ modelContextWindow }),
-  })
+  return requestJson<ContextWindowConfig>(
+    '/api/configuration/context-window',
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ modelContextWindow }),
+    },
+    isContextWindowConfig,
+  )
 }
 
-async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
+function isRuntimeCapabilities(body: unknown): body is { models: RuntimeModel[] } {
+  if (typeof body !== 'object' || body === null) return false
+  const models = (body as { models?: unknown }).models
+  return (
+    Array.isArray(models) &&
+    models.every(
+      (model) =>
+        typeof model?.id === 'string' &&
+        typeof model.displayName === 'string' &&
+        (model.defaultReasoningEffort === undefined ||
+          typeof model.defaultReasoningEffort === 'string') &&
+        Array.isArray(model.reasoningEfforts) &&
+        model.reasoningEfforts.every(
+          (effort: unknown) =>
+            typeof effort === 'object' &&
+            effort !== null &&
+            typeof (effort as { id?: unknown }).id === 'string',
+        ) &&
+        Array.isArray(model.inputModalities) &&
+        model.inputModalities.every((modality: unknown) => typeof modality === 'string'),
+    )
+  )
+}
+
+function isContextWindowConfig(body: unknown): body is ContextWindowConfig {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    Number.isSafeInteger((body as { modelContextWindow?: unknown }).modelContextWindow) &&
+    ((body as { source?: unknown }).source === 'configured' ||
+      (body as { source?: unknown }).source === 'default')
+  )
+}
+
+async function requestJson<T>(
+  path: string,
+  init: RequestInit,
+  isExpectedResponse: (body: unknown) => body is T,
+): Promise<T> {
   let response: Response
   try {
     response = await fetch(path, { ...init, credentials: 'include' })
@@ -61,17 +107,9 @@ async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
       error.code = (body as { error: { code: string } }).error.code
     throw error
   }
-  if (
-    typeof body !== 'object' ||
-    body === null ||
-    !Number.isSafeInteger((body as { modelContextWindow?: unknown }).modelContextWindow) ||
-    !(
-      (body as { source?: unknown }).source === 'configured' ||
-      (body as { source?: unknown }).source === 'default'
-    )
-  )
+  if (!isExpectedResponse(body))
     throw new Error('The server returned an invalid configuration response.')
-  return body as T
+  return body
 }
 
 export { DEFAULT_MODEL_CONTEXT_WINDOW }

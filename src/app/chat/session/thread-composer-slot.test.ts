@@ -52,7 +52,7 @@ describe('thread composer slot selection', () => {
   it('renders a completed final plan as the confirmation slot', () => {
     const finalPlan = { ...plan, final: true }
     expect(buildThreadComposerSlot(composer(), [{ status: 'completed', plan: finalPlan }])).toEqual(
-      { kind: 'final-plan', plan: finalPlan },
+      { kind: 'final-plan', plan: finalPlan, composer: composer() },
     )
   })
 })

@@ -1,6 +1,15 @@
 import type { ChatEffort, ChatModel } from './composer-types'
 
 export type ChatPresentationStatus = 'inProgress' | 'completed' | 'failed' | 'interrupted'
+export type ChatPlanPhase =
+  | 'default'
+  | 'planning'
+  | 'questionnaire'
+  | 'plan-ready'
+  | 'executing'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
 
 export type ChatActivityKind =
   | 'plan'
@@ -70,6 +79,7 @@ export type ChatTurnPresentation = {
   durationMs?: number
   error?: { message: string; details?: string }
   plan?: ChatPlanPresentation
+  planPhase?: ChatPlanPhase
 }
 
 export type ChatQuestionnaireSummary = {

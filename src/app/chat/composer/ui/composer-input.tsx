@@ -107,7 +107,10 @@ export function ComposerInput({
             }}
             skills={viewModel.skills}
             selectedSkills={viewModel.selectedSkills}
-            onSkillSelect={(skill) => editorRef.current?.insertSkill(skill)}
+            onSkillSelect={(skill) => {
+              editorRef.current?.insertSkill(skill)
+              setCommand(null)
+            }}
             onRetrySkills={actions.retrySkills}
           />
         </div>

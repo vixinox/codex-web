@@ -19,7 +19,7 @@ export function buildThreadComposerSlot(
 
   if (composer.error) return { kind: 'error', message: composer.error }
   if (isUserInputRequest(userInput)) return { kind: 'questionnaire', request: userInput }
-  if (finalPlan) return { kind: 'final-plan', plan: finalPlan }
+  if (finalPlan) return { kind: 'final-plan', plan: finalPlan, composer }
   return {
     kind: 'input',
     composer,

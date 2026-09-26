@@ -155,6 +155,7 @@ function SkillItem({
       data-command-item
       aria-pressed={selected}
       disabled={disabled}
+      onMouseDown={(event) => event.preventDefault()}
       onClick={() => onSelect(skill)}
       className="app-interactive flex w-full items-center gap-4 rounded-xl px-2 py-1.5 text-left select-none disabled:pointer-events-none disabled:opacity-50"
     >

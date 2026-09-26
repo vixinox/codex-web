@@ -10,7 +10,6 @@ export type NativeProjectionResult =
 
 const MAX_TEXT = 16_000
 const MAX_DIFF = 32_000
-const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh'])
 
 // App Server DTOs are not browser DTOs. Keep only reviewed, renderable fields.
 export function projectNativeMessage(value: unknown): NativeProjectionResult {
@@ -405,9 +404,7 @@ function chatModel(value: unknown) {
   return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined
 }
 function reasoningEffort(value: unknown) {
-  return typeof value === 'string' && value.length <= 16 && REASONING_EFFORTS.has(value)
-    ? value
-    : undefined
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined
 }
 function bounded(name: string, value: unknown, limit: number) {
   if (typeof value !== 'string') return {}

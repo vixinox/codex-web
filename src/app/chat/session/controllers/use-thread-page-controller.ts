@@ -126,6 +126,7 @@ export function useThreadPageController({
     compacting: composer.compacting,
     detail,
     composer: composer.viewModel,
+    capabilities: composer.capabilities,
     composerSlot,
     actions: {
       ...composer.actions,

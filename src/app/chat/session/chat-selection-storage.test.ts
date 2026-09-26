@@ -14,7 +14,7 @@ describe('chat model selection storage', () => {
     writeNewChatSelection('user-a', { model: 'gpt-5.6-terra', effort: 'high' })
 
     expect(readNewChatSelection('user-a')).toMatchObject({ model: 'gpt-5.6-terra', effort: 'high' })
-    expect(readNewChatSelection('user-b')).toMatchObject({ model: 'gpt-5.6-sol', effort: 'low' })
+    expect(readNewChatSelection('user-b')).toMatchObject({ model: '', effort: '' })
   })
 
   it('restores the same New Chat selection independently of project', () => {
@@ -31,15 +31,15 @@ describe('chat model selection storage', () => {
       effort: 'xhigh',
     })
     expect(readThreadSelection('user-a', 'thread-2')).toMatchObject({
-      model: 'gpt-5.6-sol',
-      effort: 'low',
+      model: '',
+      effort: '',
     })
   })
 
   it('falls back safely when stored values are invalid', () => {
     localStorage.setItem('codex-web:chat-selection:v1:user-a:new', '{"model":"private"}')
 
-    expect(readNewChatSelection('user-a')).toMatchObject({ model: 'gpt-5.6-sol', effort: 'low' })
+    expect(readNewChatSelection('user-a')).toMatchObject({ model: '', effort: '' })
   })
 
   it('persists Plan mode per Thread and defaults older selections to default mode', () => {
@@ -66,8 +66,8 @@ describe('chat model selection storage', () => {
       effort: 'high',
     })
     expect(readThreadSelection('user-a', 'thread-1', 'project-b')).toMatchObject({
-      model: 'gpt-5.6-sol',
-      effort: 'low',
+      model: '',
+      effort: '',
     })
   })
 })

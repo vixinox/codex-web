@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { ThreadBlock, UserContent, LiveRow } from './thread-block'
-import { AlertCircleIcon, BracesIcon } from 'lucide-react'
+import { AlertCircleIcon, BracesIcon, CheckIcon } from 'lucide-react'
 import { CopyButton } from '@/components/shared/copy-button'
 import { Separator } from '@/components/ui/separator'
 import { Collapsible } from '@/components/ui/collapsible'
@@ -400,9 +400,13 @@ const ThreadTurn = React.memo(function ThreadTurn({
       ) : null}
       {showThinking ? <LiveRow label="Thinking" /> : null}
       {finalPlan ? (
-        <div className="flex flex-col gap-3 rounded-lg p-4 text-background">
+        <section className="mt-2 flex min-w-0 flex-col gap-3 rounded-lg border border-app-border bg-app-surface-raised p-4 text-foreground">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <CheckPlanIcon />
+            <span>{turn.planPhase === 'plan-ready' ? 'Plan ready' : 'Plan completed'}</span>
+          </div>
           {finalPlan.explanation ? (
-            <p className="text-sm font-medium">{finalPlan.explanation}</p>
+            <p className="text-sm text-app-text-muted">{finalPlan.explanation}</p>
           ) : null}
           {finalPlan.text ? <MessageContent text={finalPlan.text} /> : null}
           {!finalPlan.text && finalPlan.steps.length ? (
@@ -414,7 +418,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
               ))}
             </ol>
           ) : null}
-        </div>
+        </section>
       ) : null}
       {turn.error ? (
         <div className="mt-2 flex items-start gap-2 text-sm" role="alert">
@@ -442,6 +446,14 @@ const ThreadTurn = React.memo(function ThreadTurn({
     </article>
   )
 })
+
+function CheckPlanIcon() {
+  return (
+    <span className="inline-flex size-5 items-center justify-center rounded-full bg-app-surface-subtle text-success">
+      <CheckIcon className="size-3.5" aria-hidden="true" />
+    </span>
+  )
+}
 
 function UserSnippetCards({
   content,

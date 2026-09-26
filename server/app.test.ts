@@ -1033,7 +1033,9 @@ test('persists submitted questionnaire answers as a replayable thread event', as
         _threadId: string,
         requestId: number | string,
         result: unknown,
-      ) => responses.push({ requestId, result }),
+      ) => {
+        responses.push({ requestId, result })
+      },
     },
   })
   context.after(() => app.close())

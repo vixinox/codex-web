@@ -16,6 +16,8 @@ import {
   $getNodeByKey,
   COMMAND_PRIORITY_HIGH,
   KEY_ENTER_COMMAND,
+  KEY_BACKSPACE_COMMAND,
+  KEY_DELETE_COMMAND,
   PASTE_COMMAND,
   COPY_COMMAND,
   createCommand,
@@ -66,15 +68,14 @@ class SkillNode extends TextNode {
   constructor(skill: ComposerSkill, key?: NodeKey) {
     super(`$${skill.name}`, key)
     this.__skill = skill
-    this.setMode('token')
+    this.__mode = 1
   }
   exportJSON(): SerializedSkill {
     return { ...super.exportJSON(), ...this.__skill, type: SkillNode.getType(), version: 1 }
   }
   createDOM(config: EditorConfig) {
     const el = super.createDOM(config)
-    el.className =
-      'mx-0.5 inline-block rounded-sm bg-primary/10 px-1 font-semibold text-primary select-all'
+    el.className = 'mx-0.5 inline-block rounded-sm bg-primary/10 px-1 font-semibold text-primary'
     return el
   }
   getSkill() {
@@ -207,7 +208,10 @@ function Plugins(
   React.useImperativeHandle(
     p.handle,
     () => ({
-      insertSkill: (skill) => e.dispatchCommand(INSERT_COMPOSER_SKILL_COMMAND, skill),
+      insertSkill: (skill) => {
+        e.focus()
+        e.dispatchCommand(INSERT_COMPOSER_SKILL_COMMAND, skill)
+      },
       removeActiveCommand: () => {
         const target = commandNode.current
         if (!target) return
@@ -258,13 +262,23 @@ function Plugins(
         INSERT_COMPOSER_SKILL_COMMAND,
         (skill: ComposerSkill) => {
           const target = commandNode.current
-          if (!target) return false
           e.update(() => {
-            const node = $getNodeByKey(target.key)
-            if (!$isTextNode(node)) return
-            node.select(target.start, target.end)
-            const selection = $getSelection()
+            let selection = $getSelection()
+            if (!$isRangeSelection(selection)) {
+              const last = $getRoot().getLastChild()
+              if ($isParagraphNode(last)) {
+                last.selectEnd()
+                selection = $getSelection()
+              }
+            }
             if (!$isRangeSelection(selection)) return
+            if (target) {
+              const node = $getNodeByKey(target.key)
+              if (!$isTextNode(node)) return
+              node.select(target.start, target.end)
+              selection = $getSelection()
+              if (!$isRangeSelection(selection)) return
+            }
             selection.insertNodes([$createSkillNode(skill), $createTextNode(' ')])
           })
           commandNode.current = null
@@ -308,6 +322,30 @@ function Plugins(
       ),
     [e],
   )
+  React.useEffect(() => {
+    const removeSelectedSkills = () => {
+      const selection = $getSelection()
+      if (!$isRangeSelection(selection)) return false
+      const selectedSkills = selection.getNodes().filter($isSkillNode)
+      if (selectedSkills.length === 0) return false
+      selection.removeText()
+      return true
+    }
+    const unregisterBackspace = e.registerCommand(
+      KEY_BACKSPACE_COMMAND,
+      removeSelectedSkills,
+      COMMAND_PRIORITY_HIGH,
+    )
+    const unregisterDelete = e.registerCommand(
+      KEY_DELETE_COMMAND,
+      removeSelectedSkills,
+      COMMAND_PRIORITY_HIGH,
+    )
+    return () => {
+      unregisterBackspace()
+      unregisterDelete()
+    }
+  }, [e])
   React.useEffect(
     () =>
       e.registerCommand(
@@ -316,6 +354,7 @@ function Plugins(
           if (!(event instanceof ClipboardEvent)) return false
           const selection = $getSelection()
           if (!$isRangeSelection(selection)) return false
+          const nodes = selection.getNodes()
           const node = selection.anchor.getNode()
           const code = $isCodeNode(node.getParent())
             ? node.getParent()
@@ -328,10 +367,18 @@ function Plugins(
             event.clipboardData?.setData('text/plain', fenceCode(code.getTextContent()))
             return true
           }
-          if ($isSkillNode(node)) {
+          if (nodes.some($isSkillNode)) {
             event.preventDefault()
-            const skill = node.getSkill()
-            event.clipboardData?.setData('text/plain', skillMarkdownLink(skill.name, skill.scope))
+            const text = nodes
+              .map((selected) => {
+                if ($isSkillNode(selected)) {
+                  const skill = selected.getSkill()
+                  return skillMarkdownLink(skill.name, skill.scope)
+                }
+                return selected.getTextContent()
+              })
+              .join('')
+            event.clipboardData?.setData('text/plain', text)
             return true
           }
           return false

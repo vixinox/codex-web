@@ -5,15 +5,15 @@ import {
   parseMarkdownBlocks,
   skillMarkdownLink,
   unwrapSingleFencedCode,
-} from './chat-input-markdown'
+} from './logic/chat-input-markdown'
 import {
   draftSkills,
   parseDraft,
   serializeDraft,
   serializeDraftBody,
   serializeDraftSubmission,
-} from './draft-model'
-import { countLogicalLines, detectCodePaste } from './paste-code-detection'
+} from './model/draft-model'
+import { countLogicalLines, detectCodePaste } from './logic/paste-code-detection'
 
 describe('paste code detection', () => {
   it('trusts a validated VS Code language and ignores malformed metadata', () => {

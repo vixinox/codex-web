@@ -4,12 +4,10 @@ import type { ChatEffort, ChatModel } from '@/app/chat/model/composer-types'
 export type ChatSelection = ComposerPreferences
 
 const DEFAULT_SELECTION: ChatSelection = {
-  model: 'gpt-5.6-sol',
-  effort: 'low',
+  model: '',
+  effort: '',
   collaborationMode: 'default',
 }
-const MODELS = new Set<ChatModel>(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5'])
-const EFFORTS = new Set<ChatEffort>(['low', 'medium', 'high', 'xhigh'])
 
 function selectionKey(
   userId: string,
@@ -25,7 +23,12 @@ function readSelection(key: string): ChatSelection {
     const raw = localStorage.getItem(key)
     if (!raw) return { ...DEFAULT_SELECTION }
     const value = JSON.parse(raw) as Record<string, unknown>
-    if (!MODELS.has(value.model as ChatModel) || !EFFORTS.has(value.effort as ChatEffort))
+    if (
+      typeof value.model !== 'string' ||
+      !value.model ||
+      typeof value.effort !== 'string' ||
+      !value.effort
+    )
       return { ...DEFAULT_SELECTION }
     return {
       model: value.model as ChatModel,

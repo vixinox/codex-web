@@ -25,8 +25,8 @@ export type ComposerStore = {
 }
 
 export const DEFAULT_COMPOSER_PREFERENCES: ComposerPreferences = {
-  model: 'gpt-5.6-sol',
-  effort: 'medium',
+  model: '',
+  effort: '',
   collaborationMode: 'default',
 }
 
