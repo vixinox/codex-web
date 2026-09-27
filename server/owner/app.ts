@@ -12,7 +12,10 @@ import { registerSkillRoutes } from '../http/skills-routes.js'
 import { registerThreadRoutes } from '../http/thread-routes.js'
 
 export async function buildOwnerServer(config: ServerConfig, dependencies: AppDependencies) {
-  const app = await createHttpServer()
+  const app = await createHttpServer({
+    trustedOrigins: config.trustedOrigins,
+    enforceOriginChecks: config.enforceOriginChecks,
+  })
   const context = { config, dependencies }
   const skillHandles = new SkillHandleStore()
   await registerHealthRoutes(app, context)

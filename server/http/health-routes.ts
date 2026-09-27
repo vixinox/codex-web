@@ -7,6 +7,20 @@ export async function registerHealthRoutes(
   { config, dependencies }: RouteContext,
 ) {
   app.get('/runtime-profile', async () => ({ profile: config.mode }))
+  app.get('/metadata', async () => ({
+    product: 'codex-web',
+    protocolVersion: '2026-01',
+    minClientVersion: '0.0.1',
+    capabilities: [
+      'threads',
+      'turns',
+      'sse',
+      'pwa',
+      'workspace',
+      ...(config.guest ? ['guest'] : []),
+    ],
+    profile: 'owner',
+  }))
   app.get('/health', async () => ({
     status: 'ok',
     service: 'codex-web-server',

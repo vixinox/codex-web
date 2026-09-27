@@ -22,6 +22,22 @@ pnpm server:owner
 
 打开 <http://localhost:5173>。
 
+使用构建后的 dist 进行本地自托管时，Web nginx 会同时提供静态资源并转发 API/SSE；默认只启动 Owner：
+
+```bash
+docker compose up --build
+```
+
+打开 <http://127.0.0.1:8080>。Guest 是可选服务，需要时再启动：
+
+```bash
+docker compose --profile guest up --build
+```
+
+如果宿主机已有 HTTPS 反向代理，将它指向 `127.0.0.1:8080`。通过 `COMPOSE_BETTER_AUTH_URL`、`COMPOSE_BETTER_AUTH_TRUSTED_ORIGINS` 和两个 `COMPOSE_SERVER_*` 变量配置代理模式；nginx 会保留外部代理传入的 `X-Forwarded-Proto`。
+
+Compose 不发布 Owner、Guest 或 Postgres 端口，也不负责证书和公网 HTTPS。未启用 Guest profile 时，Guest API 不可用但 Web 和 Owner 不受影响。
+
 Guest 使用独立服务：
 
 ```bash
@@ -45,6 +61,7 @@ pnpm test:bridge
 
 ## 文档
 
+- [产品文档](docs/product/README.zh-CN.md)
 - [架构与安全](PROJECT.md)
 - [API](docs/api/README.zh-CN.md)
 - [前端约定](docs/frontend/README.zh-CN.md)

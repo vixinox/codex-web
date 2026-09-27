@@ -56,6 +56,7 @@ turn: idle | queued | inProgress | interrupted | completed | failed
 - 同一个 SSE ID 只处理一次；重连重放不能重复文本。
 - 首次打开 Thread 先读取 `eventCursor`，再用 `afterId` 建立详情流。
 - 连接恢复后先读取 Thread 快照校正本地状态。
+- 浏览器从 offline 恢复或页面从后台重新可见时，先读取 Thread status，再按 cursor 变化读取快照并重新建立 SSE；恢复状态不写入 transcript、命令输出、文件内容、路径或凭据。
 - 未知事件保留诊断信息，但不能让 Chat 崩溃。
 - Thread snapshot 的合法 `model`/`reasoningEffort` 是 Composer Thread scope 的服务端真值；`thread/settings/updated` 只同步发生变化的对应字段。New Chat scope 保持独立缓存，Thread 缺失字段时保留该 scope 的本地选择。
 - Owner accepted Turn ID 可用于 native transcript reconciliation；Guest accepted Turn ID 只是 queue/job 取消句柄。共享 pending seam 通过 adapter capability 区分二者，Guest job ID 不进入 native transcript identity。
@@ -71,5 +72,7 @@ turn: idle | queued | inProgress | interrupted | completed | failed
 - 主题使用语义 token，不在业务组件中新增具体颜色值；主题解析保持为确定性纯逻辑。
 
 ## 验证
+
+首批连接入口仅记录不含敏感信息的 session 级产品事件计数：连接检查成功/失败、工作区打开、Thread 打开、Turn 接受和 SSE 重连。事件不会包含实例地址、凭据、路径、native ID 或原始错误，也不会上传到外部服务。
 
 UI、CSS、renderer 和页面布局使用类型检查、触及文件的 `oxfmt --check` 和手工浏览器回归。transport、安全投影、controller、SSE 和纯逻辑改动使用定向测试（如有）、类型检查和格式检查。除非明确要求，不添加 React DOM、renderer、页面流程、Playwright、截图或视觉自动化测试。

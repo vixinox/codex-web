@@ -60,7 +60,7 @@ export function App() {
 function RootRoute() {
   const { data: session, isPending } = useSession()
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
-  if (!session) return <Navigate to="/login" replace />
+  if (!session) return <Navigate to="/startup" replace />
   const kind = (session.user as { kind?: string }).kind
   return <Navigate to={kind === 'admin' ? '/admin' : '/app'} replace />
 }

@@ -60,6 +60,35 @@ test('loads the per-user active task limit for Guest runtime admission', () => {
   }
 })
 
+test('requires HTTPS and Origin checks when proxy mode is enabled', () => {
+  const previous = new Map<string, string | undefined>()
+  const values = {
+    ...guestEnvironment,
+    SERVER_TRUST_PROXY: 'true',
+    SERVER_ENFORCE_ORIGIN_CHECKS: 'true',
+  }
+  for (const [name, value] of Object.entries(values)) {
+    previous.set(name, process.env[name])
+    process.env[name] = value
+  }
+  const previousOrigins = process.env.BETTER_AUTH_TRUSTED_ORIGINS
+  try {
+    assert.throws(() => loadServerConfig('guest'), /BETTER_AUTH_URL must use HTTPS/)
+    process.env.BETTER_AUTH_URL = 'https://codex.example.com'
+    process.env.BETTER_AUTH_TRUSTED_ORIGINS = 'https://codex.example.com'
+    const config = loadServerConfig('guest')
+    assert.equal(config.trustProxy, true)
+    assert.equal(config.enforceOriginChecks, true)
+  } finally {
+    if (previousOrigins === undefined) delete process.env.BETTER_AUTH_TRUSTED_ORIGINS
+    else process.env.BETTER_AUTH_TRUSTED_ORIGINS = previousOrigins
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+})
+
 function expectGuestContextWindow(expected: number) {
   assert.equal(loadServerConfig('guest').guest?.modelContextWindow, expected)
 }

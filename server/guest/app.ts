@@ -13,12 +13,22 @@ export async function buildGuestServer(
   auth: Auth,
   db: Database,
 ) {
-  const app = await createHttpServer()
+  const app = await createHttpServer({
+    trustedOrigins: config.trustedOrigins,
+    enforceOriginChecks: config.enforceOriginChecks,
+  })
   app.get('/health', async () => ({
     status: 'ok',
     service: 'codex-web-guest',
   }))
   app.get('/runtime-profile', async () => ({ profile: 'guest' }))
+  app.get('/metadata', async () => ({
+    product: 'codex-web',
+    protocolVersion: '2026-01',
+    minClientVersion: '0.0.1',
+    capabilities: ['threads', 'turns', 'sse', 'pwa', 'workspace', 'guest'],
+    profile: 'guest',
+  }))
   app.route({
     method: ['GET', 'POST'],
     url: '/api/auth/*',

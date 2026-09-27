@@ -1,6 +1,6 @@
 # Codex Web API 契约
 
-浏览器只调用 Fastify bridge 的 REST/SSE 接口，不直接连接 Codex App Server。Base URL 为 `http://127.0.0.1:3000`；Better Auth session cookie 由浏览器自动发送。
+浏览器只调用 Fastify bridge 的 REST/SSE 接口，不直接连接 Codex App Server。直接开发模式的 Owner Base URL 为 `http://127.0.0.1:3000`；Compose 模式通过 Web nginx 使用当前 origin（默认 `http://127.0.0.1:8080`）。Better Auth session cookie 由浏览器自动发送。
 
 `/guest-api/*` 是独立的匿名 Guest API。它只接受 Better Auth anonymous session/cookie，并使用独立的 guest lease 管理 workspace、quota、任务和 reset；lease 不是身份凭据。Guest 不能访问 Owner 的 `/api/*`、Project、Credential、Codex runtime 或 Thread 数据。Guest 使用 `pnpm server:guest`，Owner 使用 `pnpm server:owner`，两者不共享 workspace、凭据或 runtime，也不存在 combined 模式。
 
@@ -13,6 +13,24 @@
 - 事件保留原生 `method + params`，bridge 只增加 SSE envelope。
 
 ## 认证与资源
+
+## 实例连接 metadata
+
+`GET /metadata` 不要求登录，用于启动页检查当前实例是否兼容。响应只包含产品、协议、最低客户端版本、公开能力和运行 profile：
+
+```json
+{
+  "product": "codex-web",
+  "protocolVersion": "2026-01",
+  "minClientVersion": "0.0.1",
+  "capabilities": ["threads", "turns", "sse", "pwa", "workspace"],
+  "profile": "owner"
+}
+```
+
+该响应不得包含 API key、宿主机路径、`CODEX_HOME`、rollout 路径、Credential 或 App Server 进程信息。Hosted/Self-hosted 的远程地址和多实例配置尚未开放；当前客户端只检查当前 origin。
+
+自托管 Compose 默认由 Web nginx 在宿主机 `127.0.0.1:8080` 提供同源 HTTP 入口；用户可以在宿主机前置自己的 HTTPS 反向代理。Compose 文件中的 `COMPOSE_BETTER_AUTH_URL`、`COMPOSE_BETTER_AUTH_TRUSTED_ORIGINS`、`COMPOSE_SERVER_TRUST_PROXY` 和 `COMPOSE_SERVER_ENFORCE_ORIGIN_CHECKS` 分别覆盖容器内的 `BETTER_AUTH_URL`、`BETTER_AUTH_TRUSTED_ORIGINS`、`SERVER_TRUST_PROXY` 和 `SERVER_ENFORCE_ORIGIN_CHECKS`。生产代理模式必须同时启用后两个开关，并将前两个地址配置为 HTTPS origin。Origin 不在白名单的状态变更请求返回 `ORIGIN_NOT_ALLOWED`；默认本地模式不启用该代理配置。
 
 ## Guest session 与工作区
 

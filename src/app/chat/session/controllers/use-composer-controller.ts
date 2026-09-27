@@ -18,6 +18,7 @@ import {
 } from '@/app/chat/composer/state/model-selection-sync'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 import { defaultComposerPreferences } from '@/app/chat/composer/model/composer-capabilities'
+import { trackProductEvent } from '@/lib/connection/telemetry'
 import type {
   ChatEffort,
   ChatModel,
@@ -375,6 +376,7 @@ export function useComposerController({
           }
         }
         if (!accepted) return
+        trackProductEvent('turn_accepted')
         const acceptedTurn = accepted
         if (placeholderId)
           onThreadCreationResolved?.(placeholderId, acceptedTurn.projectId, acceptedTurn.threadId)

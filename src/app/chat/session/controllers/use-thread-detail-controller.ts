@@ -14,6 +14,7 @@ import {
   type ThreadSnapshot,
 } from '@/lib/bridge/thread-client'
 import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
+import { trackProductEvent } from '@/lib/connection/telemetry'
 
 export type ThreadDetailModel =
   | { status: 'idle' }
@@ -93,6 +94,7 @@ export function useThreadDetailController(
       unsubscribe = client.subscribe(threadId, afterId, receive, scheduleRecovery)
     }
     const hydrateAndSubscribe = (response: ThreadSnapshot) => {
+      trackProductEvent('thread_opened')
       if (!active) return
       const historyEvents: CodexHistoryEvent[] = (response.historyEvents ?? []).map((event) => ({
         id: event.id,
@@ -146,6 +148,7 @@ export function useThreadDetailController(
       }
     }
     function scheduleRecovery() {
+      trackProductEvent('sse_reconnected')
       onUnavailable?.()
       if (!active || recoveryTimer !== null || recovering) return
       recoveryTimer = window.setTimeout(() => {
@@ -153,6 +156,12 @@ export function useThreadDetailController(
         void recover()
       }, 1_000)
     }
+    const handleNetworkResume = () => scheduleRecovery()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') scheduleRecovery()
+    }
+    window.addEventListener('online', handleNetworkResume)
+    document.addEventListener('visibilitychange', handleVisibility)
     void waitForThreadAvailability(
       (signal) => client.readThread(projectId, threadId, signal),
       controller.signal,
@@ -170,6 +179,8 @@ export function useThreadDetailController(
       controller.abort()
       if (recoveryTimer !== null) window.clearTimeout(recoveryTimer)
       window.clearInterval(reconcileTimer)
+      window.removeEventListener('online', handleNetworkResume)
+      document.removeEventListener('visibilitychange', handleVisibility)
       unsubscribe()
       registry.release(projectId ?? null, threadId)
     }

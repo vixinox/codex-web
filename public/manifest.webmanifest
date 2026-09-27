@@ -1,0 +1,17 @@
+{
+  "name": "Codex Web",
+  "short_name": "Codex",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "description": "A multi-device Codex workspace.",
+  "icons": [
+    {
+      "src": "/codex.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}
