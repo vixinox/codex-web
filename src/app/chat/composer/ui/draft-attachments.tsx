@@ -30,7 +30,7 @@ export function DraftAttachments({
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">{attachment.title}</span>
-            <span className="block truncate text-xs text-app-text-subtle">
+            <span className="block truncate text-xs text-app-text-muted">
               {attachment.lineCount} {attachment.lineCount === 1 ? 'line' : 'lines'} ·{' '}
               {formatCount(attachment.characterCount)} characters
             </span>

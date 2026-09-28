@@ -75,7 +75,7 @@ export function ArchivedChats() {
     [load],
   )
   return (
-    <section className="mx-auto flex w-full max-w-2xl flex-col gap-8 py-24">
+    <section className="flex w-full flex-col gap-8">
       <div className="flex items-center justify-between">
         <h1 className="text-xl">Archived chats</h1>
         <Button variant="destructive" onClick={() => setDeleteAllOpen(true)}>

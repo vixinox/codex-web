@@ -27,5 +27,5 @@ export function ActivityIcon({ kind }: { kind: ChatActivityKind }) {
                 : kind === 'image'
                   ? ImageIcon
                   : WrenchIcon
-  return <Icon className="size-3.5 shrink-0 text-app-text-subtle" />
+  return <Icon className="size-3.5 shrink-0 text-app-text-muted" />
 }

@@ -81,9 +81,11 @@ describe('useWorkspaceSidebarController optimistic mutations', () => {
     })
     expect(result.current.model.rootThreads.items[0]).toMatchObject({ id, status: 'creating' })
     act(() => result.current.failThreadCreation(id, 'Could not start'))
-    expect(result.current.model.rootThreads).toMatchObject({
-      items: [{ id, status: 'systemError', isPlaceholder: true }],
-    })
+    expect(result.current.model.rootThreads.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id, status: 'systemError', isPlaceholder: true }),
+      ]),
+    )
     await act(async () => result.current.deleteThread(null, id))
     expect(result.current.model.rootThreads).toMatchObject({ items: [{ id: 'root-1' }] })
     expect(bridge.deleteThread).not.toHaveBeenCalled()

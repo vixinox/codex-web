@@ -40,7 +40,6 @@ export const THEME_VARIABLE_NAMES = [
   'send-foreground',
   'text',
   'text-muted',
-  'text-subtle',
   'text-on-accent',
   'border',
   'border-strong',
@@ -197,8 +196,6 @@ export function resolveTheme(registeredTheme: RegisteredTheme): ResolvedTheme {
   const overlayAmount = 6 + contrast * 0.12
   const borderAmount = 10 + contrast * 0.1
   const strongBorderAmount = 18 + contrast * 0.12
-  const mutedAmount = 62 + contrast * 0.12
-  const subtleTextAmount = 45 + contrast * 0.1
   const canvasDarkenAmount = 8 + contrast * 0.1
   const colors = recipe.semanticColors
   const surfaceSubtle =
@@ -223,8 +220,7 @@ export function resolveTheme(registeredTheme: RegisteredTheme): ResolvedTheme {
       '--app-send': SEND_COLOR,
       '--app-send-foreground': SEND_FOREGROUND_COLOR,
       '--app-text': recipe.ink,
-      '--app-text-muted': mix(recipe.surface, recipe.ink, mutedAmount),
-      '--app-text-subtle': mix(recipe.surface, recipe.ink, subtleTextAmount),
+      '--app-text-muted': 'oklch(0.556 0 0)',
       '--app-text-on-accent': textOnAccent(recipe.accent),
       '--app-border': alpha(recipe.ink, borderAmount),
       '--app-border-strong': alpha(recipe.ink, strongBorderAmount),

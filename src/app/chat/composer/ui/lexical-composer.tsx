@@ -171,7 +171,7 @@ export const LexicalComposerEditor = React.forwardRef<
             />
           }
           placeholder={
-            <div className="pointer-events-none absolute top-0 left-0 text-sm leading-6 text-app-text-subtle">
+            <div className="pointer-events-none absolute top-0 left-0 text-sm leading-6 text-app-text-muted">
               {p.placeholder}
             </div>
           }

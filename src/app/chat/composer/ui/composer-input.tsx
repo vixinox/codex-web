@@ -81,7 +81,7 @@ export function ComposerInput({
         const next = event.relatedTarget
         if (!(next instanceof Node) || !event.currentTarget.contains(next)) setCommand(null)
       }}
-      className="relative mx-auto flex w-full max-w-3xl flex-col items-center justify-center"
+      className="relative mx-auto flex w-full max-w-3xl flex-col items-center justify-center px-4 xl:px-2"
     >
       {command === null && leadingContent ? (
         <div className="absolute inset-x-4 bottom-full z-10 flex justify-center">
@@ -117,7 +117,7 @@ export function ComposerInput({
       ) : null}
       <div
         className={cn(
-          'flex w-full flex-col rounded-3xl border border-app-border bg-app-surface-raised px-4 pt-4 pb-2',
+          'flex w-full min-w-0 flex-col rounded-3xl bg-app-surface-raised px-3 pt-3 pb-2',
           className,
         )}
       >

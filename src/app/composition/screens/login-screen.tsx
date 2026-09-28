@@ -100,10 +100,10 @@ export function LoginScreen() {
   }
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center bg-zinc-50 p-6 md:p-10 dark:bg-zinc-950">
+    <div className="flex min-h-svh flex-col items-center justify-center bg-zinc-50 px-4 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:p-8 md:p-10 dark:bg-zinc-950">
       <div className="flex w-full max-w-sm flex-col gap-6">
         <Card className="border-zinc-200/60 bg-white/90 shadow-xl shadow-zinc-200/40 backdrop-blur-sm dark:border-zinc-800/60 dark:bg-zinc-900/90 dark:shadow-black/40">
-          <CardContent className="p-6 transition-all duration-300">
+          <CardContent className="p-4 transition-all duration-300 sm:p-6">
             {mode === 'initializing' ? (
               <div className="flex flex-col items-center justify-center gap-3 py-10">
                 <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
@@ -200,7 +200,7 @@ export function LoginScreen() {
                     <span className="font-medium text-zinc-600 transition-colors group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-white">
                       {runtimeProfile === 'guest'
                         ? 'Continue as Guest'
-                        : 'Guest unavailable on this profile'}
+                        : 'Guest currently unavailable'}
                     </span>
                   </Button>
                 </div>

@@ -5,7 +5,7 @@ import type { ComposerSkill, SkillPickerViewModel } from '@/app/chat/model/compo
 const COMMANDS = [
   {
     command: 'Compact',
-    icon: <CircleIcon className="size-4 fill-app-surface-raised stroke-app-text-subtle stroke-3" />,
+    icon: <CircleIcon className="size-4 fill-app-surface-raised stroke-app-text-muted stroke-3" />,
     description: "Compact the this chat's content",
   },
   { command: 'Plan mode', icon: <Lightbulb />, description: 'Plan before making changes' },
@@ -49,7 +49,7 @@ export function CommandPanel({
   return (
     <div
       data-command-panel
-      className="mb-2 flex max-h-[min(24rem,calc(100vh-10rem))] w-full flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface-raised p-1.5 text-app-text-muted shadow-[0_2px_12px_var(--app-shadow)]"
+      className="mb-2 flex max-h-[min(24rem,calc(100svh-10rem))] w-full flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface-raised p-1.5 text-app-text-muted shadow-[0_2px_12px_var(--app-shadow)]"
     >
       <div className="min-h-0 [scrollbar-color:var(--app-border-strong)_transparent] overflow-y-auto pr-1 text-sm [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-app-border-strong [&::-webkit-scrollbar-track]:bg-transparent">
         {commands.length > 0 ? (
@@ -66,7 +66,7 @@ export function CommandPanel({
         ) : null}
 
         <div className={commands.length > 0 ? 'mt-4' : undefined}>
-          <p className="mb-1 px-2 font-medium text-app-text-subtle">Skills</p>
+          <p className="mb-1 px-2 font-medium text-app-text-muted">Skills</p>
           {skills.status === 'loading' ? (
             <p className="px-2 py-1.5 text-sm text-app-text-muted">Loading skills</p>
           ) : null}
@@ -133,7 +133,7 @@ function CommandItem({
         </span>
         <span className="truncate text-foreground">{command}</span>
       </div>
-      <span className="max-w-[58%] truncate text-right text-app-text-subtle">{description}</span>
+      <span className="max-w-[58%] truncate text-right text-app-text-muted">{description}</span>
     </button>
   )
 }
@@ -163,7 +163,7 @@ function SkillItem({
         <Blocks className="flex size-4 shrink-0 items-center justify-center" />
         <span className="truncate text-foreground">{skill.displayName}</span>
       </div>
-      <span className="flex max-w-[58%] min-w-0 items-center gap-2 text-right text-app-text-subtle">
+      <span className="flex max-w-[58%] min-w-0 items-center gap-2 text-right text-app-text-muted">
         <span className="truncate">{skill.description}</span>
         <span className="shrink-0 text-xs">{skill.scope}</span>
         {selected ? <CheckIcon className="size-4 shrink-0" /> : null}

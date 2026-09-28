@@ -42,7 +42,7 @@ export function ThreadBlock({
     )
   if (block.type === 'article')
     return (
-      <div className="flex items-center gap-2 text-sm text-app-text-subtle select-none">
+      <div className="flex items-center gap-2 text-sm text-app-text-muted select-none">
         <ListCollapseIcon className="size-3.5 shrink-0" />
         <span>{block.title}</span>
       </div>
@@ -205,22 +205,22 @@ function ActivityRow({ item }: { item: ChatActivity }) {
                   contentClassName="max-h-56"
                   footer={
                     commandResult ? (
-                      <span className="px-1.5 py-0.5 text-xs leading-4 text-app-text-subtle">
+                      <span className="px-1.5 py-0.5 text-xs leading-4 text-app-text-muted">
                         {commandResult}
                       </span>
                     ) : undefined
                   }
                 />
               ) : null}
-              {item.detail ? <div className="text-app-text-subtle">{item.detail}</div> : null}
+              {item.detail ? <div className="text-app-text-muted">{item.detail}</div> : null}
               {searchActivityDetails(item) ? (
-                <div className="whitespace-pre-wrap text-app-text-subtle">
+                <div className="whitespace-pre-wrap text-app-text-muted">
                   {searchActivityDetails(item)}
                 </div>
               ) : null}
-              {item.meta ? <div className="text-app-text-subtle/75">{item.meta}</div> : null}
+              {item.meta ? <div className="text-app-text-muted/75">{item.meta}</div> : null}
               {item.truncated ? (
-                <div className="text-app-text-subtle">Content was truncated.</div>
+                <div className="text-app-text-muted">Content was truncated.</div>
               ) : null}
             </div>
           </TranscriptCollapsibleContent>
@@ -320,9 +320,9 @@ function FileChangeRow({
         className="group inline-flex min-h-6 max-w-full items-center gap-1.5 text-left text-app-text-muted hover:text-foreground"
         disabled={!change.diff}
       >
-        <PencilIcon className="size-3.5 shrink-0 text-app-text-subtle" />
+        <PencilIcon className="size-3.5 shrink-0 text-app-text-muted" />
         <span className="truncate">{label}</span>
-        {statsLabel ? <span className="shrink-0 text-app-text-subtle">{statsLabel}</span> : null}
+        {statsLabel ? <span className="shrink-0 text-app-text-muted">{statsLabel}</span> : null}
         {change.diff ? (
           <ChevronRightIcon
             className={`size-3.5 shrink-0 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
@@ -352,7 +352,7 @@ function AggregatedDiffRow({ diff }: { diff: string }) {
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="group inline-flex min-h-6 max-w-full items-center gap-1.5 text-left text-app-text-muted hover:text-foreground">
         <span className="truncate">Aggregated diff</span>
-        {statsLabel ? <span className="shrink-0 text-app-text-subtle">{statsLabel}</span> : null}
+        {statsLabel ? <span className="shrink-0 text-app-text-muted">{statsLabel}</span> : null}
         <ChevronRightIcon
           className={`size-3.5 shrink-0 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
         />

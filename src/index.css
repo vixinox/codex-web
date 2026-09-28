@@ -15,7 +15,6 @@
   --color-app-send-foreground: var(--app-send-foreground);
   --color-app-text: var(--app-text);
   --color-app-text-muted: var(--app-text-muted);
-  --color-app-text-subtle: var(--app-text-subtle);
   --color-app-text-on-accent: var(--app-text-on-accent);
   --color-on-accent: var(--app-text-on-accent);
   --color-app-border: var(--app-border);
@@ -62,6 +61,7 @@
 }
 
 :root {
+  --app-text-muted: oklch(0.556 0 0);
   --background: var(--app-surface);
   --foreground: var(--app-text);
   --card: var(--app-surface);
@@ -97,6 +97,28 @@
   }
   body {
     @apply bg-background text-foreground;
+    min-width: 320px;
+    min-height: 100svh;
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  .app-shell {
+    min-height: 100svh;
+  }
+  .app-main {
+    min-height: 100svh;
+  }
+  @media (max-width: 1023px) {
+    .app-main {
+      border-radius: 0;
+    }
+  }
+  @media (max-width: 639px) {
+    .app-main {
+      padding-bottom: env(safe-area-inset-bottom);
+    }
   }
 }
 

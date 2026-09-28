@@ -6,6 +6,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useCanHover } from '@/lib/platform/browser/use-can-hover'
 import { Separator } from '@/components/ui/separator'
 import { useSettingsLoadEnter } from './use-settings-load-enter'
 
@@ -172,6 +174,7 @@ function Meter({
   limit: number
   detail: string
 }) {
+  const canHover = useCanHover()
   const safeLimit = Math.max(1, limit)
   const clampPercent = (value: number) => Math.min(100, Math.max(0, (value / safeLimit) * 100))
   const usedPercent = clampPercent(used)
@@ -179,21 +182,31 @@ function Meter({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <HoverCard>
-          <HoverCardTrigger render={<span />} className="w-fit text-sm font-medium hover:underline">
-            {label}
-          </HoverCardTrigger>
-          <HoverCardContent>
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-              <dt className="text-muted-foreground">Used</dt>
-              <dd className="text-right font-medium tabular-nums">{formatExact(used)}</dd>
-              <dt className="text-muted-foreground">Limit</dt>
-              <dd className="text-right font-medium tabular-nums">{formatExact(limit)}</dd>
-              <dt className="text-muted-foreground">Available</dt>
-              <dd className="text-right font-medium tabular-nums">{formatExact(available)}</dd>
-            </dl>
-          </HoverCardContent>
-        </HoverCard>
+        {canHover ? (
+          <HoverCard>
+            <HoverCardTrigger
+              render={<span />}
+              className="w-fit text-sm font-medium hover:underline"
+            >
+              {label}
+            </HoverCardTrigger>
+            <HoverCardContent>
+              <CapacityDetails used={used} limit={limit} available={available} />
+            </HoverCardContent>
+          </HoverCard>
+        ) : (
+          <Popover>
+            <PopoverTrigger
+              render={<button type="button" />}
+              className="w-fit text-sm font-medium hover:underline"
+            >
+              {label}
+            </PopoverTrigger>
+            <PopoverContent className="w-auto">
+              <CapacityDetails used={used} limit={limit} available={available} />
+            </PopoverContent>
+          </Popover>
+        )}
         <span className="text-xs text-muted-foreground tabular-nums">{detail}</span>
       </div>
       <div
@@ -208,6 +221,27 @@ function Meter({
         <div className="h-full bg-primary" style={{ width: `${usedPercent}%` }} />
       </div>
     </div>
+  )
+}
+
+function CapacityDetails({
+  used,
+  limit,
+  available,
+}: {
+  used: number
+  limit: number
+  available: number
+}) {
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+      <dt className="text-muted-foreground">Used</dt>
+      <dd className="text-right font-medium tabular-nums">{formatExact(used)}</dd>
+      <dt className="text-muted-foreground">Limit</dt>
+      <dd className="text-right font-medium tabular-nums">{formatExact(limit)}</dd>
+      <dt className="text-muted-foreground">Available</dt>
+      <dd className="text-right font-medium tabular-nums">{formatExact(available)}</dd>
+    </dl>
   )
 }
 

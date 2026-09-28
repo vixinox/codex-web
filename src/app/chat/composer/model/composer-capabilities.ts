@@ -6,7 +6,6 @@ import type { ChatAccess, ChatEffort, ChatModel } from '@/app/chat/model/compose
  * runtime-agnostic and never branches on which profile it renders.
  */
 export type ComposerCapabilities = {
-  accessOptions: readonly ChatAccess[]
   attachments: boolean
   contextUsage: boolean
   availableModels: readonly ChatModel[]
@@ -30,7 +29,6 @@ export function composerCapabilitiesFromModels(
   base: Pick<ComposerCapabilities, 'attachments' | 'contextUsage'>,
 ): ComposerCapabilities {
   return {
-    accessOptions: [access],
     ...base,
     availableModels: models.map((model) => model.id),
     modelDisplayNames: Object.fromEntries(
@@ -53,7 +51,6 @@ export function composerCapabilitiesFromModels(
 }
 
 const emptyComposerCapabilities = (access: ChatAccess): ComposerCapabilities => ({
-  accessOptions: [access],
   attachments: access === 'full',
   contextUsage: true,
   availableModels: [],

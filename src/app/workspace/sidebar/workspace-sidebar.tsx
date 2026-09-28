@@ -2,7 +2,7 @@ import * as React from 'react'
 import { ChevronRight, Dot, LogOut, Plus, Settings, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import type { WorkspaceSidebarModel } from '@/app/workspace/workspace-model'
 import type { WorkspaceRuntimeModel } from '@/app/workspace/runtime/use-codex-runtime-controller'
@@ -12,6 +12,10 @@ import { LoadError, ProjectItem, ThreadItem } from './sidebar-items'
 import { useStoredBoolean } from './sidebar-storage'
 import { Spinner } from '@/components/ui/spinner'
 import { FadePresenceList } from './fade-presence-list'
+import {
+  useIsMobileNavigation,
+  useMobileNavigationClose,
+} from '@/app/composition/navigation/mobile-navigation-context'
 
 export function WorkspaceSidebar({
   model,
@@ -73,6 +77,8 @@ export function WorkspaceSidebar({
   /** Fixture workspaces keep collapse state in memory rather than local storage. */
   persistUiState?: boolean
 }) {
+  const closeMobileNavigation = useMobileNavigationClose()
+  const isDrawerMode = useIsMobileNavigation()
   const sidebarRef = useNativeFadeEnter<HTMLElement>([settingsActive], {
     duration: 0.22,
   })
@@ -96,6 +102,10 @@ export function WorkspaceSidebar({
           ? 'Stopped'
           : 'Error'
   const displayRuntimeLabel = runtimeStatusLabel ?? runtimeLabel
+  const openNewChat = () => {
+    onOpenNewChat()
+    closeMobileNavigation?.()
+  }
   const runtimeContent = (
     <>
       {runtimeStatus === 'started' ? (
@@ -111,22 +121,22 @@ export function WorkspaceSidebar({
     </>
   )
   return (
-    <TooltipProvider>
+    <>
       <aside
         ref={sidebarRef}
-        className="flex h-full w-78 shrink-0 flex-col bg-sidebar text-sidebar-foreground"
+        className="flex h-full min-h-0 w-full min-w-0 flex-col bg-sidebar text-sidebar-foreground xl:w-78 xl:shrink-0"
       >
         <div className="flex flex-col pt-3 pb-2">
           <button
             type="button"
-            className="px-5 py-1 pb-2 text-left text-lg font-semibold select-none"
-            onClick={onOpenNewChat}
+            className="py-1 pb-2 pl-5 text-left text-lg font-semibold select-none"
+            onClick={openNewChat}
             aria-label="Open Codex home"
           >
             Codex
           </button>
           <div className="space-y-px px-2">
-            <Button variant="ghost" className="w-full justify-start" onClick={onOpenNewChat}>
+            <Button variant="ghost" className="w-full justify-start" onClick={openNewChat}>
               <Plus data-icon="inline-start" />
               New chat
             </Button>
@@ -147,8 +157,8 @@ export function WorkspaceSidebar({
                       className={cn('size-4 transition-transform', projectsOpen && 'rotate-90')}
                     />
                   </CollapsibleTrigger>
-                  <Tooltip>
-                    <TooltipTrigger
+                  <Popover>
+                    <PopoverTrigger
                       render={
                         <Button
                           variant="ghost"
@@ -170,11 +180,11 @@ export function WorkspaceSidebar({
                       }
                     >
                       <Plus />
-                    </TooltipTrigger>
-                    <TooltipContent>
+                    </PopoverTrigger>
+                    <PopoverContent side="bottom" className="w-auto p-2 text-xs">
                       {projectAccess === 'unavailable' ? projectUnavailableMessage : 'New project'}
-                    </TooltipContent>
-                  </Tooltip>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0">
                   {model.status === 'loading' ? (
@@ -203,6 +213,7 @@ export function WorkspaceSidebar({
                             onOpenProjectChat={onOpenProjectChat}
                             onRenameProject={onRenameProject}
                             onDeleteProject={onDeleteProject}
+                            drawerMode={isDrawerMode}
                           />
                         )}
                       </FadePresenceList>
@@ -253,6 +264,7 @@ export function WorkspaceSidebar({
                             onArchive={() => onArchiveThread(null, thread.id)}
                             onDelete={() => (onDeleteThread ?? onArchiveThread)(null, thread.id)}
                             archiveAvailable={archiveAvailable}
+                            drawerMode={isDrawerMode}
                           />
                         )}
                       </FadePresenceList>
@@ -263,7 +275,7 @@ export function WorkspaceSidebar({
             </>
           )}
         </div>
-        <div className="mb-2 px-2">
+        <div className="mb-2 shrink-0 px-2">
           {runtimeInteractive && (runtimeStatus === 'stopped' || runtimeStatus === 'error') ? (
             <Button
               type="button"
@@ -297,6 +309,6 @@ export function WorkspaceSidebar({
           ) : null}
         </div>
       </aside>
-    </TooltipProvider>
+    </>
   )
 }

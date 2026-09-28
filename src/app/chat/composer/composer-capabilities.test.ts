@@ -13,8 +13,7 @@ const owner = composerCapabilitiesFromModels(
 )
 const guest = EMPTY_GUEST_COMPOSER_CAPABILITIES
 describe('composer capability config', () => {
-  it('does not let the Guest capability select an Owner-only access mode', () => {
-    expect(guest.accessOptions).toEqual(['workspaceWrite'])
+  it('keeps the Guest capability access mode fixed to its runtime boundary', () => {
     expect(guest.access).toBe('workspaceWrite')
   })
 
@@ -27,11 +26,10 @@ describe('composer capability config', () => {
   it('keeps every configured access and effort value within the shared unions', () => {
     const accessValues = new Set(['full', 'readOnly', 'workspaceWrite'])
     for (const capability of [guest, EMPTY_OWNER_COMPOSER_CAPABILITIES, owner]) {
-      expect(capability.accessOptions.every((value) => accessValues.has(value))).toBe(true)
       expect(Object.keys(capability.modelDisplayNames).length).toBe(
         capability.availableModels.length,
       )
-      expect(capability.accessOptions).toContain(capability.access)
+      expect(accessValues.has(capability.access)).toBe(true)
     }
   })
 
@@ -57,6 +55,5 @@ describe('composer capability config', () => {
   it('withholds context usage from the Owner New Chat composer until a Thread exists', () => {
     expect(EMPTY_OWNER_COMPOSER_CAPABILITIES.contextUsage).toBe(true)
     expect(owner.contextUsage).toBe(true)
-    expect(owner.accessOptions).toEqual(['full'])
   })
 })

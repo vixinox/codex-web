@@ -22,7 +22,7 @@ export function QuestionnaireSummary({
           />
         </CollapsibleTrigger>
         <TranscriptCollapsibleContent>
-          <div className="my-2 flex flex-col gap-4 pl-5 text-app-text-subtle">
+          <div className="my-2 flex flex-col gap-4 pl-5 text-app-text-muted">
             {summary.questions.map((question, index) => (
               <div key={`${question.question}-${index}`} className="flex flex-col gap-1">
                 <div>{question.question}</div>
@@ -40,7 +40,7 @@ export function QuestionnaireSummary({
 
 export function QuestionnairePendingStatus({ questionCount }: { questionCount: number }) {
   return (
-    <div className="mt-3 flex flex-col gap-3 text-sm text-app-text-subtle select-none">
+    <div className="mt-3 flex flex-col gap-3 text-sm text-app-text-muted select-none">
       <div className="flex items-center gap-2">
         <CircleHelpIcon className="size-4 shrink-0" />
         <span>Asked {questionCount} questions</span>
@@ -72,10 +72,10 @@ export function WorkSummary({
   const nowMs = useWorkingClock(working)
   const label = getTurnWorkLabel(turn, nowMs, hasRunningCompaction)
   if (!label) return null
-  if (working) return <span className="text-sm text-app-text-subtle select-none">{label}</span>
-  if (!expandable) return <span className="text-sm text-app-text-subtle select-none">{label}</span>
+  if (working) return <span className="text-sm text-app-text-muted select-none">{label}</span>
+  if (!expandable) return <span className="text-sm text-app-text-muted select-none">{label}</span>
   return (
-    <CollapsibleTrigger className="group flex items-center self-start text-sm text-app-text-subtle select-none">
+    <CollapsibleTrigger className="group flex items-center self-start text-sm text-app-text-muted select-none">
       <span>{label}</span>
       <ChevronRightIcon
         className={`ml-1 size-4.5 transition-[opacity,transform] ${detailsOpen ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}

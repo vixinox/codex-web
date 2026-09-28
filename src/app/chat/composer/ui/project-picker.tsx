@@ -36,7 +36,7 @@ export function ProjectPicker({
   const selectedProject = projects.find((project) => project.id === selectedProjectId)
 
   return (
-    <div className="w-[96%] rounded-t-3xl bg-app-surface-subtle px-2 py-1">
+    <div className="w-[92%] lg:w-[95%] xl:w-[96%] rounded-t-3xl bg-app-surface-subtle px-2 py-1">
       <Popover
         open={open}
         onOpenChange={(nextOpen) => {
@@ -52,7 +52,7 @@ export function ProjectPicker({
           render={
             <Button
               variant="ghost"
-              className="rounded-full font-light text-app-text-subtle"
+              className="rounded-full font-light text-app-text-muted"
               disabled={disabled}
               title={unavailableMessage}
             >

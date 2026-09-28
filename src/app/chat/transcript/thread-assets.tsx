@@ -62,9 +62,9 @@ export const ThreadAssets = React.memo(
     const latestUserBlockId = session
       ? sessionSnapshot.latestUserBlockId
       : [...displayThread.turns]
-          .reverse()
-          .flatMap((turn) => [...turn.blocks].reverse())
-          .find((block) => block.type === 'user')?.id
+        .reverse()
+        .flatMap((turn) => [...turn.blocks].reverse())
+        .find((block) => block.type === 'user')?.id
 
     React.useLayoutEffect(() => {
       const assets = assetsRef.current
@@ -147,12 +147,12 @@ export const ThreadAssets = React.memo(
               ),
             )
           ) : (
-            <p className="py-20 text-center text-sm text-app-text-subtle">
+            <p className="py-20 text-center text-sm text-app-text-muted">
               Start a new conversation
             </p>
           )}
           {compacting &&
-          !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
+            !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
             <LiveRow label="Compacting" />
           ) : null}
         </div>
@@ -237,7 +237,9 @@ const ThreadTurn = React.memo(function ThreadTurn({
 }) {
   const [detailsOpen, setDetailsOpen] = React.useState(false)
   const [planOpen, setPlanOpen] = React.useState(false)
+  const [planContentHeight, setPlanContentHeight] = React.useState(0)
   const [animateAssistant, setAnimateAssistant] = React.useState(false)
+  const planContentRef = React.useRef<HTMLDivElement>(null)
   const previousStatusRef = React.useRef(turn.status)
   React.useLayoutEffect(() => {
     const enteredTerminal =
@@ -252,6 +254,16 @@ const ThreadTurn = React.memo(function ThreadTurn({
     }
     previousStatusRef.current = turn.status
   }, [turn.status])
+  const finalPlan = turn.plan?.final ? turn.plan : undefined
+  React.useLayoutEffect(() => {
+    const content = planContentRef.current
+    if (!content) return
+    const updateHeight = () => setPlanContentHeight(content.scrollHeight + 13)
+    updateHeight()
+    const resizeObserver = new ResizeObserver(updateHeight)
+    resizeObserver.observe(content)
+    return () => resizeObserver.disconnect()
+  }, [finalPlan?.explanation, finalPlan?.text, finalPlan?.steps])
   const firstUser = turn.blocks.find((block) => block.type === 'user')
   const process = turn.blocks
     .filter((block) => block !== firstUser && !(block.type === 'assistant' && block.final))
@@ -265,7 +277,6 @@ const ThreadTurn = React.memo(function ThreadTurn({
       (block): block is Extract<ChatBlock, { type: 'assistant' }> =>
         block.type === 'assistant' && block.final === true,
     )
-  const finalPlan = turn.plan?.final ? turn.plan : undefined
   const copyText = turn.blocks
     .filter((block) => block.type === 'assistant')
     .map((block) => block.text)
@@ -392,7 +403,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
             hasRunningCompaction={hasRunningCompaction}
           />
         ) : null}
-        {showSeparator ? <Separator className="mt-2" /> : null}
+        {showSeparator ? <Separator className="my-2" /> : null}
         {processBlocks.length ? (
           <TranscriptCollapsibleContent>
             <div className="mt-2 flex min-w-0 flex-col gap-2">{processBlocks}</div>
@@ -403,7 +414,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
         <QuestionnairePendingStatus questionCount={pendingQuestionnaire.questions.length} />
       ) : null}
       {finalAssistant ? (
-        <div className="mt-2 min-w-0">
+        <div className="mt-2 max-w-full min-w-0">
           <ThreadBlock
             block={finalAssistant}
             streaming={working}
@@ -456,21 +467,24 @@ const ThreadTurn = React.memo(function ThreadTurn({
                 setPlanOpen((open) => !open)
               }
             }}
-            className={`mt-3 min-w-0 overflow-hidden border-t border-app-border pt-3 transition-[max-height,opacity] duration-300 ease-out motion-reduce:transition-none ${planOpen ? 'max-h-[80rem] opacity-100' : 'max-h-16 opacity-75'}`}
+            className={`mt-2 min-w-0 overflow-hidden border-t border-app-border pt-3 transition-[height,opacity] duration-300 ease-out motion-reduce:transition-none ${planOpen ? 'opacity-100' : 'opacity-75'}`}
+            style={{ height: planOpen ? planContentHeight : '4rem' }}
           >
-            {finalPlan.explanation ? (
-              <p className="text-sm text-app-text-muted">{finalPlan.explanation}</p>
-            ) : null}
-            {finalPlan.text ? <MessageContent text={finalPlan.text} /> : null}
-            {!finalPlan.text && finalPlan.steps.length ? (
-              <ol className="flex flex-col gap-2 text-sm">
-                {finalPlan.steps.map((step, index) => (
-                  <li key={`${step.step}-${index}`}>
-                    {index + 1}. {step.step}
-                  </li>
-                ))}
-              </ol>
-            ) : null}
+            <div ref={planContentRef}>
+              {finalPlan.explanation ? (
+                <p className="text-sm text-app-text-muted">{finalPlan.explanation}</p>
+              ) : null}
+              {finalPlan.text ? <MessageContent text={finalPlan.text} /> : null}
+              {!finalPlan.text && finalPlan.steps.length ? (
+                <ol className="flex flex-col gap-2 text-sm">
+                  {finalPlan.steps.map((step, index) => (
+                    <li key={`${step.step}-${index}`}>
+                      {index + 1}. {step.step}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+            </div>
           </div>
         </section>
       ) : null}
@@ -503,7 +517,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
 
 function PlanIcon() {
   return (
-    <span className="inline-flex size-5 items-center justify-center text-app-text-subtle">
+    <span className="inline-flex size-5 items-center justify-center text-app-text-muted">
       <LightbulbIcon className="size-3.5" aria-hidden="true" />
     </span>
   )

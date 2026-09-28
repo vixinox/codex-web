@@ -22,7 +22,10 @@ export function SettingsSidebar({
   const sidebarRef = useNativeEnter<HTMLElement>([], { duration: 0.22, y: 0 })
 
   return (
-    <aside ref={sidebarRef} className="flex h-full w-72 shrink-0 flex-col">
+    <aside
+      ref={sidebarRef}
+      className="flex h-full w-full min-w-0 flex-col bg-sidebar text-sidebar-foreground xl:w-72 xl:shrink-0"
+    >
       <div className="flex flex-col gap-1 p-3">
         <Button variant="ghost" className="w-full justify-start font-normal" onClick={onBack}>
           <ArrowLeft data-icon="inline-start" />

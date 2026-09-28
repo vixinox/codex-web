@@ -149,7 +149,6 @@ export function useThreadDetailController(
     }
     function scheduleRecovery() {
       trackProductEvent('sse_reconnected')
-      onUnavailable?.()
       if (!active || recoveryTimer !== null || recovering) return
       recoveryTimer = window.setTimeout(() => {
         recoveryTimer = null

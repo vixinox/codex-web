@@ -24,9 +24,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useCanHover } from '@/lib/platform/browser/use-can-hover'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { WorkspaceProject, WorkspaceThread } from '@/app/workspace/workspace-model'
 import { ProjectNameDialog } from '../project-name-dialog'
@@ -45,6 +46,7 @@ export function ProjectItem({
   onOpenProjectChat,
   onRenameProject,
   onDeleteProject,
+  drawerMode = false,
   exiting = false,
 }: {
   project: WorkspaceProject
@@ -56,6 +58,7 @@ export function ProjectItem({
   onOpenProjectChat: (projectId: string) => void
   onRenameProject: (projectId: string, name: string) => Promise<void>
   onDeleteProject: (projectId: string) => Promise<void>
+  drawerMode?: boolean
   exiting?: boolean
 }) {
   const [open, setOpen] = useStoredBoolean(`workspace-sidebar:project:${project.id}`, false)
@@ -66,6 +69,7 @@ export function ProjectItem({
   const [removeError, setRemoveError] = React.useState<string | null>(null)
   const nameRef = React.useRef<HTMLSpanElement>(null)
   const disabled = project.pending || exiting
+  const canHover = useCanHover()
   useNativeFadePulse(nameRef, [project.name])
   return (
     <Collapsible open={open} onOpenChange={disabled ? undefined : setOpen}>
@@ -85,23 +89,45 @@ export function ProjectItem({
           </span>
         </CollapsibleTrigger>
         <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="bg-transparent opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100"
-                  aria-label={`New chat in ${project.name}`}
-                  onClick={() => onOpenProjectChat(project.id)}
-                  disabled={disabled}
-                />
-              }
-            >
-              <SquarePen />
-            </TooltipTrigger>
-            <TooltipContent>New chat</TooltipContent>
-          </Tooltip>
+          {canHover ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="bg-transparent opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100"
+                    aria-label={`New chat in ${project.name}`}
+                    onClick={() => onOpenProjectChat(project.id)}
+                    disabled={disabled}
+                  />
+                }
+              >
+                <SquarePen />
+              </TooltipTrigger>
+              <TooltipContent>New chat</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="bg-transparent opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100"
+                    aria-label={`New chat in ${project.name}`}
+                    onClick={() => onOpenProjectChat(project.id)}
+                    disabled={disabled}
+                  />
+                }
+              >
+                <SquarePen />
+              </PopoverTrigger>
+              <PopoverContent side="bottom" className="w-auto p-2 text-xs">
+                New chat
+              </PopoverContent>
+            </Popover>
+          )}
           <Popover open={menuOpen} onOpenChange={setMenuOpen}>
             <PopoverTrigger
               render={
@@ -216,6 +242,7 @@ export function ProjectItem({
                     onClick={() => onSelectThread(project.id, thread.id)}
                     onArchive={() => onArchiveThread(project.id, thread.id)}
                     onDelete={() => onDeleteThread(project.id, thread.id)}
+                    drawerMode={drawerMode}
                   />
                 )}
               </FadePresenceList>
@@ -235,6 +262,7 @@ export function ThreadItem({
   onDelete,
   exiting = false,
   archiveAvailable = true,
+  drawerMode = false,
 }: {
   thread: WorkspaceThread
   active: boolean
@@ -243,10 +271,28 @@ export function ThreadItem({
   onDelete: () => Promise<void>
   exiting?: boolean
   archiveAvailable?: boolean
+  drawerMode?: boolean
 }) {
   const [archiving, setArchiving] = React.useState(false)
+  const [confirmOpen, setConfirmOpen] = React.useState(false)
   const showWorkingIndicator = thread.status === 'active' && !archiving
+  const canHover = useCanHover()
   const isFailedPlaceholder = thread.isPlaceholder && thread.status === 'systemError'
+  const actionLabel = isFailedPlaceholder ? 'Delete failed chat' : 'Archive chat'
+  const performAction = () => {
+    setConfirmOpen(false)
+    setArchiving(true)
+    void (isFailedPlaceholder ? onDelete() : onArchive())
+      .catch((error: unknown) => {
+        toast.add({
+          title: isFailedPlaceholder ? 'Could not delete chat' : 'Could not archive chat',
+          description:
+            error instanceof Error ? error.message : 'Could not archive this thread. Try again.',
+          type: 'error',
+        })
+      })
+      .finally(() => setArchiving(false))
+  }
   return (
     <div
       className={cn(
@@ -271,73 +317,131 @@ export function ThreadItem({
         <div
           className={cn(
             'flex shrink-0 items-center pr-2',
-            showWorkingIndicator ? '' : 'opacity-0 group-hover/thread:opacity-100',
+            drawerMode
+              ? 'opacity-100'
+              : showWorkingIndicator
+                ? ''
+                : 'opacity-0 group-hover/thread:opacity-100',
           )}
         >
-          {showWorkingIndicator ? (
+          {showWorkingIndicator && !drawerMode ? (
             <Loader2
               className="size-4 animate-spin group-hover/thread:hidden"
               aria-label="Working"
             />
           ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
+          {canHover && !drawerMode ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className={cn(
+                      showWorkingIndicator && !drawerMode && 'hidden group-hover/thread:flex',
+                    )}
+                    disabled={archiving || exiting}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      performAction()
+                    }}
+                    aria-label={
+                      archiving
+                        ? isFailedPlaceholder
+                          ? 'Deleting chat'
+                          : 'Archiving chat'
+                        : isFailedPlaceholder
+                          ? 'Delete failed chat'
+                          : 'Archive chat'
+                    }
+                  />
+                }
+              >
+                {archiving ? (
+                  <Loader2 className="animate-spin" />
+                ) : isFailedPlaceholder ? (
+                  <Trash2 />
+                ) : (
+                  <Archive />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>
+                  {archiving
+                    ? isFailedPlaceholder
+                      ? 'Deleting'
+                      : 'Archiving'
+                    : isFailedPlaceholder
+                      ? 'Delete failed chat'
+                      : 'Archive chat'}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          ) : drawerMode ? (
+            <Popover open={confirmOpen} onOpenChange={setConfirmOpen}>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    disabled={archiving || exiting}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={actionLabel}
+                  />
+                }
+              >
+                {archiving ? (
+                  <Loader2 className="animate-spin" />
+                ) : isFailedPlaceholder ? (
+                  <Trash2 />
+                ) : (
+                  <Archive />
+                )}
+              </PopoverTrigger>
+              <PopoverContent align="end" side="bottom" className="w-fit p-1">
                 <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className={cn(showWorkingIndicator && 'hidden group-hover/thread:flex')}
-                  disabled={archiving || exiting}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    setArchiving(true)
-                    void (isFailedPlaceholder ? onDelete() : onArchive())
-                      .catch((error: unknown) => {
-                        toast.add({
-                          title: isFailedPlaceholder
-                            ? 'Could not delete chat'
-                            : 'Could not archive chat',
-                          description:
-                            error instanceof Error
-                              ? error.message
-                              : 'Could not archive this thread. Try again.',
-                          type: 'error',
-                        })
-                      })
-                      .finally(() => setArchiving(false))
-                  }}
-                  aria-label={
-                    archiving
-                      ? isFailedPlaceholder
-                        ? 'Deleting chat'
-                        : 'Archiving chat'
-                      : isFailedPlaceholder
-                        ? 'Delete failed chat'
-                        : 'Archive chat'
-                  }
-                />
-              }
-            >
-              {archiving ? (
-                <Loader2 className="animate-spin" />
-              ) : isFailedPlaceholder ? (
-                <Trash2 />
-              ) : (
-                <Archive />
-              )}
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>
-                {archiving
-                  ? isFailedPlaceholder
-                    ? 'Deleting'
-                    : 'Archiving'
-                  : isFailedPlaceholder
-                    ? 'Delete failed chat'
-                    : 'Archive chat'}
-              </p>
-            </TooltipContent>
-          </Tooltip>
+                  variant="default"
+                  size="sm"
+                  disabled={archiving}
+                  onClick={performAction}
+                  className="bg-destructive text-destructive-foreground"
+                >
+                  Archive
+                </Button>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className={cn(showWorkingIndicator && 'hidden group-hover/thread:flex')}
+                    disabled={archiving || exiting}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      performAction()
+                    }}
+                    aria-label={actionLabel}
+                  >
+                    <Archive />
+                  </Button>
+                }
+              >
+                {archiving ? (
+                  <Loader2 className="animate-spin" />
+                ) : isFailedPlaceholder ? (
+                  <Trash2 />
+                ) : (
+                  <Archive />
+                )}
+              </PopoverTrigger>
+              <PopoverContent side="bottom" className="w-auto p-2 text-xs">
+                {isFailedPlaceholder ? 'Delete failed chat' : 'Archive chat'}
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       ) : null}
     </div>

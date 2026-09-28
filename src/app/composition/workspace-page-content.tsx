@@ -1,4 +1,3 @@
-import { ThreadHeader } from '@/app/composition/layout/thread-header'
 import { ComposerInput } from '@/app/chat/composer/ui/composer-input'
 import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { ProjectPicker } from '@/app/chat/composer/ui/project-picker'
@@ -7,7 +6,6 @@ import { RuntimePlaceholder } from '@/app/composition/screens/runtime-placeholde
 import { SettingsScreen } from '@/app/composition/screens/settings-screen'
 import { ThreadComposerSlot } from '@/app/composition/screens/thread-composer'
 import { ThreadPageSurface } from '@/app/composition/screens/thread-page'
-import { ArchivedChats } from '@/app/settings/archived-chats'
 import type { WorkspaceRouteController } from '@/app/composition/routes/use-workspace-route-controller'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import type { WorkspaceSidebarController } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
@@ -20,6 +18,20 @@ import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-ca
 
 type ThreadPageController = ReturnType<typeof useThreadPageController>
 type WorkspaceOrchestration = ReturnType<typeof useWorkspaceOrchestration>
+
+function ThreadHeader({ title }: { title?: string | null }) {
+  return (
+    <div className="relative z-10 -mb-14 min-h-14 bg-linear-to-b from-app-surface from-70% to-transparent px-4 pt-4 pb-6 pl-16 xl:pl-4">
+      {title ? (
+        <h1 className="max-w-[40ch] truncate font-medium" title={title}>
+          {title}
+        </h1>
+      ) : (
+        <div className="h-6" aria-hidden="true" />
+      )}
+    </div>
+  )
+}
 
 export function WorkspacePageContent({
   route,
@@ -54,16 +66,14 @@ export function WorkspacePageContent({
       ) : null}
       <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto">
         {route.settingsActive ? (
-          route.archivedChatsActive && ready ? (
-            <ArchivedChats />
-          ) : route.archivedChatsActive ? (
+          route.archivedChatsActive && !ready ? (
             <RuntimePlaceholder
               model={runtime.model}
               onRetry={runtime.start}
               onOpenSettings={route.openSettings}
             />
           ) : (
-            <SettingsScreen runtime={runtime} />
+            <SettingsScreen runtime={runtime} archived={route.archivedChatsActive} />
           )
         ) : ready && !threadLoading ? (
           <ThreadPageSurface controller={surfacePage} onRetry={page.actions.retry} />

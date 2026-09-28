@@ -67,9 +67,9 @@ export function AdminScreen() {
   }, [refresh])
 
   return (
-    <main className="min-h-svh bg-background p-6 text-foreground md:p-10">
+    <main className="min-h-svh bg-background px-4 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] text-foreground sm:p-6 md:p-10">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-        <header className="flex items-center justify-between gap-4">
+        <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <ShieldCheck className="size-4" /> Guest operations

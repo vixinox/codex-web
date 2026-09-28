@@ -17,13 +17,13 @@ export function ErrorPage({ code, title, description, actions, className }: Erro
   return (
     <div
       className={cn(
-        'flex min-h-svh flex-col items-center justify-center gap-6 bg-app-canvas px-6 py-12 text-center',
+        'flex min-h-svh flex-col items-center justify-center gap-6 bg-app-canvas px-4 py-8 pb-[calc(2rem+env(safe-area-inset-bottom))] text-center sm:px-6 sm:py-12',
         className,
       )}
     >
       <p
         aria-hidden="true"
-        className="text-7xl leading-none font-light tracking-tighter text-app-text-subtle select-none"
+        className="text-7xl leading-none font-light tracking-tighter text-app-text-muted select-none"
       >
         {code}
       </p>

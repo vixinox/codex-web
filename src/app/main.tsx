@@ -15,14 +15,18 @@ import { signOut, useSession } from '@/lib/auth/auth-client'
 import { AUTH_EXPIRED_EVENT, installAuthExpiryInterceptor } from '@/lib/auth/auth-expiry'
 import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
-import { CodexStartupScreen } from '@/app/composition/screens/codex-startup-screen'
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
+import { CodexLogo } from '@/components/shared/codex-logo'
 
-const StartupScreen = lazy(() =>
-  import('@/app/composition/screens/startup-screen').then(({ StartupScreen: screen }) => ({
-    default: screen,
-  })),
-)
+const startupPageEnabled = import.meta.env.VITE_ENABLE_STARTUP_PAGE === 'true'
+
+const StartupScreen = startupPageEnabled
+  ? lazy(() =>
+      import('@/app/composition/screens/startup-screen').then(({ StartupScreen: screen }) => ({
+        default: screen,
+      })),
+    )
+  : null
 
 const AdminScreen = lazy(() =>
   import('@/app/composition/screens/admin-screen').then(({ AdminScreen: screen }) => ({
@@ -38,14 +42,16 @@ export function App() {
   return (
     <Routes>
       <Route path="/" element={<RootRoute />} />
-      <Route
-        path="/startup"
-        element={
-          <Suspense fallback={pageFallback}>
-            <StartupScreen />
-          </Suspense>
-        }
-      />
+      {StartupScreen ? (
+        <Route
+          path="/startup"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StartupScreen />
+            </Suspense>
+          }
+        />
+      ) : null}
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/admin/*" element={<AdminRoute />} />
       <Route path="/app/*" element={<CandidateRoute />} />
@@ -60,7 +66,7 @@ export function App() {
 function RootRoute() {
   const { data: session, isPending } = useSession()
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
-  if (!session) return <Navigate to="/startup" replace />
+  if (!session) return <Navigate to="/login" replace />
   const kind = (session.user as { kind?: string }).kind
   return <Navigate to={kind === 'admin' ? '/admin' : '/app'} replace />
 }
@@ -100,7 +106,19 @@ function AuthenticatedWorkspace({ userId }: { userId: string }) {
     })
   }, [runtime.errorEvent])
 
-  if (runtime.bootstrapping) return <CodexStartupScreen />
+  if (runtime.bootstrapping)
+    return (
+      <main className="flex min-h-svh items-center justify-center bg-background text-foreground">
+        <div
+          className="flex flex-col items-center gap-4 text-center"
+          role="status"
+          aria-live="polite"
+        >
+          <CodexLogo className="size-12" />
+          <p className="text-sm text-muted-foreground">Starting Codex...</p>
+        </div>
+      </main>
+    )
   return <WorkspaceShell userId={userId} runtime={runtime} />
 }
 
