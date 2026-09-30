@@ -137,5 +137,6 @@ export function useThreadPageController({
     lockEpoch: visiblePending?.lockEpoch ?? 0,
     retryState: composer.retryState,
     inputErrors: detail.inputErrors,
+    pendingAccepted: pending.pending ? Boolean(pending.pending.accepted) : true,
   }
 }

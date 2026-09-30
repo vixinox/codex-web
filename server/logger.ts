@@ -42,11 +42,25 @@ export function safeError(error: unknown) {
   let current: unknown = error
   while (current !== undefined && current !== null && !seen.has(current) && messages.length < 4) {
     seen.add(current)
-    const message = current instanceof Error ? current.message : describeUnknown(current)
+    const message = errorMessage(current)
     if (message) messages.push(sanitizeErrorMessage(message))
     current = current instanceof Error ? current.cause : undefined
   }
   return messages.join(' <- ').slice(0, 500)
+}
+
+function errorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return describeUnknown(error)
+  if (error.message) return error.message
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : ''
+  if (error instanceof AggregateError) {
+    const causes: string[] = error.errors
+      .map((entry) => errorMessage(entry))
+      .filter(Boolean)
+      .slice(0, 3)
+    return [code, ...causes].filter(Boolean).join(': ')
+  }
+  return code
 }
 
 function sanitizeErrorMessage(message: string) {

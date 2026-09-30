@@ -16,6 +16,8 @@ import {
 import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 import { trackProductEvent } from '@/lib/connection/telemetry'
 
+const STATUS_RECONCILE_INTERVAL_MS = 15_000
+
 export type ThreadDetailModel =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -107,7 +109,8 @@ export function useThreadDetailController(
       subscribe(hydration.replayAfterId)
     }
     const reconcileTimer = window.setInterval(() => {
-      if (!active || !session.state.isBusy || recovering) return
+      if (!active || document.visibilityState !== 'visible' || !session.state.isBusy || recovering)
+        return
       void client
         .readThreadStatus(projectId, threadId, controller.signal)
         .then((status) => {
@@ -115,7 +118,7 @@ export function useThreadDetailController(
           return client.readThread(projectId, threadId, controller.signal).then(hydrateAndSubscribe)
         })
         .catch(() => undefined)
-    }, 5_000)
+    }, STATUS_RECONCILE_INTERVAL_MS)
     const recover = async () => {
       if (!active || recovering) return
       recovering = true
@@ -261,7 +264,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isCodexUnavailable(error: unknown) {
   const candidate = error as { code?: unknown; status?: unknown }
-  return candidate?.code === 'CODEX_UNAVAILABLE' || candidate?.status === 502
+  return (
+    candidate?.code === 'CODEX_UNAVAILABLE' ||
+    candidate?.code === 'CODEX_START_REQUIRED' ||
+    candidate?.status === 409 ||
+    candidate?.status === 502
+  )
 }
 
 function notificationReferencesTurn(notification: CodexNotification, turnIds: Set<string>) {

@@ -664,7 +664,12 @@ function threadIdsForScope(
 
 function isCodexUnavailable(error: unknown) {
   const candidate = error as { code?: unknown; status?: unknown }
-  return candidate?.code === 'CODEX_UNAVAILABLE' || candidate?.status === 502
+  return (
+    candidate?.code === 'CODEX_UNAVAILABLE' ||
+    candidate?.code === 'CODEX_START_REQUIRED' ||
+    candidate?.status === 409 ||
+    candidate?.status === 502
+  )
 }
 
 function mapProject(

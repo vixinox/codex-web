@@ -11,7 +11,8 @@ export function ThreadPageSurface({
   controller: ReturnType<typeof useThreadPageController>
   onRetry?: () => void
 }) {
-  const { model, retryState, inputErrors, lockEpoch, session, compacting } = controller
+  const { model, retryState, inputErrors, lockEpoch, session, compacting, pendingAccepted } =
+    controller
   if (model.status === 'empty') return <ThreadEmptyState />
   if (model.status === 'error')
     return (
@@ -42,6 +43,7 @@ export function ThreadPageSurface({
         retryState={retryState}
         lockEpoch={lockEpoch}
         compacting={compacting}
+        pendingAccepted={pendingAccepted}
       />
     </section>
   )

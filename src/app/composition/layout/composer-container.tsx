@@ -11,9 +11,7 @@ export function ComposerContainer({
     <div
       className={`relative z-10 -mt-14 flex-none bg-linear-to-t from-app-surface from-80% to-transparent ${className}`.trim()}
     >
-      <div className="mx-auto w-full max-w-3xl px-6 pb-[env(safe-area-inset-bottom)]">
-        {children}
-      </div>
+      <div className="mx-auto w-full max-w-3xl">{children}</div>
     </div>
   )
 }

@@ -21,7 +21,7 @@
 - `/app/*` 是唯一真实应用入口；不提供旧 `/ui/*`、`/preview/*` 或离线工作台兼容路由。
 - Owner 与 Guest 共用单一 Vite 入口和构建产物：`/startup` 为静态启动页，`/` 和 `/login` 按 Better Auth session 分流到 `/app` 或 Guest profile 下的 `/admin`。Guest 使用 Better Auth anonymous session/cookie，并通过独立的 24 小时 lease 管理 workspace、quota、任务和 reset；lease 不是浏览器身份凭据。
 - Owner 与 Guest 使用固定独立进程入口 `pnpm server:owner` 和 `pnpm server:guest`，不设置运行模式变量，也不存在 combined server，后端 profile 强制执行隔离。
-- 自托管采用同源 Docker Compose 拓扑：Web nginx、Owner、Guest 和 Postgres 分离运行。Web nginx 提供构建后的静态资源并分流 Owner/Guest API；默认只启动 Owner，Guest 通过 Compose profile 按需启动，宿主机仅绑定 `127.0.0.1:8080`。用户可使用自己的 HTTPS 反向代理；只有显式 `SERVER_TRUST_PROXY=true`、`SERVER_ENFORCE_ORIGIN_CHECKS=true` 且 `BETTER_AUTH_URL`/`BETTER_AUTH_TRUSTED_ORIGINS` 使用 HTTPS 时，才允许在受信代理后的容器网络监听。浏览器连接当前 origin，不保存或切换实例。
+- 应用仅支持本地回环部署：Owner 和 Guest 由宿主机上的独立进程提供，浏览器通过本地 Fastify bridge 访问；Docker Compose 仅提供绑定 `127.0.0.1:5432` 的 Postgres 开发数据库，不承载应用、静态资源或反向代理。
 - Guest runtime 在 Fastify 监听前自动启动、以独立环境变量 Credential 和 `CODEX_HOME` 运行，API-key 验证或 Windows sandbox readiness 不是 `ready` 时服务必须退出；Owner runtime 仍保持显式启动。每个 lease 分配一个从空目录创建的私有临时 workspace，Reset/到期撤销 lease、停止任务、软删除记录并删除该 workspace。
 - Guest 隔离以 fail-closed 为原则：skills 镜像拒绝 symlink/reparse point、路径逃逸和非普通文件；Thread 固定 `workspace-write`，Turn 固定协议 `workspaceWrite` writable root 与 `networkAccess: false`；Guest 子进程不继承 Owner 进程环境。Windows 额外要求 `windowsSandbox/readiness=ready`，Linux 使用受管 runtime 自带的 `bwrap`。浏览器不接收 native Thread ID、Credential、宿主路径或通用命令/文件系统接口。
 - Guest runtime contract 额外公开经过正整数校验的 `modelContextWindow`（来自 `GUEST_MODEL_CONTEXT_WINDOW`，默认 256000），仅作为 Composer context window 的 Guest fallback，不与每日 quota 或 `maxTokensPerTurn` 混用。

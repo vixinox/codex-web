@@ -92,6 +92,12 @@
 }
 
 @layer base {
+  html {
+    background-color: var(--app-canvas, #ffffff);
+  }
+  html.dark {
+    background-color: #111111;
+  }
   * {
     @apply border-border outline-ring/50;
   }
@@ -101,13 +107,18 @@
     min-height: 100svh;
     overflow-x: hidden;
   }
+  html:has(.app-shell),
+  body:has(.app-shell),
+  body:has(.app-shell) #root {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
 }
 
 @layer components {
   .app-shell {
-    min-height: 100svh;
-  }
-  .app-main {
+    height: 100dvh;
     min-height: 100svh;
   }
   @media (max-width: 1023px) {
@@ -117,7 +128,7 @@
   }
   @media (max-width: 639px) {
     .app-main {
-      padding-bottom: env(safe-area-inset-bottom);
+      padding-bottom: 0;
     }
   }
 }

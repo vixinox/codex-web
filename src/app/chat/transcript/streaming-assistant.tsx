@@ -5,6 +5,13 @@ import { transcriptDebug } from './transcript-debug'
 
 type MarkdownBlock = { id: string; text: string }
 
+/** Some model responses escape strong markers even though they intend Markdown emphasis. */
+export function normalizeEscapedStrongMarkers(text: string) {
+  const markers = text.match(/\\\*\\\*|\\_\\_/g) ?? []
+  if (markers.length < 2 || markers.length % 2 !== 0) return text
+  return text.replace(/\\\*\\\*|\\_\\_/g, (marker) => marker.slice(1, 2) + marker.slice(3, 4))
+}
+
 /**
  * Keep the incomplete tail out of the DOM. Blocks are deliberately conservative:
  * a block is committed only after a blank-line boundary and balanced inline syntax.
@@ -142,7 +149,7 @@ const MarkdownBlockView = React.memo(function MarkdownBlockView({
     }
   }, [animate, block.id])
 
-  const content = <MessageContent text={block.text} />
+  const content = <MessageContent text={normalizeEscapedStrongMarkers(block.text)} />
   return (
     <div ref={ref} className="min-w-0">
       {content}

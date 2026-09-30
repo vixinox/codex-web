@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { splitCompleteMarkdownBlocks } from './streaming-assistant'
+import { normalizeEscapedStrongMarkers, splitCompleteMarkdownBlocks } from './streaming-assistant'
 
 describe('streaming Markdown blocks', () => {
+  it('supports escaped strong markers emitted by some models', () => {
+    expect(normalizeEscapedStrongMarkers('\\*\\*“用了什么模型”变成了项目的主角\\*\\*')).toBe(
+      '**“用了什么模型”变成了项目的主角**',
+    )
+    expect(normalizeEscapedStrongMarkers('\\*\\*unfinished')).toBe('\\*\\*unfinished')
+    expect(normalizeEscapedStrongMarkers('literal \\*')).toBe('literal \\*')
+  })
+
   it('commits only complete paragraph boundaries', () => {
     expect(splitCompleteMarkdownBlocks('**bold**\n\n# Heading\n\n- item')).toEqual({
       blocks: [

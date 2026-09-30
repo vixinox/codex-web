@@ -47,7 +47,7 @@ export function WorkspaceShell({
 }) {
   return (
     <ThreadSessionRegistryProvider userId={userId}>
-      <div className="app-shell relative flex h-screen w-full bg-sidebar">
+      <div className="app-shell relative flex h-svh max-h-svh w-full touch-pan-x overflow-hidden overscroll-none bg-sidebar">
         {profile?.kind === 'guest' ? (
           <GuestWorkspaceShellContents />
         ) : (
@@ -107,7 +107,7 @@ function GuestWorkspaceShellContents() {
           />
         )}
       </MobileWorkspaceNavigation>
-      <main className="app-main flex min-h-0 min-w-0 flex-1 flex-col border bg-app-surface">
+      <main className="app-main flex min-h-0 min-w-0 flex-1 flex-col bg-app-surface">
         <WorkspacePageContent guest={guest} />
       </main>
     </>
@@ -162,10 +162,10 @@ function WorkspaceShellContents({
   const activeThread =
     route.selection && page.model.status === 'ready'
       ? {
-        projectId: route.selection.projectId,
-        threadId: route.selection.threadId,
-        isBusy: page.model.thread.isBusy,
-      }
+          projectId: route.selection.projectId,
+          threadId: route.selection.threadId,
+          isBusy: page.model.thread.isBusy,
+        }
       : null
   const controller = useWorkspaceSidebarController(runtime, activeThread)
   React.useEffect(() => {
@@ -188,7 +188,7 @@ function WorkspaceShellContents({
         controller={controller}
         actions={{ ...orchestration, startCodex: runtime.start }}
       />
-      <main className="app-main flex min-h-0 min-w-0 flex-1 flex-col border bg-app-surface">
+      <main className="app-main flex min-h-0 min-w-0 flex-1 flex-col bg-app-surface">
         <WorkspacePageContent
           route={route}
           runtime={runtime}

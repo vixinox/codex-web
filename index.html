@@ -3,13 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/codex.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/codex-180.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta
       name="description"
       content="Codex Web is a local, single-user browser client for Codex."
     />
     <meta name="theme-color" content="#ffffff" />
+    <script>
+      try {
+        const selection = JSON.parse(
+          localStorage.getItem('codex-web-theme-selection-v2') ?? 'null',
+        )
+        const variant =
+          selection?.mode === 'dark' ||
+          (selection?.mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+            ? 'dark'
+            : 'light'
+        document.documentElement.classList.add(variant)
+        document.documentElement.style.colorScheme = variant
+      } catch {
+        // ThemeProvider applies the selected theme if storage is unavailable.
+      }
+    </script>
     <meta property="og:title" content="Codex Web" />
     <meta property="og:description" content="A local, single-user browser client for Codex." />
     <meta property="og:type" content="website" />

@@ -12,7 +12,6 @@ export type ServerConfig = {
   authSecret: string
   authUrl: string
   trustedOrigins: string[]
-  trustProxy?: boolean
   enforceOriginChecks?: boolean
   dataRoot: string
   maxActiveTasksPerUser: number
@@ -115,22 +114,8 @@ export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
 
   const dataRoot = process.env.CODEX_DATA_ROOT ?? './.data/codex'
   const host = process.env.SERVER_HOST ?? '127.0.0.1'
-  const trustProxy = process.env.SERVER_TRUST_PROXY === 'true'
-  const enforceOriginChecks = process.env.SERVER_ENFORCE_ORIGIN_CHECKS === 'true'
-  if (
-    process.env.NODE_ENV === 'production' &&
-    !['127.0.0.1', '::1', 'localhost'].includes(host) &&
-    !trustProxy
-  )
-    throw new Error('SERVER_HOST must remain loopback unless SERVER_TRUST_PROXY=true')
-  if (trustProxy && !enforceOriginChecks)
-    throw new Error('SERVER_ENFORCE_ORIGIN_CHECKS=true is required with SERVER_TRUST_PROXY=true')
-  if (trustProxy) {
-    if (!authUrl.startsWith('https://'))
-      throw new Error('BETTER_AUTH_URL must use HTTPS with SERVER_TRUST_PROXY=true')
-    if (trustedOrigins.some((origin) => !origin.startsWith('https://')))
-      throw new Error('BETTER_AUTH_TRUSTED_ORIGINS must use HTTPS with SERVER_TRUST_PROXY=true')
-  }
+  if (!['127.0.0.1', '::1', 'localhost'].includes(host))
+    throw new Error('SERVER_HOST must remain loopback')
   const allowedOutboundHosts = (process.env.CODEX_ALLOWED_OUTBOUND_HOSTS ?? 'api.openai.com')
     .split(',')
     .map((entry) => entry.trim().toLowerCase())
@@ -184,8 +169,7 @@ export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
     authSecret,
     authUrl,
     trustedOrigins,
-    trustProxy,
-    enforceOriginChecks,
+    enforceOriginChecks: true,
     dataRoot,
     maxActiveTasksPerUser: positiveInt(process.env.CODEX_MAX_ACTIVE_TASKS_PER_USER, 2),
     credentialEncryptionKey: mode === 'guest' ? '' : credentialEncryptionKey(dataRoot),

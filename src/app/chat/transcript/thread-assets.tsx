@@ -8,6 +8,7 @@ import {
   Minimize2Icon,
 } from 'lucide-react'
 import { CopyButton } from '@/components/shared/copy-button'
+import { useCanHover } from '@/lib/platform/browser/use-can-hover'
 import { Separator } from '@/components/ui/separator'
 import { Collapsible } from '@/components/ui/collapsible'
 import { MessageContent } from '@/app/chat/content/message-content'
@@ -42,16 +43,20 @@ export const ThreadAssets = React.memo(
     retryState,
     lockEpoch,
     compacting,
+    pendingAccepted = true,
+    initialScrollPosition = 'bottom',
   }: {
     thread: ChatThreadPresentation
     session?: ThreadSession
     retryState?: { attempt: number; maxAttempts: number } | null
     lockEpoch?: number
     compacting?: boolean
+    pendingAccepted?: boolean
+    initialScrollPosition?: 'top' | 'bottom'
   }) {
     const assetsRef = React.useRef<HTMLDivElement>(null)
     const scrollParentRef = React.useRef<HTMLElement | null>(null)
-    const scrollLockedRef = React.useRef(true)
+    const scrollLockedRef = React.useRef(initialScrollPosition === 'bottom')
     const previousLockRequestRef = React.useRef<number | null>(null)
     const latestUserBlockRef = React.useRef<string | null>(null)
     const sessionSnapshot = useThreadSessionSnapshot(session ?? null)
@@ -62,9 +67,9 @@ export const ThreadAssets = React.memo(
     const latestUserBlockId = session
       ? sessionSnapshot.latestUserBlockId
       : [...displayThread.turns]
-        .reverse()
-        .flatMap((turn) => [...turn.blocks].reverse())
-        .find((block) => block.type === 'user')?.id
+          .reverse()
+          .flatMap((turn) => [...turn.blocks].reverse())
+          .find((block) => block.type === 'user')?.id
 
     React.useLayoutEffect(() => {
       const assets = assetsRef.current
@@ -85,6 +90,7 @@ export const ThreadAssets = React.memo(
       const updateScrollLock = () => {
         scrollLockedRef.current = isAtBottom(parent)
       }
+      if (initialScrollPosition === 'top') parent.scrollTop = 0
       const resizeObserver = new ResizeObserver(() => {
         if (scrollLockedRef.current) scrollToBottom(parent)
       })
@@ -96,7 +102,7 @@ export const ThreadAssets = React.memo(
         resizeObserver.disconnect()
         if (scrollParentRef.current === parent) scrollParentRef.current = null
       }
-    }, [])
+    }, [initialScrollPosition])
 
     React.useLayoutEffect(() => {
       const isNewUserMessage =
@@ -119,7 +125,7 @@ export const ThreadAssets = React.memo(
     }, [lockEpoch])
 
     return (
-      <div ref={assetsRef} className="flex-1 pt-12 pb-20">
+      <div ref={assetsRef} className="flex-1 pt-16 pb-20">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4">
           {turnOrder.length ? (
             turnOrder.map((turnId, index) =>
@@ -134,6 +140,7 @@ export const ThreadAssets = React.memo(
                       ? (sessionSnapshot.userInput as ChatUserInputRequest)
                       : undefined
                   }
+                  accepted={index !== turnOrder.length - 1 || pendingAccepted}
                 />
               ) : (
                 <ThreadTurn
@@ -143,6 +150,7 @@ export const ThreadAssets = React.memo(
                   pendingQuestionnaire={
                     displayThread.userInput?.turnId === turnId ? displayThread.userInput : undefined
                   }
+                  accepted={index !== turnOrder.length - 1 || pendingAccepted}
                 />
               ),
             )
@@ -152,7 +160,7 @@ export const ThreadAssets = React.memo(
             </p>
           )}
           {compacting &&
-            !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
+          !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
             <LiveRow label="Compacting" />
           ) : null}
         </div>
@@ -166,13 +174,15 @@ export const ThreadAssets = React.memo(
         previous.retryState === next.retryState &&
         previous.lockEpoch === next.lockEpoch &&
         previous.compacting === next.compacting &&
+        previous.pendingAccepted === next.pendingAccepted &&
         sameTurnShape(previous.thread, next.thread)
       )
     return (
       previous.thread === next.thread &&
       previous.retryState === next.retryState &&
       previous.lockEpoch === next.lockEpoch &&
-      previous.compacting === next.compacting
+      previous.compacting === next.compacting &&
+      previous.pendingAccepted === next.pendingAccepted
     )
   },
 )
@@ -208,11 +218,13 @@ const SessionThreadTurn = React.memo(function SessionThreadTurn({
   turnId,
   retryState,
   pendingQuestionnaire,
+  accepted = true,
 }: {
   session: ThreadSession
   turnId: string
   retryState?: { attempt: number; maxAttempts: number } | null
   pendingQuestionnaire?: ChatUserInputRequest
+  accepted?: boolean
 }) {
   const snapshot = useThreadSessionSnapshot(session)
   const turn = snapshot.turnsById[turnId]
@@ -222,6 +234,7 @@ const SessionThreadTurn = React.memo(function SessionThreadTurn({
       turn={turn as unknown as ChatTurnPresentation}
       retryState={retryState}
       pendingQuestionnaire={pendingQuestionnaire}
+      accepted={accepted}
     />
   )
 })
@@ -230,16 +243,22 @@ const ThreadTurn = React.memo(function ThreadTurn({
   turn,
   retryState,
   pendingQuestionnaire,
+  accepted = true,
 }: {
   turn: ChatTurnPresentation
   retryState?: { attempt: number; maxAttempts: number } | null
   pendingQuestionnaire?: ChatUserInputRequest
+  accepted?: boolean
 }) {
+  const canHover = useCanHover()
   const [detailsOpen, setDetailsOpen] = React.useState(false)
   const [planOpen, setPlanOpen] = React.useState(false)
   const [planContentHeight, setPlanContentHeight] = React.useState(0)
   const [animateAssistant, setAnimateAssistant] = React.useState(false)
+  const [assistantTextStreaming, setAssistantTextStreaming] = React.useState(false)
   const planContentRef = React.useRef<HTMLDivElement>(null)
+  const assistantTextRef = React.useRef('')
+  const assistantIdleTimerRef = React.useRef<number | null>(null)
   const previousStatusRef = React.useRef(turn.status)
   React.useLayoutEffect(() => {
     const enteredTerminal =
@@ -254,6 +273,42 @@ const ThreadTurn = React.memo(function ThreadTurn({
     }
     previousStatusRef.current = turn.status
   }, [turn.status])
+  const working = turn.status === 'inProgress'
+  const assistantText = turn.blocks
+    .filter((block) => block.type === 'assistant')
+    .map((block) => block.text)
+    .join('\n')
+  React.useEffect(() => {
+    if (assistantIdleTimerRef.current !== null) {
+      window.clearTimeout(assistantIdleTimerRef.current)
+      assistantIdleTimerRef.current = null
+    }
+    if (!working || !assistantText) {
+      assistantTextRef.current = assistantText
+      setAssistantTextStreaming(false)
+      return
+    }
+    if (assistantText !== assistantTextRef.current) {
+      assistantTextRef.current = assistantText
+      setAssistantTextStreaming(true)
+      assistantIdleTimerRef.current = window.setTimeout(() => {
+        assistantIdleTimerRef.current = null
+        setAssistantTextStreaming(false)
+      }, 300)
+    }
+    return () => {
+      if (assistantIdleTimerRef.current !== null) {
+        window.clearTimeout(assistantIdleTimerRef.current)
+        assistantIdleTimerRef.current = null
+      }
+    }
+  }, [assistantText, working])
+  React.useEffect(
+    () => () => {
+      if (assistantIdleTimerRef.current !== null) window.clearTimeout(assistantIdleTimerRef.current)
+    },
+    [],
+  )
   const finalPlan = turn.plan?.final ? turn.plan : undefined
   React.useLayoutEffect(() => {
     const content = planContentRef.current
@@ -292,29 +347,24 @@ const ThreadTurn = React.memo(function ThreadTurn({
     .filter(Boolean)
     .join('\n\n')
   const userCopyText = firstUser ? formatUserContentForCopy(firstUser.content) : ''
-  const working = turn.status === 'inProgress'
   const hasRunningCompaction = turn.blocks.some(
     (block) =>
       block.type === 'article' && block.kind === 'context-compaction' && block.status === 'running',
   )
-  const hasProcess = Boolean(
-    process.length || retryState || finalAssistant || finalPlan || turn.questionnaire,
-  )
   const visibleContent = visibleTurnContent(turn, pendingQuestionnaire, finalPlan)
-  const hasVisibleContent = visibleContent.hasContent
   const trailingAssistantId = visibleContent.trailingAssistantId
   const finishAssistantAnimation = React.useCallback(() => {
     if (!working) setAnimateAssistant(false)
   }, [working])
   const showThinking =
     working &&
-    !hasAssistantText(turn) &&
+    (!accepted || !hasAssistantText(turn) || !assistantTextStreaming) &&
     !hasRunningCompaction &&
     !retryState &&
     !pendingQuestionnaire &&
     !turn.error
-  const showWorkSummary = !working || hasVisibleContent
-  const showSeparator = hasProcess && (!working || hasVisibleContent)
+  const showWorkSummary = accepted && Boolean(firstUser)
+  const showSeparator = accepted && Boolean(firstUser)
   const processOpen = working || detailsOpen
   const processBlocks: React.ReactNode[] = []
   let questionnaireRendered = false
@@ -376,7 +426,11 @@ const ThreadTurn = React.memo(function ThreadTurn({
             <UserContent content={firstUser.content} />
           </div>
           {userCopyText ? (
-            <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/user-message:opacity-100">
+            <div
+              className={`mt-2 flex items-center gap-1 transition-opacity ${
+                canHover ? 'opacity-0 group-hover/user-message:opacity-100' : 'opacity-100'
+              }`}
+            >
               {turnTimestamp ? (
                 <time className="text-xs text-app-text-muted select-none">{turnTimestamp}</time>
               ) : null}
@@ -498,7 +552,11 @@ const ThreadTurn = React.memo(function ThreadTurn({
         </div>
       ) : null}
       {turn.status === 'completed' && copyText ? (
-        <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div
+          className={`mt-2 flex items-center gap-1 transition-opacity ${
+            canHover ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+          }`}
+        >
           <CopyButton
             variant="ghost"
             size="icon"

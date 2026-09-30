@@ -96,7 +96,11 @@ export function ProjectItem({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="bg-transparent opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100"
+                    className={cn(
+                      'bg-transparent',
+                      canHover &&
+                        'opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100',
+                    )}
                     aria-label={`New chat in ${project.name}`}
                     onClick={() => onOpenProjectChat(project.id)}
                     disabled={disabled}
@@ -108,25 +112,16 @@ export function ProjectItem({
               <TooltipContent>New chat</TooltipContent>
             </Tooltip>
           ) : (
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="bg-transparent opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100"
-                    aria-label={`New chat in ${project.name}`}
-                    onClick={() => onOpenProjectChat(project.id)}
-                    disabled={disabled}
-                  />
-                }
-              >
-                <SquarePen />
-              </PopoverTrigger>
-              <PopoverContent side="bottom" className="w-auto p-2 text-xs">
-                New chat
-              </PopoverContent>
-            </Popover>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="bg-transparent"
+              aria-label={`New chat in ${project.name}`}
+              onClick={() => onOpenProjectChat(project.id)}
+              disabled={disabled}
+            >
+              <SquarePen />
+            </Button>
           )}
           <Popover open={menuOpen} onOpenChange={setMenuOpen}>
             <PopoverTrigger
@@ -134,7 +129,11 @@ export function ProjectItem({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  className="mr-1 bg-transparent opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100"
+                  className={cn(
+                    'mr-1 bg-transparent',
+                    canHover &&
+                      'opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100',
+                  )}
                   aria-label={`Manage ${project.name}`}
                   disabled={disabled}
                 />
@@ -317,7 +316,7 @@ export function ThreadItem({
         <div
           className={cn(
             'flex shrink-0 items-center pr-2',
-            drawerMode
+            drawerMode || !canHover
               ? 'opacity-100'
               : showWorkingIndicator
                 ? ''
@@ -326,7 +325,7 @@ export function ThreadItem({
         >
           {showWorkingIndicator && !drawerMode ? (
             <Loader2
-              className="size-4 animate-spin group-hover/thread:hidden"
+              className={cn('size-4 animate-spin', canHover && 'group-hover/thread:hidden')}
               aria-label="Working"
             />
           ) : null}
@@ -338,7 +337,10 @@ export function ThreadItem({
                     variant="ghost"
                     size="icon-xs"
                     className={cn(
-                      showWorkingIndicator && !drawerMode && 'hidden group-hover/thread:flex',
+                      canHover &&
+                        showWorkingIndicator &&
+                        !drawerMode &&
+                        'hidden group-hover/thread:flex',
                     )}
                     disabled={archiving || exiting}
                     onClick={(event) => {
@@ -404,13 +406,13 @@ export function ThreadItem({
                   size="sm"
                   disabled={archiving}
                   onClick={performAction}
-                  className="bg-destructive text-destructive-foreground"
+                  className="text-destructive-foreground bg-destructive"
                 >
                   Archive
                 </Button>
               </PopoverContent>
             </Popover>
-          ) : (
+          ) : canHover ? (
             <Popover>
               <PopoverTrigger
                 render={
@@ -441,6 +443,25 @@ export function ThreadItem({
                 {isFailedPlaceholder ? 'Delete failed chat' : 'Archive chat'}
               </PopoverContent>
             </Popover>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              disabled={archiving || exiting}
+              onClick={(event) => {
+                event.stopPropagation()
+                performAction()
+              }}
+              aria-label={actionLabel}
+            >
+              {archiving ? (
+                <Loader2 className="animate-spin" />
+              ) : isFailedPlaceholder ? (
+                <Trash2 />
+              ) : (
+                <Archive />
+              )}
+            </Button>
           )}
         </div>
       ) : null}

@@ -17,9 +17,11 @@ export function QuestionnaireSummary({
         <CollapsibleTrigger className="inline-flex min-h-6 max-w-full items-center gap-2 text-left text-app-text-muted hover:text-foreground">
           <CircleHelpIcon className="size-3.5 shrink-0" />
           <span>Asked {summary.questionCount} questions</span>
-          <ChevronRightIcon
-            className={`size-3.5 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-          />
+          {summary.questions.length ? (
+            <ChevronRightIcon
+              className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`}
+            />
+          ) : null}
         </CollapsibleTrigger>
         <TranscriptCollapsibleContent>
           <div className="my-2 flex flex-col gap-4 pl-5 text-app-text-muted">
@@ -78,7 +80,7 @@ export function WorkSummary({
     <CollapsibleTrigger className="group flex items-center self-start text-sm text-app-text-muted select-none">
       <span>{label}</span>
       <ChevronRightIcon
-        className={`ml-1 size-4.5 transition-[opacity,transform] ${detailsOpen ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        className={`ml-1 size-4.5 transition-transform ${detailsOpen ? 'rotate-90' : ''}`}
       />
     </CollapsibleTrigger>
   )

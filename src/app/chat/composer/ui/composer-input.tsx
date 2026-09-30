@@ -84,12 +84,12 @@ export function ComposerInput({
       className="relative mx-auto flex w-full max-w-3xl flex-col items-center justify-center px-4 xl:px-2"
     >
       {command === null && leadingContent ? (
-        <div className="absolute inset-x-4 bottom-full z-10 flex justify-center">
+        <div className="absolute inset-x-8 bottom-full z-10 flex justify-center">
           {leadingContent}
         </div>
       ) : null}
       {command !== null ? (
-        <div className="absolute inset-x-4 bottom-full z-10">
+        <div className="absolute inset-x-6 bottom-full z-10">
           <CommandPanel
             query={command.query}
             trigger={command.trigger}
@@ -117,7 +117,7 @@ export function ComposerInput({
       ) : null}
       <div
         className={cn(
-          'flex w-full min-w-0 flex-col rounded-3xl bg-app-surface-raised px-3 pt-3 pb-2',
+          'flex w-full max-w-2xl xl:max-w-none min-w-0 flex-col rounded-3xl bg-app-surface-raised px-3 pt-3 pb-2',
           className,
         )}
       >

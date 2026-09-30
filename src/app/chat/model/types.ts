@@ -91,6 +91,7 @@ export type ChatQuestionnaireSummary = {
 
 export type ChatPendingTurn = {
   clientTurnId: string
+  accepted?: boolean
   optimisticThreadId: string
   nativeThreadId?: string
   nativeTurnId?: string

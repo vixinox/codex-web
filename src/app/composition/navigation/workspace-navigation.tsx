@@ -50,7 +50,7 @@ export function MobileWorkspaceNavigation({ children }: { children: React.ReactN
   return (
     <>
       <aside className="hidden w-78 shrink-0 self-stretch xl:block">{children}</aside>
-      <div className="mobile-nav-trigger fixed top-3 left-3 z-30 xl:hidden">
+      <div className="mobile-nav-trigger fixed top-2 left-3 z-30 xl:hidden">
         <Drawer open={open} onOpenChange={setOpen} swipeDirection="left">
           <DrawerTrigger
             render={

@@ -33,43 +33,51 @@ export function MockWorkspacePreview({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        'relative aspect-16/10 w-full max-w-7xl overflow-hidden rounded-3xl border bg-sidebar',
+        'relative min-h-[40rem] w-full max-w-7xl overflow-hidden rounded-3xl border bg-sidebar sm:aspect-16/10 sm:min-h-0',
         className,
       )}
     >
-      <div className="absolute inset-0 flex min-w-230">
-        <WorkspaceSidebar
-          model={createMockSidebarModel()}
-          runtimeStatus="started"
-          runtimeStatusLabel="Started"
-          activeThreadId={MOCK_THREAD_ID}
-          settingsActive={false}
-          newChatActive={false}
-          onOpenSettings={() => {}}
-          onStartCodex={async () => true}
-          onSignOut={async () => undefined}
-          onOpenNewChat={() => undefined}
-          onSelectThread={() => undefined}
-          onSelectRootThread={() => undefined}
-          onRetryProjects={() => undefined}
-          onRetryThreads={() => undefined}
-          onRetryRootThreads={() => undefined}
-          onArchiveThread={async () => undefined}
-          onOpenProjectChat={() => undefined}
-          onCreateProject={async () => undefined}
-          onRenameProject={async () => undefined}
-          onDeleteProject={async () => undefined}
-          persistUiState={false}
-        />
+      <div className="absolute inset-0 flex min-w-0">
+        <div className="hidden w-56 shrink-0 sm:flex xl:w-78">
+          <WorkspaceSidebar
+            model={createMockSidebarModel()}
+            runtimeStatus="started"
+            runtimeStatusLabel="Started"
+            activeThreadId={MOCK_THREAD_ID}
+            settingsActive={false}
+            newChatActive={false}
+            onOpenSettings={() => {}}
+            onStartCodex={async () => true}
+            onSignOut={async () => undefined}
+            onOpenNewChat={() => undefined}
+            onSelectThread={() => undefined}
+            onSelectRootThread={() => undefined}
+            onRetryProjects={() => undefined}
+            onRetryThreads={() => undefined}
+            onRetryRootThreads={() => undefined}
+            onArchiveThread={async () => undefined}
+            onOpenProjectChat={() => undefined}
+            onCreateProject={async () => undefined}
+            onRenameProject={async () => undefined}
+            onDeleteProject={async () => undefined}
+            persistUiState={false}
+          />
+        </div>
         <main className="flex min-w-0 flex-1 flex-col rounded-tl-3xl bg-app-surface">
-          <header className="relative z-10 -mb-14 min-h-14 rounded-tl-3xl bg-linear-to-b from-app-surface from-70% to-transparent p-4 pb-6">
+          <header className="relative z-10 -mb-14 min-h-14 rounded-tl-3xl bg-linear-to-b from-app-surface from-80% to-transparent p-4 pb-6">
             <h1 className="max-w-[40ch] truncate font-medium">{MOCK_THREAD.title}</h1>
           </header>
           <div
             ref={scrollContainerRef}
             className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto"
           >
-            <ThreadAssets thread={MOCK_THREAD} retryState={null} lockEpoch={0} compacting={false} />
+            <ThreadAssets
+              thread={MOCK_THREAD}
+              retryState={null}
+              lockEpoch={0}
+              compacting={false}
+              initialScrollPosition="top"
+            />
           </div>
           <div className="z-10 flex-none pb-4">
             <div className="relative z-10 -mt-14 flex-none bg-linear-to-t from-app-surface from-80% to-transparent">

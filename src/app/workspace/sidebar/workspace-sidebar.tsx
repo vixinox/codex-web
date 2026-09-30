@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { useCanHover } from '@/lib/platform/browser/use-can-hover'
 import type { WorkspaceSidebarModel } from '@/app/workspace/workspace-model'
 import type { WorkspaceRuntimeModel } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import { useNativeFadeEnter } from '@/lib/platform/browser/use-native-enter'
@@ -77,6 +78,7 @@ export function WorkspaceSidebar({
   /** Fixture workspaces keep collapse state in memory rather than local storage. */
   persistUiState?: boolean
 }) {
+  const canHover = useCanHover()
   const closeMobileNavigation = useMobileNavigationClose()
   const isDrawerMode = useIsMobileNavigation()
   const sidebarRef = useNativeFadeEnter<HTMLElement>([settingsActive], {
@@ -163,7 +165,10 @@ export function WorkspaceSidebar({
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          className="ml-auto opacity-0 group-hover/projects:opacity-100"
+                          className={cn(
+                            'ml-auto',
+                            canHover && 'opacity-0 group-hover/projects:opacity-100',
+                          )}
                           aria-label={
                             projectAccess === 'unavailable'
                               ? projectUnavailableMessage

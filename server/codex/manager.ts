@@ -11,6 +11,7 @@ import { requestIdCandidates, type RequestId } from './request-id.js'
 import { CodexRuntimeManager } from './runtime-manager.js'
 import type { CodexCommand } from './stdio-transport.js'
 import { projectModelCatalog, type RuntimeModel } from './model-catalog.js'
+import { log, safeError } from '../logger.js'
 
 type Instance = { client: CodexRpcClient; credentialId: string }
 export type CodexLifecycleStatus = 'stopped' | 'starting' | 'ready' | 'restarting' | 'failed'
@@ -442,6 +443,10 @@ export class CodexManager {
   ): Promise<Instance> {
     const credential = await this.workspace.getCredential(userId, credentialId)
     if (!credential) throw new Error('Credential not found')
+    const endpoints = describeProviderEndpoints(credential.baseUrl)
+    log.info(
+      `Codex provider endpoints configured (user=${safeError(userId)} provider=${safeError(credential.provider)} base=${endpoints.base} models=${endpoints.models} responses=${endpoints.responses})`,
+    )
     const userRoot = path.resolve(this.config.dataRoot, 'users', userId)
     const userHome = path.join(userRoot, '.codex')
     await mkdir(userHome, { recursive: true })
@@ -497,6 +502,23 @@ export class CodexManager {
     })
     client.onEvent((message) => {
       const params = message.params as Record<string, unknown> | undefined
+      if (message.method === 'turn/failed') {
+        const turn = params?.turn as Record<string, unknown> | undefined
+        const error = turn?.error as Record<string, unknown> | undefined
+        const messageText =
+          typeof error?.message === 'string' ? error.message : 'Unknown turn error'
+        log.error(`Codex turn failed: ${safeError(messageText)}`)
+      }
+      if (message.method === 'error') {
+        const error = params?.error as Record<string, unknown> | undefined
+        const messageText =
+          typeof error?.message === 'string' ? error.message : 'Unknown runtime error'
+        const details = typeof error?.additionalDetails === 'string' ? error.additionalDetails : ''
+        const suffix = details ? ` details=${safeError(details)}` : ''
+        log.error(
+          `Codex runtime error (base=${endpoints.base} responses=${endpoints.responses}): ${safeError(messageText)}${suffix}`,
+        )
+      }
       const threadId = typeof params?.threadId === 'string' ? params.threadId : undefined
       const turn = params?.turn as Record<string, unknown> | undefined
       const turnId =
@@ -513,6 +535,10 @@ export class CodexManager {
         this.activeTurnsByUser.set(userId, map)
       }
       const projected = projectNativeMessage(message)
+      if (!projected.ok)
+        log.warn(
+          `Codex message rejected by browser projection (method=${safeError(message.method)}${threadId ? ` threadId=${safeError(threadId)}` : ''})`,
+        )
       void this.events.publish(
         userId,
         projected.ok
@@ -556,9 +582,13 @@ export class CodexManager {
       )
     })
     try {
-      await client.initialize()
-      await client.request('account/login/start', { type: 'apiKey', apiKey: credential.apiKey })
-      const account = (await client.request('account/read', {})) as {
+      await startupRequest('initialize', () => client.initialize())
+      await startupRequest('account/login/start', () =>
+        client.request('account/login/start', { type: 'apiKey', apiKey: credential.apiKey }),
+      )
+      const account = (await startupRequest('account/read', () =>
+        client.request('account/read', {}),
+      )) as {
         account?: { type?: unknown }
         requiresOpenaiAuth?: unknown
       }
@@ -593,5 +623,38 @@ export class CodexManager {
         throw error
       }
     }
+  }
+}
+
+function describeProviderEndpoints(baseUrl: string) {
+  try {
+    const parsed = new URL(baseUrl)
+    const base = `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/$/, '')}`
+    return {
+      base,
+      models: `${base}/models`,
+      responses: `${base}/responses`,
+    }
+  } catch {
+    const base = '[invalid-provider-url]'
+    return { base, models: base, responses: base }
+  }
+}
+
+async function startupRequest<T>(name: string, operation: () => Promise<T>): Promise<T> {
+  log.info(`Codex App Server ${name}`)
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Codex App Server ${name} timed out after 30s`)),
+        30_000,
+      )
+      void operation().then(resolve, reject)
+    })
+  } catch (error) {
+    throw new Error(`Codex App Server ${name} failed`, { cause: error })
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }

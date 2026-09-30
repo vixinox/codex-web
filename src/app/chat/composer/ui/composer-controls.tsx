@@ -128,6 +128,7 @@ export function ComposerControls({
       ) : (
         <Popover>
           <PopoverTrigger
+            nativeButton={false}
             render={
               <span
                 className="inline-flex min-w-0 items-center gap-2 rounded-full p-1 text-sm font-medium text-app-access-mode"

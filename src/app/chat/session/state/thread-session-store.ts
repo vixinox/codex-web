@@ -159,6 +159,8 @@ export function toThreadPresentationSnapshot(
     id: snapshot.id,
     projectId: snapshot.projectId,
     title: snapshot.title,
+    ...(snapshot.model ? { model: snapshot.model } : {}),
+    ...(snapshot.reasoningEffort ? { reasoningEffort: snapshot.reasoningEffort } : {}),
     ...(snapshot.modelProvider ? { modelProvider: snapshot.modelProvider } : {}),
     updatedAt: snapshot.updatedAt,
     isBusy: snapshot.isBusy,

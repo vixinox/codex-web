@@ -11,7 +11,11 @@ export async function createHttpServer(
   } = {},
 ) {
   const app = Fastify({ logger: { level: 'error' } })
+  const requestStartedAt = new WeakMap<object, number>()
   await app.register(sensible)
+  app.addHook('onRequest', async (request) => {
+    requestStartedAt.set(request, performance.now())
+  })
   if (options.enforceOriginChecks) {
     const trustedOrigins = new Set(options.trustedOrigins ?? [])
     app.addHook('onRequest', async (request, reply) => {
@@ -24,10 +28,12 @@ export async function createHttpServer(
     })
   }
   app.addHook('onResponse', async (request, reply) => {
-    if (reply.statusCode >= 300)
-      log.error(
-        `HTTP ${reply.statusCode} ${request.method} ${safeError(request.url)} (requestId=${safeError(request.id)})`,
-      )
+    const route = request.routeOptions.url ?? request.url.split('?', 1)[0]
+    if (route === '/api/events' || route === '/guest-api/events') return
+    const elapsed = performance.now() - (requestStartedAt.get(request) ?? performance.now())
+    const message = `HTTP ${reply.statusCode} ${request.method} ${route} (${elapsed.toFixed(1)}ms, requestId=${safeError(request.id)})`
+    if (reply.statusCode >= 300) log.error(message)
+    else log.info(message)
   })
   app.setErrorHandler((error, request, reply) => {
     void request

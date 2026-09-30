@@ -71,7 +71,7 @@ describe('pending turn reconciliation', () => {
     expect(result.turns[0]).toMatchObject({
       id: 'turn-1',
       presentationId: 'client-1',
-      startedAt: 10_000,
+      startedAt: 1_000,
     })
     expect(result.turns[0].blocks.map((block) => block.type)).toEqual(['user', 'activity'])
   })

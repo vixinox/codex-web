@@ -385,6 +385,7 @@ export function useComposerController({
         // local: optimistic turn shaped like native presentation until reconciliation.
         const pendingTurn: ChatPendingTurn = {
           ...optimisticTurn,
+          accepted: true,
           projectId: acceptedTurn.projectId,
           nativeThreadId: acceptedTurn.threadId,
           ...(adapter.acceptedTurnIdIsNative ? { nativeTurnId: acceptedTurn.turnId } : {}),
@@ -550,7 +551,12 @@ function isNetworkError(error: unknown) {
 
 function isCodexUnavailable(error: unknown) {
   const value = error as { status?: unknown; code?: unknown }
-  return value?.code === 'CODEX_UNAVAILABLE' || value?.status === 502
+  return (
+    value?.code === 'CODEX_UNAVAILABLE' ||
+    value?.code === 'CODEX_START_REQUIRED' ||
+    value?.status === 409 ||
+    value?.status === 502
+  )
 }
 
 function waitForRetry(signal: AbortSignal, delay: number) {

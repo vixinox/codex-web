@@ -16,18 +16,24 @@ export function SettingsScreen({
   archived?: boolean
 }) {
   return (
-    <main className="flex h-full flex-1 flex-col overflow-auto px-8 py-20 text-foreground xl:py-24">
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-16">
-        {archived ? (
-          <ArchivedChats />
-        ) : (
-          <>
-            <AppearanceSection />
-            {isGuest ? <GuestCapacitySection /> : null}
-            {/* <ConfigurationSection runtime={runtime} /> */}
-            {runtime ? <OwnerCredentialSection runtime={runtime} /> : null}
-          </>
-        )}
+    <main className="flex h-full flex-1 flex-col overflow-auto overscroll-none text-foreground">
+      <div
+        className="pointer-events-none sticky top-0 z-10 -mb-14 flex h-10 min-h-14 shrink-0 bg-linear-to-b from-app-surface from-80% to-transparent"
+        aria-hidden="true"
+      />
+      <div className="px-8 py-20 xl:py-24">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-16">
+          {archived ? (
+            <ArchivedChats />
+          ) : (
+            <>
+              <AppearanceSection />
+              {isGuest ? <GuestCapacitySection /> : null}
+              {/* <ConfigurationSection runtime={runtime} /> */}
+              {runtime ? <OwnerCredentialSection runtime={runtime} /> : null}
+            </>
+          )}
+        </div>
       </div>
     </main>
   )

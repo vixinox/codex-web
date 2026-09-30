@@ -1,5 +1,7 @@
 # 前端边界
 
+本项目的前端是本地 Codex 工作台，不提供 Hosted 或多实例前端。开发入口由 Vite 提供，生产构建使用 `pnpm build`；服务端 Owner 和 Guest 分别由 `pnpm server:owner`、`pnpm server:guest` 启动。
+
 前端通过 `@/lib/bridge` 访问 Fastify REST/SSE；页面和 renderer 只消费 UI-facing model，不直接依赖原生 DTO、服务端 payload、宿主机路径或凭据。
 
 API 契约见 [API 契约](../api/README.zh-CN.md)。稳定架构基线见 [PROJECT.md](../../PROJECT.md)。移动端访问策略见 [移动端访问策略](mobile-access.zh-CN.md)。

@@ -64,7 +64,8 @@ export function reconcilePendingThread(
       return {
         ...turn,
         presentationId: pending.clientTurnId,
-        startedAt: turn.status === 'inProgress' ? pending.startedAt : turn.startedAt,
+        startedAt:
+          turn.status === 'inProgress' ? (turn.startedAt ?? pending.startedAt) : turn.startedAt,
         blocks,
       }
     }),

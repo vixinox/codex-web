@@ -8,9 +8,15 @@
   "description": "A multi-device Codex workspace.",
   "icons": [
     {
-      "src": "/codex.svg",
-      "type": "image/svg+xml",
-      "sizes": "any",
+      "src": "/codex-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/codex-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
       "purpose": "any maskable"
     }
   ]

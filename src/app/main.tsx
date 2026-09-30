@@ -1,6 +1,15 @@
 import '../index.css'
 
-import { Component, lazy, type ReactNode, StrictMode, Suspense, useEffect, useRef } from 'react'
+import {
+  Component,
+  lazy,
+  type ReactNode,
+  StrictMode,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { createRoot } from 'react-dom/client'
 import { toast, Toaster } from '@/components/ui/toast'
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
@@ -13,6 +22,7 @@ import {
 } from '@/app/error-pages'
 import { signOut, useSession } from '@/lib/auth/auth-client'
 import { AUTH_EXPIRED_EVENT, installAuthExpiryInterceptor } from '@/lib/auth/auth-expiry'
+import { requiresProfileReset } from '@/lib/auth/runtime-profile'
 import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
@@ -140,29 +150,52 @@ class RootErrorBoundary extends Component<
     return { hasError: true, error }
   }
 
+  componentDidCatch(error: unknown) {
+    toast.add({
+      title: 'Page failed to render',
+      description: describeRenderError(error),
+      type: 'error',
+    })
+  }
+
   render() {
     if (this.state.hasError) {
       return (
-        <ServerErrorPage
-          onRetry={() => {
-            this.setState({ hasError: false, error: null })
-            window.location.reload()
-          }}
-        />
+        <main className="flex min-h-svh flex-col items-center justify-center gap-4 bg-background p-8 text-center">
+          <p className="text-sm text-muted-foreground">This screen could not be rendered.</p>
+          <button
+            type="button"
+            className="rounded-md border px-4 py-2 text-sm"
+            onClick={() => {
+              this.setState({ hasError: false, error: null })
+              window.location.reload()
+            }}
+          >
+            Reload
+          </button>
+        </main>
       )
     }
     return this.props.children
   }
 }
 
+function describeRenderError(error: unknown) {
+  if (error instanceof Error) {
+    const message = error.message.replace(/[\r\n]+/g, ' ').slice(0, 300)
+    return `${error.name}: ${message || 'No error message was provided.'}`
+  }
+  return 'The browser reported an unknown rendering error.'
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <Toaster />
     <RootErrorBoundary>
       <BrowserRouter>
         <ThemeProvider>
           <AuthExpiryHandler />
-          <App />
-          <Toaster />
+          <RuntimeProfileGuard />
         </ThemeProvider>
       </BrowserRouter>
     </RootErrorBoundary>
@@ -197,4 +230,71 @@ function AuthExpiryHandler() {
   }, [location.pathname, navigate])
 
   return null
+}
+
+function RuntimeProfileGuard() {
+  const navigate = useNavigate()
+  const { data: session, isPending, refetch } = useSession()
+  const [ready, setReady] = useState(false)
+  const refetchRef = useRef(refetch)
+  refetchRef.current = refetch
+  const kind = session ? (session.user as { kind?: string }).kind : undefined
+
+  useEffect(() => {
+    if (isPending) return
+    if (!session) {
+      setReady(true)
+      return
+    }
+    let disposed = false
+    let checking = false
+    const checkProfile = async () => {
+      if (checking) return
+      checking = true
+      try {
+        const response = await fetch('/runtime-profile', { credentials: 'include' })
+        if (!response.ok || disposed) {
+          if (!disposed) setReady(true)
+          return
+        }
+        const body = (await response.json()) as { profile?: unknown }
+        if (disposed || (body.profile !== 'owner' && body.profile !== 'guest')) return
+        const profile = body.profile
+        const previous = window.sessionStorage.getItem('codex-web:runtime-profile')
+        if (requiresProfileReset(previous, profile, kind)) {
+          setReady(false)
+          const result = await signOut()
+          if (result.error || disposed) return
+          window.sessionStorage.setItem('codex-web:runtime-profile', profile)
+          await refetchRef.current()
+          if (!disposed) void navigate('/login', { replace: true })
+        } else {
+          window.sessionStorage.setItem('codex-web:runtime-profile', profile)
+          setReady(true)
+        }
+      } catch {
+        if (!disposed) setReady(true)
+      } finally {
+        checking = false
+      }
+    }
+
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') void checkProfile()
+    }
+    const handleFocus = () => void checkProfile()
+    const handleOnline = () => void checkProfile()
+    void checkProfile()
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('online', handleOnline)
+    document.addEventListener('visibilitychange', handleResume)
+    return () => {
+      disposed = true
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('online', handleOnline)
+      document.removeEventListener('visibilitychange', handleResume)
+    }
+  }, [isPending, kind, navigate, session])
+
+  return ready ? <App /> : pageFallback
 }

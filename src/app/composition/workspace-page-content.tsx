@@ -21,13 +21,13 @@ type WorkspaceOrchestration = ReturnType<typeof useWorkspaceOrchestration>
 
 function ThreadHeader({ title }: { title?: string | null }) {
   return (
-    <div className="relative z-10 -mb-14 min-h-14 bg-linear-to-b from-app-surface from-70% to-transparent px-4 pt-4 pb-6 pl-16 xl:pl-4">
+    <div className="relative z-10 -mb-14 flex h-10 min-h-14 items-center bg-linear-to-b from-app-surface from-80% to-transparent px-4 py-3 pl-16 xl:pl-4">
       {title ? (
-        <h1 className="max-w-[40ch] truncate font-medium" title={title}>
+        <h1 className="max-w-[40ch] truncate leading-6 font-medium" title={title}>
           {title}
         </h1>
       ) : (
-        <div className="h-6" aria-hidden="true" />
+        <div aria-hidden="true" />
       )}
     </div>
   )
@@ -64,7 +64,7 @@ export function WorkspacePageContent({
       {surfacePage.model.status === 'ready' ? (
         <ThreadHeader title={surfacePage.model.thread.title} />
       ) : null}
-      <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto">
+      <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto overscroll-none">
         {route.settingsActive ? (
           route.archivedChatsActive && !ready ? (
             <RuntimePlaceholder
@@ -86,7 +86,7 @@ export function WorkspacePageContent({
         )}
       </div>
       {ready && !route.settingsActive && !threadLoading ? (
-        <div className="z-10 flex-none pb-4">
+        <div className="z-10 flex-none pb-[calc(1rem+env(safe-area-inset-bottom))]">
           {page.model.status === 'empty' ? (
             <ComposerInput
               viewModel={page.composer}
@@ -122,7 +122,7 @@ function GuestWorkspacePageContent({ guest }: { guest: GuestWorkspaceController 
   return (
     <>
       {activeThread && !guest.threadLoading ? <ThreadHeader title={activeThread.title} /> : null}
-      <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto">
+      <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto overscroll-none">
         {guest.threadLoading ? null : activeThread ? (
           <section
             className="relative flex min-h-full flex-col"
@@ -140,7 +140,7 @@ function GuestWorkspacePageContent({ guest }: { guest: GuestWorkspaceController 
         )}
       </div>
       {!guest.threadLoading ? (
-        <div className="z-10 flex-none pb-4">
+        <div className="z-10 flex-none pb-[calc(1rem+env(safe-area-inset-bottom))]">
           {activeThread && guest.composerSlot ? (
             <ThreadComposerSlot
               slot={guest.composerSlot}

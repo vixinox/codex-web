@@ -162,7 +162,9 @@ export async function registerThreadRoutes(
       const client = await (dependencies.codex.getReady
         ? dependencies.codex.getReady(session.user.id)
         : Promise.reject(new Error('CODEX_START_REQUIRED')))
+      log.info('Initial message: loading model catalog')
       const catalog = await dependencies.codex.modelCatalog?.(session.user.id)
+      log.info('Initial message: model catalog loaded')
       const selectedModel = catalog?.find((entry) => entry.id === model)
       if (
         catalog &&
@@ -184,6 +186,7 @@ export async function registerThreadRoutes(
               'Confirm full local access before using Codex',
             ),
           )
+      log.info('Initial message: resolving skills')
       const selectedSkills = await resolveSelectedSkills(
         client,
         skillHandles,
@@ -195,6 +198,7 @@ export async function registerThreadRoutes(
         return reply
           .status(400)
           .send(apiError('INVALID_SKILL_SELECTION', 'Selected skills are no longer available'))
+      log.info('Initial message: skills resolved; requesting thread/start')
       const threadResult = await client.request('thread/start', {
         cwd,
         model,
@@ -206,6 +210,7 @@ export async function registerThreadRoutes(
         rawThread && typeof rawThread === 'object' ? (rawThread as { id?: unknown }).id : undefined
       if (!safeId(threadId)) throw new Error('Codex returned an invalid Thread')
       dependencies.codex.markThreadLoaded?.(session.user.id, threadId)
+      log.info('Initial message: thread/start complete; requesting turn/start')
       const run = () =>
         client.request('turn/start', {
           threadId,
@@ -223,6 +228,7 @@ export async function registerThreadRoutes(
       const turnId =
         rawTurn && typeof rawTurn === 'object' ? (rawTurn as { id?: unknown }).id : undefined
       if (!safeId(turnId)) throw new Error('Codex returned an invalid Turn')
+      log.info('Initial message: turn/start complete')
       return reply.status(201).send({ threadId, turnId, projectId })
     } catch (error) {
       log.error(`Initial Thread Turn failed: ${safeError(error)}`)

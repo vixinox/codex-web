@@ -41,6 +41,7 @@ import {
 import type { ComposerSkill } from '@/app/chat/model/composer-types'
 import { fenceCode, skillMarkdownLink } from '../logic/chat-input-markdown'
 import { detectCodePaste } from '../logic/paste-code-detection'
+import { createClientId } from '@/lib/platform/browser/client-id'
 type SerializedSkill = Spread<ComposerSkill, SerializedTextNode>
 const INSERT_COMPOSER_SKILL_COMMAND = createCommand<ComposerSkill>('INSERT_COMPOSER_SKILL')
 export type LexicalComposerHandle = {
@@ -110,23 +111,23 @@ function readDraft(a: InputDraft['attachments']): InputDraft {
   const blocks: InputDraft['blocks'] = []
   for (const n of $getRoot().getChildren()) {
     if ($isCodeNode(n)) {
-      blocks.push({ id: crypto.randomUUID(), kind: 'code', text: n.getTextContent() })
+      blocks.push({ id: createClientId(), kind: 'code', text: n.getTextContent() })
       continue
     }
     if (!$isParagraphNode(n)) continue
     let t = ''
     for (const c of n.getChildren()) {
       if ($isSkillNode(c)) {
-        if (t) blocks.push({ id: crypto.randomUUID(), kind: 'text', text: t })
+        if (t) blocks.push({ id: createClientId(), kind: 'text', text: t })
         t = ''
-        blocks.push({ id: crypto.randomUUID(), kind: 'skill', skill: c.getSkill() })
+        blocks.push({ id: createClientId(), kind: 'skill', skill: c.getSkill() })
       } else if ($isTextNode(c)) t += c.getTextContent()
       else t += c.getTextContent()
     }
-    if (t || !blocks.length) blocks.push({ id: crypto.randomUUID(), kind: 'text', text: t })
+    if (t || !blocks.length) blocks.push({ id: createClientId(), kind: 'text', text: t })
   }
   return {
-    blocks: blocks.length ? blocks : [{ id: crypto.randomUUID(), kind: 'text', text: '' }],
+    blocks: blocks.length ? blocks : [{ id: createClientId(), kind: 'text', text: '' }],
     attachments: a,
   }
 }
@@ -166,12 +167,12 @@ export const LexicalComposerEditor = React.forwardRef<
           contentEditable={
             <ContentEditable
               aria-label="Message"
-              className="max-h-60 min-h-12 w-full overflow-y-auto text-left text-sm leading-6 outline-none"
+              className="max-h-60 min-h-12 w-full overflow-y-auto text-left text-base leading-6 outline-none sm:text-sm"
               dir="ltr"
             />
           }
           placeholder={
-            <div className="pointer-events-none absolute top-0 left-0 text-sm leading-6 text-app-text-muted">
+            <div className="pointer-events-none absolute top-0 left-0 text-base leading-6 text-app-text-muted sm:text-sm">
               {p.placeholder}
             </div>
           }

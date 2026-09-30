@@ -1,6 +1,9 @@
 services:
   postgres:
+    container_name: codex-web-postgres
     image: postgres:18-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: codex_web
       POSTGRES_USER: codex_web
@@ -13,82 +16,5 @@ services:
       timeout: 3s
       retries: 10
 
-  owner:
-    build:
-      context: .
-      target: runtime
-    command: pnpm server:owner
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://codex_web:codex_web@postgres:5432/codex_web
-      BETTER_AUTH_URL: ${COMPOSE_BETTER_AUTH_URL:-http://localhost:8080}
-      BETTER_AUTH_TRUSTED_ORIGINS: ${COMPOSE_BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
-      SERVER_HOST: ${COMPOSE_SERVER_HOST:-0.0.0.0}
-      SERVER_PORT: 3000
-      SERVER_TRUST_PROXY: ${COMPOSE_SERVER_TRUST_PROXY:-false}
-      SERVER_ENFORCE_ORIGIN_CHECKS: ${COMPOSE_SERVER_ENFORCE_ORIGIN_CHECKS:-false}
-      CODEX_DATA_ROOT: /var/lib/codex/owner
-    volumes:
-      - codex-web-owner-data:/var/lib/codex
-    expose:
-      - "3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
-
-  guest:
-    profiles: [guest]
-    build:
-      context: .
-      target: runtime
-    command: pnpm server:guest
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://codex_web:codex_web@postgres:5432/codex_web
-      BETTER_AUTH_URL: ${COMPOSE_BETTER_AUTH_URL:-http://localhost:8080}
-      BETTER_AUTH_TRUSTED_ORIGINS: ${COMPOSE_BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
-      SERVER_HOST: ${COMPOSE_SERVER_HOST:-0.0.0.0}
-      SERVER_PORT: 3001
-      SERVER_TRUST_PROXY: ${COMPOSE_SERVER_TRUST_PROXY:-false}
-      SERVER_ENFORCE_ORIGIN_CHECKS: ${COMPOSE_SERVER_ENFORCE_ORIGIN_CHECKS:-false}
-      CODEX_DATA_ROOT: /var/lib/codex/guest
-    volumes:
-      - codex-web-guest-data:/var/lib/codex
-    expose:
-      - "3001"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
-
-  web:
-    build:
-      context: .
-      target: web
-    depends_on:
-      owner:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    ports:
-      - "127.0.0.1:8080:80"
-
 volumes:
   codex-web-postgres:
-  codex-web-owner-data:
-  codex-web-guest-data:
