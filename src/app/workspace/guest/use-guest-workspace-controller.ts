@@ -1,6 +1,8 @@
 import * as React from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import type { ChatThreadPresentation } from '@/app/chat/model/types'
+import type { ThreadComposerSlotModel, ComposerActions } from '@/app/chat/model/composer-types'
+import type { ChatSession, ComposerSession } from '@/app/chat/session/interface'
 import { guestComposerAdapter } from '@/app/chat/session/adapters/guest-composer-adapter'
 import { buildThreadComposerSlot } from '@/app/chat/session/presentation/thread-composer-slot'
 import { useComposerController } from '@/app/chat/session/controllers/use-composer-controller'
@@ -13,7 +15,7 @@ import {
   composerCapabilitiesFromModels,
   type ComposerCapabilities,
 } from '@/app/chat/composer/model/composer-capabilities'
-import { guestThreadClient } from '@/lib/bridge/thread-adapters'
+import { guestThreadClient } from '@/lib/bridge/adapters/guest-thread-client'
 import { toast } from '@/components/ui/toast'
 import {
   promoteGuestThread,
@@ -29,13 +31,13 @@ export type GuestWorkspaceController = {
   settingsActive: boolean
   activeThread: ChatThreadPresentation | null
   threadLoading: boolean
-  detail: ReturnType<typeof useThreadDetailController>
-  composer: ReturnType<typeof useComposerController>
-  composerSlot: ReturnType<typeof buildThreadComposerSlot> | undefined
-  threadComposerActions: ReturnType<typeof useComposerController>['actions'] & {
+  detail: ChatSession
+  composer: ComposerSession
+  composerSlot: ThreadComposerSlotModel | undefined
+  threadComposerActions: ComposerActions & {
     retry: () => void
-    answerUserInput: ReturnType<typeof useThreadDetailController>['answerUserInput']
-    cancelUserInput: ReturnType<typeof useThreadDetailController>['cancelUserInput']
+    answerUserInput: ChatSession['answerUserInput']
+    cancelUserInput: ChatSession['cancelUserInput']
   }
   sidebarModel: WorkspaceSidebarModel
   refreshThreads: () => Promise<void>
@@ -209,9 +211,9 @@ export function useGuestWorkspaceController(): GuestWorkspaceController {
     composerSlot,
     threadComposerActions: {
       ...composer.actions,
-      retry: detail.retry,
-      answerUserInput: detail.answerUserInput,
-      cancelUserInput: detail.cancelUserInput,
+      retry: () => detail.retry(),
+      answerUserInput: (answers) => detail.answerUserInput(answers),
+      cancelUserInput: () => detail.cancelUserInput(),
     } as GuestWorkspaceController['threadComposerActions'],
     sidebarModel,
     refreshThreads,

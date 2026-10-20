@@ -7,13 +7,13 @@ import type { WorkspaceRouteController } from '@/app/composition/routes/use-work
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
 import type { WorkspaceSidebarController } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
-import type { useWorkspaceOrchestration } from '@/app/workspace/use-workspace-orchestration'
+import type { WorkspaceOrchestration } from '@/app/workspace/use-workspace-orchestration'
 import { SettingsSidebar } from './settings-sidebar'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
 import { MobileNavigationCloseProvider } from './mobile-navigation-context'
 
-type WorkspaceNavigationActions = ReturnType<typeof useWorkspaceOrchestration> & {
+type WorkspaceNavigationActions = WorkspaceOrchestration & {
   startCodex: CodexRuntimeController['start']
 }
 

@@ -1,7 +1,7 @@
 import { createBundledHighlighter, createSingletonShorthands } from '@shikijs/core'
 import { createJavaScriptRegexEngine } from '@shikijs/engine-javascript'
 import type { ThemeVariant } from '@/lib/theme/theme'
-import { vscode2026Dark, vscode2026Light } from './code-themes'
+import { vscode2026Dark, vscode2026Light } from '@/lib/theme/code-themes'
 
 const MAX_HIGHLIGHTED_CODE_LENGTH = 100_000
 

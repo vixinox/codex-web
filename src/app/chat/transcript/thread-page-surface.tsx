@@ -1,14 +1,14 @@
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
-import { ThreadEmptyState } from '@/app/composition/layout/thread-empty-state'
-import type { useThreadPageController } from '@/app/chat/session/controllers/use-thread-page-controller'
+import { ThreadEmptyState } from '@/app/chat/transcript/thread-empty-state'
+import type { ThreadPageSession } from '@/app/chat/session/interface'
 
 export function ThreadPageSurface({
   controller,
   onRetry,
 }: {
-  controller: ReturnType<typeof useThreadPageController>
+  controller: ThreadPageSession
   onRetry?: () => void
 }) {
   const { model, retryState, inputErrors, lockEpoch, session, compacting, pendingAccepted } =

@@ -8,7 +8,6 @@ import {
   createCodexThreadState,
   interruptUserInput,
   mergeCodexThreads,
-  type CodexHistoryEvent,
   type CodexThreadChange,
   type CodexThreadState,
 } from '@/app/chat/native/codex-thread'
@@ -16,37 +15,12 @@ import {
   toChatThreadPresentation,
   toChatTurnPresentation,
 } from '@/app/chat/projection/thread-presentation'
+import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 import type { ChatThreadPresentation, ChatTurnPresentation } from '@/app/chat/model/types'
 import type { CodexThread } from '@/lib/protocol/protocol'
-import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
+import type { ThreadSession, ThreadSessionPresentation, ThreadSessionSnapshot } from '../interface'
 
-export type ThreadSessionPresentation = Omit<ChatThreadPresentation, 'turns'> & {
-  status: 'idle' | 'ready' | 'error'
-  error?: string
-  turnOrder: string[]
-  turnsById: Record<string, ChatTurnPresentation>
-  hasCompactionTurn: boolean
-  latestUserBlockId: string | null
-  inputErrors: string[]
-}
-
-export type ThreadSession = {
-  readonly key: string
-  readonly state: ThreadSessionPresentation
-  hydrate: (
-    thread: CodexThread,
-    eventCursor: number,
-    historyEvents?: readonly CodexHistoryEvent[],
-  ) => { replayAfterId: number; sparseTurnIds: Set<string> }
-  interruptUserInput: () => void
-  applyEvent: (
-    notification: import('@/app/chat/native/codex-thread').CodexNotification,
-    eventId?: string | number,
-  ) => void
-  hasActiveFollowedTurn: (turnId: string | null) => boolean
-  setError: (message: string) => void
-  dispose: () => void
-}
+export type { ThreadSession, ThreadSessionPresentation } from '../interface'
 
 export class ThreadSessionRegistry {
   private readonly sessions = new Map<string, ThreadSession>()
@@ -148,12 +122,12 @@ const emptyThreadSessionState = proxy<ThreadSessionPresentation>({
   inputErrors: [],
 })
 
-export function useThreadSessionSnapshot(session: ThreadSession | null) {
+export function useThreadSessionSnapshot(session: ThreadSession | null): ThreadSessionSnapshot {
   return useSnapshot(session?.state ?? emptyThreadSessionState)
 }
 
 export function toThreadPresentationSnapshot(
-  snapshot: ReturnType<typeof useThreadSessionSnapshot>,
+  snapshot: ThreadSessionSnapshot,
 ): ChatThreadPresentation {
   return {
     id: snapshot.id,

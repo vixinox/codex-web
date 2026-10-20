@@ -1,40 +1,29 @@
 import * as React from 'react'
 
 import type { CodexHistoryEvent, CodexNotification } from '@/app/chat/native/codex-thread'
+import type { ChatSession, ChatSessionModel, ThreadLifecycleHandler } from '../interface'
 import {
   toThreadPresentationSnapshot,
   useThreadSessionRegistry,
   useThreadSessionSnapshot,
-  type ThreadSession,
 } from '../state/thread-session-store'
-import {
-  waitForThreadAvailability,
-  type ThreadClient,
-  type ThreadEvent,
-  type ThreadSnapshot,
-} from '@/lib/bridge/thread-client'
+import { waitForThreadAvailability } from '@/lib/bridge/thread-availability'
+import type { ThreadClient, ThreadEvent, ThreadSnapshot } from '@/lib/bridge/interfaces/thread'
 import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 import { trackProductEvent } from '@/lib/connection/telemetry'
 
 const STATUS_RECONCILE_INTERVAL_MS = 15_000
 
-export type ThreadDetailModel =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | {
-      status: 'ready'
-      session: ThreadSession
-      thread: ReturnType<typeof toThreadPresentationSnapshot>
-    }
+export type { ChatSession, ChatSessionModel, ThreadLifecycleHandler } from '../interface'
+export type ThreadDetailModel = ChatSessionModel
 
 export function useThreadDetailController(
   client: ThreadClient,
   projectId: string | null | undefined,
   threadId: string | null,
   onUnavailable?: () => void,
-  onThreadLifecycle?: (method: 'thread/archived' | 'thread/deleted' | 'thread/closed') => void,
-) {
+  onThreadLifecycle?: ThreadLifecycleHandler,
+): ChatSession {
   const registry = useThreadSessionRegistry()
   const [retryKey, setRetryKey] = React.useState(0)
   const requestKey =
@@ -198,7 +187,7 @@ export function useThreadDetailController(
     threadId,
   ])
 
-  const model: ThreadDetailModel =
+  const model: ChatSessionModel =
     !requestKey || !session
       ? { status: 'idle' }
       : snapshot.status === 'ready'

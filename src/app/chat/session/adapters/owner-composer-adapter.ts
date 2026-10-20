@@ -1,4 +1,4 @@
-import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
+import { ownerThreadClient } from '@/lib/bridge/adapters/owner-thread-client'
 import { fetchSkills } from '@/lib/bridge/http/skills'
 import { fetchContextWindow } from '@/lib/bridge/http/configuration'
 import { subscribeToEvents } from '@/lib/bridge/events/event-source'

@@ -1,4 +1,4 @@
-import { guestThreadClient } from '@/lib/bridge/thread-adapters'
+import { guestThreadClient } from '@/lib/bridge/adapters/guest-thread-client'
 import { fetchGuestSkills, readGuestSession } from '@/lib/bridge/http/guest'
 import { EMPTY_GUEST_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { createMemorySelectionStore } from '../state/memory-selection-store'

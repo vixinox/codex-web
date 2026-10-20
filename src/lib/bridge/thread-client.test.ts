@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isThreadAvailabilityRace, waitForThreadAvailability } from './thread-client'
+import { isThreadAvailabilityRace, waitForThreadAvailability } from './thread-availability'
 
 describe('shared Thread client availability', () => {
   afterEach(() => vi.useRealTimers())

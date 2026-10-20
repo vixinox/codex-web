@@ -7,7 +7,7 @@ import type {
   ThreadRuntimeStatus,
   ThreadSnapshot,
   ThreadSummary,
-} from '../thread-client'
+} from '../interfaces/thread'
 
 export type {
   StartedThread,
@@ -17,7 +17,7 @@ export type {
   ThreadRuntimeStatus,
   ThreadSnapshot,
   ThreadSummary,
-} from '../thread-client'
+} from '../interfaces/thread'
 
 export type StartTurnInput = StartThreadInput
 
@@ -347,10 +347,7 @@ async function requestThreadPage(
     throw new ApiRequestError('The server returned an invalid threads response.', response.status)
   }
   const { data, nextCursor } = body
-  if (
-    !Array.isArray(data) ||
-    !(typeof nextCursor === 'string' || nextCursor === null)
-  ) {
+  if (!Array.isArray(data) || !(typeof nextCursor === 'string' || nextCursor === null)) {
     throw new ApiRequestError('The server returned an invalid threads response.', response.status)
   }
   return {

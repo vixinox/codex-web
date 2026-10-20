@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router'
 import { ArrowRight, Download, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/shared/copy-button'
-import { MockWorkspacePreview } from './mock/mock-workspace-preview'
-import { MockSettingsPreview } from './mock/mock-settings-preview'
+import { MockWorkspacePreview } from '@/app/preview/mock/mock-workspace-preview'
+import { MockSettingsPreview } from '@/app/preview/mock/mock-settings-preview'
 
 type QuickStartStep = {
   title: string
@@ -193,7 +193,7 @@ function PwaInstallBanner({ isZh }: { isZh: boolean }) {
   }
 
   return (
-    <section className="flex max-w-4xl w-fit flex-col gap-4 rounded-xl border border-border bg-card p-4 mt-8 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+    <section className="mt-8 flex w-fit max-w-4xl flex-col gap-4 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div className="flex min-w-0 items-start gap-3">
         <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-foreground">
           <Smartphone className="size-5" aria-hidden="true" />

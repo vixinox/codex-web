@@ -1,23 +1,20 @@
 import { ComposerInput } from '@/app/chat/composer/ui/composer-input'
 import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { ProjectPicker } from '@/app/chat/composer/ui/project-picker'
-import type { useThreadPageController } from '@/app/chat/session/controllers/use-thread-page-controller'
-import { RuntimePlaceholder } from '@/app/composition/screens/runtime-placeholder'
-import { SettingsScreen } from '@/app/composition/screens/settings-screen'
-import { ThreadComposerSlot } from '@/app/composition/screens/thread-composer'
-import { ThreadPageSurface } from '@/app/composition/screens/thread-page'
+import type { ThreadPageSession } from '@/app/chat/session/interface'
+import { RuntimePlaceholder } from '@/app/workspace/runtime/runtime-placeholder'
+import { SettingsScreen } from '@/app/settings/settings-screen'
+import { ThreadComposerSlot } from '@/app/chat/composer/ui/thread-composer-slot'
+import { ThreadPageSurface } from '@/app/chat/transcript/thread-page-surface'
 import type { WorkspaceRouteController } from '@/app/composition/routes/use-workspace-route-controller'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import type { WorkspaceSidebarController } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
-import type { useWorkspaceOrchestration } from '@/app/workspace/use-workspace-orchestration'
+import type { WorkspaceOrchestration } from '@/app/workspace/use-workspace-orchestration'
 import type { GuestWorkspaceController } from '@/app/workspace/guest/use-guest-workspace-controller'
-import { ThreadEmptyState } from '@/app/composition/layout/thread-empty-state'
-import { ComposerContainer } from '@/app/composition/layout/composer-container'
+import { ThreadEmptyState } from '@/app/chat/transcript/thread-empty-state'
+import { ComposerContainer } from '@/app/chat/composer/ui/composer-container'
 import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
-
-type ThreadPageController = ReturnType<typeof useThreadPageController>
-type WorkspaceOrchestration = ReturnType<typeof useWorkspaceOrchestration>
 
 function ThreadHeader({ title }: { title?: string | null }) {
   return (
@@ -45,7 +42,7 @@ export function WorkspacePageContent({
 }: {
   route?: WorkspaceRouteController
   runtime?: CodexRuntimeController
-  page?: ThreadPageController
+  page?: ThreadPageSession
   controller?: WorkspaceSidebarController
   orchestration?: WorkspaceOrchestration
   selectedNewChatProjectId?: string | null
@@ -76,7 +73,7 @@ export function WorkspacePageContent({
             <SettingsScreen runtime={runtime} archived={route.archivedChatsActive} />
           )
         ) : ready && !threadLoading ? (
-          <ThreadPageSurface controller={surfacePage} onRetry={page.actions.retry} />
+          <ThreadPageSurface controller={surfacePage} onRetry={() => page.actions.retry()} />
         ) : (
           <RuntimePlaceholder
             model={runtime.model}

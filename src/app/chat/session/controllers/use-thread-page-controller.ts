@@ -7,11 +7,12 @@ import { optimisticThread } from '../state/thread-pending-reconciliation'
 import { usePendingThreadPresentation } from '../presentation/use-pending-thread-presentation'
 import { useThreadSessionSnapshot } from '../state/thread-session-store'
 import { buildThreadComposerSlot } from '../presentation/thread-composer-slot'
-import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
-import type { ThreadClient } from '@/lib/bridge/thread-client'
+import { ownerThreadClient } from '@/lib/bridge/adapters/owner-thread-client'
+import type { ThreadClient } from '@/lib/bridge/interfaces/thread'
 import type { ComposerRuntimeAdapter } from '../adapters/composer-adapter'
 import { ownerComposerAdapter } from '../adapters/owner-composer-adapter'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
+import type { ThreadLifecycleHandler, ThreadPageSession } from '../interface'
 
 export type { ThreadPageTarget } from './use-thread-composer-controller'
 export type ThreadPageControllerOptions = {
@@ -26,7 +27,7 @@ export type ThreadPageControllerOptions = {
   }) => void
   onTurnAccepted: (turn: { projectId: string | null; threadId: string; turnId: string }) => void
   onUnavailable?: () => void
-  onThreadLifecycle?: Parameters<typeof useThreadDetailController>[3]
+  onThreadLifecycle?: ThreadLifecycleHandler
   onThreadCreationStart?: (projectId: string | null, title: string) => string
   onThreadCreationFailed?: (placeholderId: string, message: string) => void
   onThreadCreationResolved?: (
@@ -54,7 +55,7 @@ export function useThreadPageController({
   client = ownerThreadClient,
   adapter = ownerComposerAdapter,
   capabilities,
-}: ThreadPageControllerOptions) {
+}: ThreadPageControllerOptions): ThreadPageSession {
   const isThread = target.threadId !== null
   const detail = useThreadDetailController(
     client,
@@ -81,8 +82,8 @@ export function useThreadPageController({
     host: {
       target,
       activeTurnId: visiblePending?.activeNativeTurnId,
-      followTurn: detail.followTurn,
-      retry: detail.retry,
+      followTurn: (_turnId) => detail.followTurn(),
+      retry: () => detail.retry(),
       navigateToThread: onNavigateToThread,
       onTurnAccepted,
       onUnavailable,
@@ -100,7 +101,7 @@ export function useThreadPageController({
     capabilities,
   })
 
-  const model = isThread
+  const model: ThreadPageSession['model'] = isThread
     ? mergedThread
       ? { status: 'ready' as const, thread: mergedThread }
       : pending.pending && pending.pending.nativeThreadId === target.threadId
@@ -130,9 +131,9 @@ export function useThreadPageController({
     composerSlot,
     actions: {
       ...composer.actions,
-      retry: detail.retry,
-      answerUserInput: detail.answerUserInput,
-      cancelUserInput: detail.cancelUserInput,
+      retry: () => detail.retry(),
+      answerUserInput: (answers) => detail.answerUserInput(answers),
+      cancelUserInput: () => detail.cancelUserInput(),
     },
     lockEpoch: visiblePending?.lockEpoch ?? 0,
     retryState: composer.retryState,

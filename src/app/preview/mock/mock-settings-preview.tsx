@@ -1,6 +1,6 @@
 import { AppearanceSection } from '@/app/settings/appearance-section'
 import { cn } from '@/lib/utils'
-import { SettingsSidebar } from '../../navigation/settings-sidebar'
+import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
 
 export function MockSettingsPreview({ className }: { className?: string }) {
   return (

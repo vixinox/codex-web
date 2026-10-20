@@ -16,7 +16,6 @@ import {
   syncComposerPreferences,
   type ThreadComposerSelection,
 } from '@/app/chat/composer/state/model-selection-sync'
-import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 import { defaultComposerPreferences } from '@/app/chat/composer/model/composer-capabilities'
 import { trackProductEvent } from '@/lib/connection/telemetry'
 import type {
@@ -28,14 +27,11 @@ import type {
   ComposerViewModel,
   SkillPickerViewModel,
 } from '@/app/chat/model/composer-types'
-import type { ChatPendingTurn, ChatTokenUsage } from '@/app/chat/model/types'
+import type { ChatPendingTurn } from '@/app/chat/model/types'
 import type { CodeSnippetAttachment } from '@/app/chat/composer/model/draft-model'
-import { waitForThreadAvailability } from '@/lib/bridge/thread-client'
-import type {
-  AcceptedTurn,
-  ComposerHost,
-  ComposerRuntimeAdapter,
-} from '../adapters/composer-adapter'
+import { waitForThreadAvailability } from '@/lib/bridge/thread-availability'
+import type { ComposerSession, ComposerSessionOptions } from '../interface'
+import type { AcceptedTurn } from '../adapters/composer-adapter'
 
 export type {
   AcceptedTurn,
@@ -43,26 +39,7 @@ export type {
   ComposerRuntimeAdapter,
 } from '../adapters/composer-adapter'
 
-type ComposerControllerOptions = {
-  userId: string
-  adapter: ComposerRuntimeAdapter
-  host: ComposerHost
-  /** Screen-level override of the adapter capability config, e.g. New Chat. */
-  capabilities?: ComposerCapabilities
-  runtimeReady: boolean
-  runtimeStatus?: string
-  working: boolean
-  tokenUsage?: ChatTokenUsage
-  threadSelection?: ThreadComposerSelection
-  onPendingChange?: (pending: ChatPendingTurn | null, key: string | null) => void
-  onThreadCreationStart?: (projectId: string | null, title: string) => string
-  onThreadCreationFailed?: (placeholderId: string, message: string) => void
-  onThreadCreationResolved?: (
-    placeholderId: string,
-    projectId: string | null,
-    threadId: string,
-  ) => void
-}
+export type ComposerControllerOptions = ComposerSessionOptions
 
 const MAX_RETRIES = 5
 
@@ -88,7 +65,7 @@ export function useComposerController({
   onThreadCreationStart,
   onThreadCreationFailed,
   onThreadCreationResolved,
-}: ComposerControllerOptions) {
+}: ComposerControllerOptions): ComposerSession {
   const hostRef = React.useRef(host)
   React.useEffect(() => {
     hostRef.current = host

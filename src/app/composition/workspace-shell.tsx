@@ -18,7 +18,7 @@ import {
 } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
 import { useWorkspaceOrchestration } from '@/app/workspace/use-workspace-orchestration'
 import type { ComposerRuntimeAdapter } from '@/app/chat/session/adapters/composer-adapter'
-import type { ThreadClient } from '@/lib/bridge/thread-client'
+import type { ThreadClient } from '@/lib/bridge/interfaces/thread'
 import { useGuestWorkspaceController } from '@/app/workspace/guest/use-guest-workspace-controller'
 import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'

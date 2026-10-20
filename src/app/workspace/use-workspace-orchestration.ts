@@ -5,10 +5,20 @@ import type { WorkspaceSidebarController } from './sidebar/use-workspace-sidebar
 
 type StartedThread = { projectId: string | null; threadId: string; turnId: string }
 
+export type WorkspaceOrchestration = {
+  onNavigateToThread: (started: StartedThread) => void
+  onTurnAccepted: (turn: StartedThread) => void
+  createProject: (name: string) => Promise<void>
+  renameProject: (projectId: string, name: string) => Promise<void>
+  deleteProject: (projectId: string) => Promise<void>
+  selectThread: (projectId: string, threadId: string) => void
+  selectRootThread: (threadId: string) => void
+}
+
 export function useWorkspaceOrchestration(
   controllerRef: React.RefObject<WorkspaceSidebarController | null>,
   route: WorkspaceRouteController,
-) {
+): WorkspaceOrchestration {
   const onNavigateToThread = React.useCallback(
     (started: StartedThread) => {
       const controller = requireController(controllerRef)

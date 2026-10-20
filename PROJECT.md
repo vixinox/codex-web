@@ -17,7 +17,7 @@
 - Owner 与 Guest 的 Thread/Turn 前端生命周期通过共享 Thread client interface 和独立 adapter 收敛；availability、snapshot/status 与事件同步语义位于共享 seam，Owner `/api/*` 与 Guest `/guest-api/*`、认证、runtime 和权限策略仍严格隔离。
 - Guest accepted Turn ID 是 queue/job 取消句柄，不是 App Server native transcript Turn ID；共享 pending lifecycle 通过 adapter capability 区分两类 identity，避免 job ID 污染 transcript reconciliation。
 - App Server 未物化到 Thread 快照的命令与用户问答由 EventHub 安全投影后持久化并通过 `historyEvents` 重放；问答答案使用 bridge 自有事件补足 `serverRequest/resolved`，由 native reducer 统一生成 transcript summary。
-- 前端目录按 `app + lib` 组织：组合层位于 `src/app/composition`，Chat/Workspace/Settings 位于 `src/app`，跨运行时基础设施位于 `src/lib`，`src/components/ui` 保持 shadcn primitives。
+- 前端目录按 `app + lib` 组织：启动与路由位于 `src/app/entry`，组合层位于 `src/app/composition`，Chat/Workspace/Settings 按领域分别维护 application、domain 与 UI modules，跨运行时基础设施位于 `src/lib`，`src/components/ui` 保持 shadcn primitives。
 - `/app/*` 是唯一真实应用入口；不提供旧 `/ui/*`、`/preview/*` 或离线工作台兼容路由。
 - Owner 与 Guest 共用单一 Vite 入口和构建产物：`/startup` 为静态启动页，`/` 和 `/login` 按 Better Auth session 分流到 `/app` 或 Guest profile 下的 `/admin`。Guest 使用 Better Auth anonymous session/cookie，并通过独立的 24 小时 lease 管理 workspace、quota、任务和 reset；lease 不是浏览器身份凭据。
 - Owner 与 Guest 使用固定独立进程入口 `pnpm server:owner` 和 `pnpm server:guest`，不设置运行模式变量，也不存在 combined server，后端 profile 强制执行隔离。

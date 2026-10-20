@@ -11,14 +11,19 @@ Transcript 渲染实现见 [Transcript 渲染架构](transcript-architecture.zh-
 ## 依赖方向
 
 ```text
-app/main -> app/composition -> app/{chat,workspace,settings} -> lib/bridge
+app/entry -> app/composition -> app/{chat,workspace,settings}/application
+                                      |
+                                      +-> domain -> UI-facing model -> renderer
+                                      |
+                                      +-> lib/bridge/interfaces -> owner/guest adapters -> transport
                                       |
                                       +-> components/ui -> lib/utils
 ```
 
-- `app/composition` 负责路由、布局和领域组合，不直接调用 fetch、SSE 或数据库。
-- `app/chat`、`app/settings`、`app/workspace` 负责各自领域 controller、reducer 和 renderer。
-- `lib/bridge` 集中 HTTP/SSE、错误解析和原生协议适配。
+- `app/entry` 负责应用启动、路由、认证过期、runtime profile 守卫和根错误边界。
+- `app/composition` 负责布局和领域组合，不直接调用 fetch、SSE 或数据库。
+- `app/chat`、`app/settings`、`app/workspace` 负责各自领域的 application、domain 和 renderer；`ChatSession`、`ComposerSession` 与 `WorkspaceCatalog` 是跨 UI 模块的命名接口。
+- `lib/bridge/interfaces` 定义 UI 可用的 bridge 接缝，`lib/bridge/adapters` 分别实现 Owner 与 Guest；raw DTO、HTTP/SSE 和协议解析留在 adapter/transport 内部。
 - `components/ui` 只依赖通用库和 `lib/utils`，不访问 API、路由、认证或浏览器持久化。
 - `lib/db` 是 server-only，不能进入浏览器图。
 

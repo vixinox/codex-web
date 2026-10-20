@@ -1,4 +1,4 @@
-import { ComposerContainer } from '@/app/composition/layout/composer-container'
+import { ComposerContainer } from '@/app/chat/composer/ui/composer-container'
 import * as React from 'react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ComposerInput } from '@/app/chat/composer/ui/composer-input'

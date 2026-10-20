@@ -1,5 +1,5 @@
 import type { ChatThreadPresentation } from '@/app/chat/model/types'
-import type { ThreadSummary } from '@/lib/bridge/thread-client'
+import type { ThreadSummary } from '@/lib/bridge/interfaces/thread'
 
 export function reconcileGuestThreads(
   current: readonly ChatThreadPresentation[],

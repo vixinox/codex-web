@@ -12,11 +12,19 @@ const bridge = vi.hoisted(() => ({
   archiveThread: vi.fn(),
   deleteThread: vi.fn(),
 }))
+const eventSource = vi.hoisted(() => ({
+  current: null as { onEvent: (event: Event) => void } | null,
+}))
 
 vi.mock('@/lib/bridge/http/projects', () => bridge)
 vi.mock('@/lib/bridge/http/threads', () => bridge)
 vi.mock('@/lib/bridge/events/event-source', () => ({
-  subscribeToEvents: vi.fn(() => () => undefined),
+  subscribeToEvents: vi.fn((subscription: { onEvent: (event: Event) => void }) => {
+    eventSource.current = subscription
+    return () => {
+      if (eventSource.current === subscription) eventSource.current = null
+    }
+  }),
 }))
 
 const runtime = {
@@ -37,6 +45,7 @@ function deferred<T>() {
 describe('useWorkspaceSidebarController optimistic mutations', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    eventSource.current = null
     bridge.fetchProjects.mockResolvedValue([{ id: 'p1', name: 'One' }])
     bridge.fetchThreads.mockImplementation((projectId: string | null) =>
       Promise.resolve(
@@ -270,6 +279,17 @@ describe('useWorkspaceSidebarController optimistic mutations', () => {
     await waitFor(() =>
       expect(rootThreadIds(result.current.model)).toEqual(['external', 'first', 'second']),
     )
+  })
+
+  it('refreshes the catalog collections when a workspace thread event arrives', async () => {
+    const { result } = renderHook(() => useWorkspaceSidebarController(runtime))
+    await waitFor(() => expect(result.current.model.status).toBe('ready'))
+    await waitFor(() => expect(bridge.fetchThreads).toHaveBeenCalledTimes(2))
+    expect(eventSource.current).not.toBeNull()
+
+    act(() => eventSource.current?.onEvent(new Event('thread/archived')))
+
+    await waitFor(() => expect(bridge.fetchThreads).toHaveBeenCalledTimes(4))
   })
 })
 

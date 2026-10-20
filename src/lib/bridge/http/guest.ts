@@ -1,5 +1,5 @@
 import type { CodexThread } from '@/lib/protocol/protocol'
-import { THREAD_EVENT_METHODS } from '@/lib/bridge/thread-client'
+import { THREAD_EVENT_METHODS } from '@/lib/bridge/events/thread-event-methods'
 import { isCodexThreadResponse, isRecord, type ThreadHistoryEventDto } from './thread-validation'
 import type { GuestRuntimeContract } from '../guest-contract'
 export type { GuestRuntimeContract } from '../guest-contract'

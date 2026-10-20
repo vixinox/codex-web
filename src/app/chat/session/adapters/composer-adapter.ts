@@ -1,4 +1,4 @@
-import type { ThreadClient } from '@/lib/bridge/thread-client'
+import type { ThreadClient } from '@/lib/bridge/interfaces/thread'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 import type { ComposerPreferences } from '@/app/chat/composer/state/composer-store'
 import type { ComposerSkill } from '@/app/chat/model/composer-types'
