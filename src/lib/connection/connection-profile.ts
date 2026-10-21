@@ -1,4 +1,4 @@
-export type ConnectionKind = 'hosted' | 'self_hosted' | 'guest'
+export type ConnectionKind = 'hosted' | 'self_hosted'
 
 export type ConnectionStatus = 'checking' | 'ready' | 'needs_login' | 'offline' | 'incompatible'
 
@@ -6,7 +6,6 @@ export type ConnectionCapabilities = {
   mobile: boolean
   notifications: boolean
   fileWorkspace: boolean
-  guestMode: boolean
 }
 
 export type InstanceMetadata = {
@@ -14,7 +13,6 @@ export type InstanceMetadata = {
   protocolVersion: string
   minClientVersion: string
   capabilities: string[]
-  profile: 'owner' | 'guest'
 }
 
 export type ConnectionProfile = {
@@ -46,7 +44,6 @@ export function connectionCapabilities(metadata: InstanceMetadata): ConnectionCa
     mobile: available.has('pwa'),
     notifications: available.has('notifications'),
     fileWorkspace: available.has('workspace'),
-    guestMode: available.has('guest'),
   }
 }
 

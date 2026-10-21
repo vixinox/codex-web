@@ -46,9 +46,8 @@ const quickStartSteps: readonly QuickStartStep[] = [
       'Run the frontend and Owner bridge in separate terminals, then open the local Web origin.',
     zhDescription: '在不同终端启动前端和 Owner bridge，然后打开本地 Web 地址。',
     commands: ['pnpm dev', 'pnpm server:owner'],
-    note: 'Open http://localhost:5173. Guest is optional: run pnpm server:guest in another terminal. Owner and Guest are separate processes.',
-    zhNote:
-      '打开 http://localhost:5173。Guest 可选：另开终端运行 pnpm server:guest。Owner 和 Guest 是独立进程。',
+    note: 'Open http://localhost:5173 and create your local Owner account.',
+    zhNote: '打开 http://localhost:5173 并创建本地 Owner 账户。',
   },
 ] as const
 
@@ -67,8 +66,8 @@ export function StartupScreen() {
           </h1>
           <p className="split hero-text text-xl leading-relaxed text-muted-foreground">
             {isZh
-              ? '在本地运行 Codex Web，连接自己的 Owner 工作区，或使用隔离的 Guest 环境。'
-              : 'Run Codex Web locally with your own Owner workspace or an isolated Guest environment.'}
+              ? '在本地运行 Codex Web，连接自己的工作区与 Agent。'
+              : 'Run Codex Web locally with your own workspace and Agent.'}
           </p>
           <div className="flex flex-wrap gap-3 pt-2">
             <Button
@@ -76,7 +75,7 @@ export function StartupScreen() {
               className="group rounded-full bg-foreground px-6 font-medium text-background transition-all hover:bg-foreground/90"
               onClick={() => navigate('/login')}
             >
-              {isZh ? '在线试用' : 'Get Started'}
+              {isZh ? '开始使用' : 'Get Started'}
               <ArrowRight className="ml-1.5 size-4" />
             </Button>
             <Button
@@ -286,9 +285,6 @@ function QuickStartStepView({
         {index === 0 ? (
           <div className="space-y-2">
             <CommandBlock command="pnpm db:push" isZh={isZh} />
-            {platform === 'windows' ? (
-              <CommandBlock command=".\setup-windows-sandbox.ps1" isZh={isZh} />
-            ) : null}
           </div>
         ) : null}
         {step.note ? (

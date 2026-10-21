@@ -287,7 +287,6 @@ function adaptActivity(item: CodexRecord) {
     enteredReviewMode: { kind: 'system', title: 'Entered review mode' },
     exitedReviewMode: { kind: 'system', title: 'Exited review mode' },
     contextCompaction: { kind: 'system', title: 'Context compacted' },
-    guestTurnLimit: { kind: 'system', title: 'Guest turn token limit reached' },
   }
   const mapped = map[sourceType] ?? { kind: 'system', title: sourceType }
   const status: 'running' | 'failed' | 'cancelled' | 'completed' =

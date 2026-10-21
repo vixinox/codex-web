@@ -18,15 +18,13 @@ export type ComposerSelectionStore = {
 
 /**
  * Everything the shared Composer controller needs from a runtime. It exposes
- * only Composer capabilities: no credentials, workspace paths, leases, native
+ * only Composer capabilities: no credentials, workspace paths, native
  * Thread internals, or general command/filesystem API.
  */
 export type ComposerRuntimeAdapter = {
   capabilities: ComposerCapabilities
   threads: ThreadClient
   selection?: ComposerSelectionStore
-  /** Whether an accepted Turn handle is also the native transcript Turn id. */
-  acceptedTurnIdIsNative?: boolean
   listSkills(projectId: string | null, signal?: AbortSignal): Promise<readonly ComposerSkill[]>
   /**
    * Runtime-specific copy. `skillsError`/`compactError` replace the message

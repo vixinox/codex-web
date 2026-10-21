@@ -3,9 +3,8 @@ import type { CodexThread } from '@/lib/protocol/protocol'
 /**
  * The browser-facing contract for a Thread runtime.
  *
- * Owner and Guest satisfy this same interface through separate adapters. The
- * interface deliberately contains UI-safe values only; transport paths,
- * credentials and runtime-specific identifiers stay behind the adapters.
+ * The interface deliberately contains UI-safe values only; transport paths,
+ * credentials and runtime-specific identifiers stay behind the adapter.
  */
 export type ThreadSummary = {
   id: string

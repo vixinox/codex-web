@@ -51,7 +51,7 @@ ThreadAssets
 
 `thread-presentation.ts` 是 native DTO 到 UI model 的唯一主要适配层：
 
-- 白名单化 model/reasoning effort、状态、时间和 token usage。
+- 安全化 model/reasoning effort、状态、时间和 token usage；effort 能力由当前 runtime model catalog 决定。
 - 将原生 item 归一为 `ChatBlock`：user、assistant、activity、context-compaction article、error。
 - 按连续 activity kind 聚合为 activity block，并补充 command、file diff、状态、输出和脱敏后的展示字段。
 - 从原生 plan 和 diff 生成 `ChatPlanPresentation` 与 diff 统计。
@@ -103,10 +103,6 @@ turn 进入 terminal 状态时，`StreamingAssistant` 只 flush 尚未提交的�
 assistant Markdown block 在 turn 进行中按完整 Markdown 边界提交：已经闭合的 block 立即进入 transcript 并以整块透明度淡入，未闭合的 pending 尾部继续留在内存中，不展示 broken Markdown。turn 进入终态时只 flush 尚未提交的最后 block；历史 completed turn 直接显示，不重复播放进入动画。`MarkdownBlockView` 每收到一个新 block 执行一次原生 CSS opacity enter，代码块、表格和普通文字使用相同的整块行为。reduced-motion 下直接完成。
 
 开发环境可通过 `[transcript]` console 日志观察 event、turn、split、render 和 animation 阶段。日志只包含 ID、状态、数量、长度和布尔值，不包含正文、原始 payload、路径、凭据或 workspace 信息。
-
-## Owner 与 Guest
-
-Owner 和 Guest 使用各自 bridge/thread adapter，但共享 session、presentation model 与 transcript renderer。Guest 的 queue/job turn ID 仅用于取消，不进入 native transcript identity；展示始终依赖 snapshot/SSE 中的 native turn projection。Guest capability 通过上层 controller 和 composer view model 限制可用操作，`ThreadAssets` 不按 runtime 分支，也不接触认证、workspace 或凭据。
 
 ## 修改边界与验证
 

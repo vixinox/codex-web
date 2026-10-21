@@ -77,34 +77,31 @@ test('rejects unknown events instead of passing opaque payloads to the browser',
   )
 })
 
-test('projects the Guest token-limit event with only safe numeric fields', () => {
+test('projects safe thread lifecycle notifications for workspace refresh', () => {
+  for (const method of [
+    'thread/archived',
+    'thread/unarchived',
+    'thread/closed',
+    'thread/deleted',
+  ]) {
+    assert.deepEqual(
+      projectNativeMessage({
+        method,
+        params: { threadId: 'thread-1', cwd: 'C:/private/workspace' },
+      }),
+      {
+        ok: true,
+        value: { method, params: { threadId: 'thread-1' } },
+      },
+    )
+  }
   assert.deepEqual(
-    projectNativeMessage({
-      method: 'webcodex/guest-token-limit',
-      params: {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        maxTokens: 128_000,
-        actualTokens: 130_000,
-        apiKey: 'secret',
-      },
-    }),
-    {
-      ok: true,
-      value: {
-        method: 'webcodex/guest-token-limit',
-        params: {
-          threadId: 'thread-1',
-          turnId: 'turn-1',
-          maxTokens: 128_000,
-          actualTokens: 130_000,
-        },
-      },
-    },
+    projectNativeMessage({ method: 'thread/unarchived', params: { cwd: 'C:/private/workspace' } }),
+    { ok: false, code: 'INVALID_MESSAGE' },
   )
 })
 
-test('projects safe Thread model and reasoning settings', () => {
+test('projects safe Thread model and runtime-advertised reasoning settings', () => {
   assert.deepEqual(
     projectNativeThread({
       id: 'thread-1',
@@ -129,7 +126,7 @@ test('projects safe Thread model and reasoning settings', () => {
       reasoningEffort: 'extreme',
       turns: [],
     }),
-    { id: 'thread-2', model: 'future-model', turns: [] },
+    { id: 'thread-2', model: 'future-model', reasoningEffort: 'extreme', turns: [] },
   )
 })
 
@@ -173,7 +170,11 @@ test('projects Thread settings updates without runtime or filesystem fields', ()
       ok: true,
       value: {
         method: 'thread/settings/updated',
-        params: { threadId: 'thread-1', model: 'x'.repeat(65) },
+        params: {
+          threadId: 'thread-1',
+          model: 'x'.repeat(65),
+          reasoningEffort: 'extreme',
+        },
       },
     },
   )

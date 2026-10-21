@@ -35,9 +35,7 @@ async function prompt(
 
 async function main() {
   const cliOptions = parseArgs(process.argv.slice(2))
-  const isInteractive = process.stdin.isTTY && !cliOptions.kind
-
-  let kind = cliOptions.kind?.toLowerCase()
+  const isInteractive = process.stdin.isTTY && !cliOptions.email
   let email = cliOptions.email
   let password = cliOptions.password
   let name = cliOptions.name
@@ -50,22 +48,13 @@ async function main() {
 
     try {
       console.log('--- Create Codex Web Account ---')
-      if (!kind) {
-        const selectedKind = await prompt(rl, 'Account kind (owner / admin) [owner]: ', 'owner')
-        kind = selectedKind.toLowerCase()
-      }
-
-      if (!['owner', 'admin'].includes(kind)) {
-        throw new Error("Invalid account kind. Must be 'owner' or 'admin'.")
-      }
-
-      const defaultEmail = kind === 'owner' ? 'owner@codex.local' : 'admin@codex.local'
+      const defaultEmail = 'owner@codex.local'
       if (!email) {
         email = await prompt(rl, `Email [${defaultEmail}]: `, defaultEmail)
       }
 
       if (!name) {
-        const defaultName = kind === 'owner' ? 'Owner' : 'Admin'
+        const defaultName = 'Owner'
         name = await prompt(rl, `Display Name [${defaultName}]: `, defaultName)
       }
 
@@ -82,13 +71,8 @@ async function main() {
     }
   }
 
-  kind = kind || 'owner'
-  if (!['owner', 'admin'].includes(kind)) {
-    throw new Error("Account kind must be 'owner' or 'admin'")
-  }
-
-  email = email || (kind === 'owner' ? 'owner@codex.local' : 'admin@codex.local')
-  name = name || (kind === 'owner' ? 'Owner' : 'Admin')
+  email = email || 'owner@codex.local'
+  name = name || 'Owner'
 
   let passwordGenerated = false
   if (!password) {
@@ -100,7 +84,7 @@ async function main() {
     throw new Error('Password must be at least 8 characters')
   }
 
-  const config = loadServerConfig(kind === 'admin' ? 'guest' : 'owner')
+  const config = loadServerConfig()
   const database = createDatabase(config)
 
   try {
@@ -110,13 +94,11 @@ async function main() {
         email,
         password,
         name,
-        kind,
       },
     })
 
     console.log('\n=========================================')
     console.log(`Account created successfully!`)
-    console.log(`Kind:     ${kind}`)
     console.log(`User ID:  ${result.user.id}`)
     console.log(`Email:    ${result.user.email}`)
     console.log(`Name:     ${result.user.name}`)

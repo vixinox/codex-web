@@ -38,13 +38,9 @@ export function WorkspaceSidebar({
   onCreateProject,
   onRenameProject,
   onDeleteProject,
-  projectAccess = 'available',
-  projectUnavailableMessage = 'Projects are unavailable in Guest Workspace.',
-  onProjectUnavailable,
   archiveAvailable = true,
   runtimeStatusLabel,
   runtimeInteractive = true,
-  isGuest = false,
   persistUiState = true,
 }: {
   model: WorkspaceSidebarModel
@@ -67,14 +63,9 @@ export function WorkspaceSidebar({
   onCreateProject: (name: string) => Promise<void>
   onRenameProject: (projectId: string, name: string) => Promise<void>
   onDeleteProject: (projectId: string) => Promise<void>
-  /** Guest-like modes retain the project UI but do not expose project operations. */
-  projectAccess?: 'available' | 'unavailable'
-  projectUnavailableMessage?: string
-  onProjectUnavailable?: () => void
   archiveAvailable?: boolean
   runtimeStatusLabel?: string
   runtimeInteractive?: boolean
-  isGuest?: boolean
   /** Fixture workspaces keep collapse state in memory rather than local storage. */
   persistUiState?: boolean
 }) {
@@ -169,16 +160,8 @@ export function WorkspaceSidebar({
                             'ml-auto',
                             canHover && 'opacity-0 group-hover/projects:opacity-100',
                           )}
-                          aria-label={
-                            projectAccess === 'unavailable'
-                              ? projectUnavailableMessage
-                              : 'New project'
-                          }
+                          aria-label={'New project'}
                           onClick={() => {
-                            if (projectAccess === 'unavailable') {
-                              onProjectUnavailable?.()
-                              return
-                            }
                             setCreateOpen(true)
                           }}
                         />
@@ -187,7 +170,7 @@ export function WorkspaceSidebar({
                       <Plus />
                     </PopoverTrigger>
                     <PopoverContent side="bottom" className="w-auto p-2 text-xs">
-                      {projectAccess === 'unavailable' ? projectUnavailableMessage : 'New project'}
+                      New project
                     </PopoverContent>
                   </Popover>
                 </div>
@@ -197,9 +180,7 @@ export function WorkspaceSidebar({
                   ) : model.status === 'error' ? (
                     <LoadError message={model.message} onRetry={onRetryProjects} />
                   ) : model.projects.length === 0 ? (
-                    <p className="ml-4 px-2 py-3 text-sm text-muted-foreground">
-                      {projectAccess === 'unavailable' ? projectUnavailableMessage : 'No projects'}
-                    </p>
+                    <p className="ml-4 px-2 py-3 text-sm text-muted-foreground">No projects</p>
                   ) : (
                     <div className="flex flex-col gap-1">
                       <FadePresenceList
@@ -226,14 +207,12 @@ export function WorkspaceSidebar({
                   )}
                 </CollapsibleContent>
               </Collapsible>
-              {projectAccess === 'available' ? (
-                <ProjectNameDialog
-                  open={createOpen}
-                  onOpenChange={setCreateOpen}
-                  mode="create"
-                  onSubmit={onCreateProject}
-                />
-              ) : null}
+              <ProjectNameDialog
+                open={createOpen}
+                onOpenChange={setCreateOpen}
+                mode="create"
+                onSubmit={onCreateProject}
+              />
               <Collapsible open={threadsOpen} onOpenChange={setThreadsOpen}>
                 <CollapsibleTrigger className="flex w-full items-center gap-1 p-2 text-sm font-medium text-muted-foreground select-none">
                   <p>Threads</p>
@@ -301,17 +280,15 @@ export function WorkspaceSidebar({
               {runtimeContent}
             </div>
           )}
-          {!isGuest ? (
-            <Button
-              type="button"
-              variant="ghost"
-              className="w-full justify-start gap-2 p-2"
-              onClick={() => void onSignOut?.()}
-            >
-              <LogOut data-icon="inline-start" />
-              Sign out
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full justify-start gap-2 p-2"
+            onClick={() => void onSignOut?.()}
+          >
+            <LogOut data-icon="inline-start" />
+            Sign out
+          </Button>
         </div>
       </aside>
     </>

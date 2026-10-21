@@ -1,4 +1,4 @@
-import { type SkillHandleStore,matchingSkills,skillsForCwd,type NativeSkill} from '../skills.js';
+import { type SkillHandleStore, matchingSkills, skillsForCwd, type NativeSkill } from '../skills.js'
 const MAX_SKILL_HANDLES = 32
 export function parseSkillHandles(value: unknown): string[] | null {
   if (value === undefined) return []

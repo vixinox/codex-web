@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { SkillHandleStore} from '../skills.js';
+import type { SkillHandleStore } from '../skills.js'
 import { skillsForCwd } from '../skills.js'
 import { apiError, codexFailure, requireSession, safeId } from './common.js'
 import type { RouteContext } from './types.js'

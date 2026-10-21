@@ -71,42 +71,6 @@ describe('shared pending Thread presentation', () => {
     expect(result.current.pending).toBeNull()
   })
 
-  it('reconciles an opaque Guest job with the native completed transcript', () => {
-    const thread: ChatThreadPresentation = {
-      id: 'thread-1',
-      projectId: null,
-      title: 'Thread',
-      isBusy: false,
-      turns: [
-        {
-          id: 'native-turn',
-          status: 'completed',
-          blocks: [
-            {
-              id: 'user',
-              type: 'user',
-              content: [{ type: 'text', text: 'Build it' }],
-            },
-          ],
-        },
-      ],
-    }
-    const { result } = renderHook(() =>
-      usePendingThreadPresentation({
-        userId: 'user-1',
-        target: { projectId: null, threadId: 'thread-1' },
-        thread,
-      }),
-    )
-
-    act(() => result.current.onPendingChange(pending, 'user:user-1\0thread:<root>\0thread-1'))
-    expect(result.current.thread?.turns).toHaveLength(1)
-    expect(result.current.thread?.turns[0]).toMatchObject({
-      id: 'native-turn',
-      status: 'completed',
-    })
-  })
-
   it('clears a matched pending turn after the native transcript completes', async () => {
     const thread: ChatThreadPresentation = {
       id: 'thread-1',

@@ -16,7 +16,6 @@ type ProjectPickerProps = {
   disabled: boolean
   onProjectChange?: (projectId: string | null) => void
   onCreateProject?: (name: string) => Promise<void>
-  /** Keeps the picker visible in Guest Workspace while preventing project calls. */
   unavailableMessage?: string
   onUnavailable?: () => void
 }

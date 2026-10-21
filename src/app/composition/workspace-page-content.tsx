@@ -10,10 +10,6 @@ import type { WorkspaceRouteController } from '@/app/composition/routes/use-work
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import type { WorkspaceSidebarController } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
 import type { WorkspaceOrchestration } from '@/app/workspace/use-workspace-orchestration'
-import type { GuestWorkspaceController } from '@/app/workspace/guest/use-guest-workspace-controller'
-import { ThreadEmptyState } from '@/app/chat/transcript/thread-empty-state'
-import { ComposerContainer } from '@/app/chat/composer/ui/composer-container'
-import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
 
 function ThreadHeader({ title }: { title?: string | null }) {
@@ -37,7 +33,6 @@ export function WorkspacePageContent({
   controller,
   orchestration,
   selectedNewChatProjectId,
-  guest,
   capabilities,
 }: {
   route?: WorkspaceRouteController
@@ -46,10 +41,8 @@ export function WorkspacePageContent({
   controller?: WorkspaceSidebarController
   orchestration?: WorkspaceOrchestration
   selectedNewChatProjectId?: string | null
-  guest?: GuestWorkspaceController
   capabilities?: ComposerCapabilities
 }) {
-  if (guest) return <GuestWorkspacePageContent guest={guest} />
   if (!runtime || !route || !page || !controller || !orchestration) return null
   const projects = controller.model.status === 'ready' ? controller.model.projects : []
   const ready = runtime.model.status === 'started'
@@ -106,53 +99,6 @@ export function WorkspacePageContent({
               actions={page.actions}
               capabilities={capabilities ?? page.capabilities}
             />
-          )}
-        </div>
-      ) : null}
-    </>
-  )
-}
-
-function GuestWorkspacePageContent({ guest }: { guest: GuestWorkspaceController }) {
-  const activeThread = guest.activeThread
-  if (guest.settingsActive) return <SettingsScreen isGuest />
-  return (
-    <>
-      {activeThread && !guest.threadLoading ? <ThreadHeader title={activeThread.title} /> : null}
-      <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto overscroll-none">
-        {guest.threadLoading ? null : activeThread ? (
-          <section
-            className="relative flex min-h-full flex-col"
-            aria-label="Guest chat conversation"
-          >
-            {guest.detail.model.status === 'ready' ? (
-              <ThreadAssets thread={activeThread} session={guest.detail.model.session} />
-            ) : null}
-          </section>
-        ) : (
-          <ThreadEmptyState
-            title="What would you like to explore?"
-            ariaLabel="Start a guest chat"
-          />
-        )}
-      </div>
-      {!guest.threadLoading ? (
-        <div className="z-10 flex-none pb-[calc(1rem+env(safe-area-inset-bottom))]">
-          {activeThread && guest.composerSlot ? (
-            <ThreadComposerSlot
-              slot={guest.composerSlot}
-              actions={guest.threadComposerActions}
-              capabilities={guest.composer.capabilities}
-            />
-          ) : (
-            <ComposerContainer>
-              <ComposerInput
-                viewModel={guest.composer.viewModel}
-                actions={guest.composer.actions}
-                placeholder="Explore the isolated guest workspace"
-                capabilities={guest.composer.capabilities}
-              />
-            </ComposerContainer>
           )}
         </div>
       ) : null}

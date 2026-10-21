@@ -2,9 +2,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { guestComposerAdapter } from './adapters/guest-composer-adapter'
 import { ownerComposerAdapter } from './adapters/owner-composer-adapter'
-import { guestThreadClient, ownerThreadClient } from '@/lib/bridge/thread-adapters'
+import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
 
 const source = (path: string) =>
   readFileSync(fileURLToPath(new URL(path, import.meta.url)), { encoding: 'utf8' })
@@ -22,26 +21,13 @@ describe('Composer architecture boundaries', () => {
     ].map(source)
 
     for (const contents of shared) {
-      expect(contents).not.toMatch(/lib\/bridge\/http\/(guest|threads|configuration)/)
-      expect(contents).not.toMatch(/['"]\/(guest-api|api)\//)
-      expect(contents).not.toContain('isGuest')
+      expect(contents).not.toMatch(/lib\/bridge\/http\/(threads|configuration)/)
+      expect(contents).not.toMatch(/['"]\/api\//)
     }
   })
 
-  it('wires each runtime to its own Thread client and capability contract', () => {
+  it('wires the Owner adapter to the Owner Thread client', () => {
     expect(ownerComposerAdapter.threads).toBe(ownerThreadClient)
     expect(ownerComposerAdapter.capabilities.availableModels).toEqual([])
-    expect(ownerComposerAdapter.acceptedTurnIdIsNative).toBe(true)
-    expect(guestComposerAdapter.threads).toBe(guestThreadClient)
-    expect(guestComposerAdapter.capabilities.availableModels).toEqual([])
-    expect(guestComposerAdapter.acceptedTurnIdIsNative).toBe(false)
-  })
-
-  it('prevents runtime adapters from importing the other runtime transport', () => {
-    const owner = source('./adapters/owner-composer-adapter.ts')
-    const guest = source('./adapters/guest-composer-adapter.ts')
-
-    expect(owner).not.toMatch(/http\/guest|guestThreadClient|\/guest-api\//)
-    expect(guest).not.toMatch(/http\/threads|http\/configuration|ownerThreadClient|['"]\/api\//)
   })
 })

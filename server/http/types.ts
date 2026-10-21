@@ -2,7 +2,6 @@ import type { Auth } from '../auth.js'
 import type { ServerConfig } from '../config.js'
 import type { NativeCodexMessage } from '../codex/native-protocol.js'
 import type { ThreadRuntimeStatus } from '../codex/event-hub.js'
-import type { GuestService } from '../guest-service.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { RuntimeModel } from '../codex/model-catalog.js'
 
@@ -79,7 +78,6 @@ export type AppDependencies = {
   auth: Auth
   workspace: WorkspaceService & { hasOwner?: () => Promise<boolean> }
   codex: CodexBridge
-  guest?: GuestService
 }
 
 export type RouteContext = {

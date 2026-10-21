@@ -1,6 +1,5 @@
 import { Route, Routes } from 'react-router'
 import {
-  AdminRoute,
   CandidateRoute,
   LoginRoute,
   RootRoute,
@@ -20,7 +19,6 @@ export function AppRouter() {
       <Route path="/" element={<RootRoute />} />
       {startupPageEnabled ? <Route path="/startup" element={<StartupRoute />} /> : null}
       <Route path="/login" element={<LoginRoute />} />
-      <Route path="/admin/*" element={<AdminRoute />} />
       <Route path="/app/*" element={<CandidateRoute />} />
       <Route path="/403" element={<ForbiddenPage />} />
       <Route path="/500" element={<ServerErrorPage />} />

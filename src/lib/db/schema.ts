@@ -1,5 +1,4 @@
 import { relations } from 'drizzle-orm/_relations'
-import { sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
   pgTable,
@@ -10,33 +9,23 @@ import {
   integer,
   jsonb,
   uniqueIndex,
-  check,
 } from 'drizzle-orm/pg-core'
 
-export const user = pgTable(
-  'user',
-  {
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    email: text('email').notNull().unique(),
-    emailVerified: boolean('email_verified').default(false).notNull(),
-    image: text('image'),
-    kind: text('kind').default('owner').notNull(),
-    isAnonymous: boolean('is_anonymous').default(false),
-    currentCredentialId: text('current_credential_id').references(
-      (): AnyPgColumn => credential.id,
-      {
-        onDelete: 'set null',
-      },
-    ),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at')
-      .defaultNow()
-      .$onUpdate(() => /* @__PURE__ */ new Date())
-      .notNull(),
-  },
-  (table) => [check('user_kind_check', sql`${table.kind} in ('owner', 'guest', 'admin')`)],
-)
+export const user = pgTable('user', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(),
+  emailVerified: boolean('email_verified').default(false).notNull(),
+  image: text('image'),
+  currentCredentialId: text('current_credential_id').references((): AnyPgColumn => credential.id, {
+    onDelete: 'set null',
+  }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at')
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+})
 
 export const session = pgTable(
   'session',
@@ -149,107 +138,6 @@ export const codexEvent = pgTable(
     index('codex_event_user_id_thread_id_id_idx').on(table.userId, table.threadId, table.id),
   ],
 )
-
-export const guest = pgTable(
-  'guest',
-  {
-    id: text('id').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' })
-      .unique(),
-    leaseSecretHash: text('lease_secret_hash').unique(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    expiresAt: timestamp('expires_at').notNull(),
-    deletedAt: timestamp('deleted_at'),
-  },
-  (table) => [
-    index('guest_user_id_idx').on(table.userId),
-    index('guest_expires_at_idx').on(table.expiresAt),
-    index('guest_deleted_at_idx').on(table.deletedAt),
-  ],
-)
-
-export const guestThread = pgTable(
-  'guest_thread',
-  {
-    id: text('id').primaryKey(),
-    guestId: text('guest_id')
-      .notNull()
-      .references(() => guest.id, { onDelete: 'cascade' }),
-    nativeThreadId: text('native_thread_id').notNull(),
-    title: text('title').notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
-    deletedAt: timestamp('deleted_at'),
-  },
-  (table) => [
-    index('guest_thread_guest_id_idx').on(table.guestId),
-    uniqueIndex('guest_thread_native_id_unique').on(table.nativeThreadId),
-  ],
-)
-
-export const guestEvent = pgTable(
-  'guest_event',
-  {
-    id: integer('id').primaryKey(),
-    guestId: text('guest_id')
-      .notNull()
-      .references(() => guest.id, { onDelete: 'cascade' }),
-    guestThreadId: text('guest_thread_id'),
-    message: jsonb('message').$type<Record<string, unknown>>().notNull(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-  },
-  (table) => [
-    index('guest_event_guest_id_idx').on(table.guestId),
-    index('guest_event_thread_id_idx').on(table.guestThreadId, table.id),
-  ],
-)
-
-export const guestTurnJob = pgTable(
-  'guest_turn_job',
-  {
-    id: text('id').primaryKey(),
-    guestId: text('guest_id')
-      .notNull()
-      .references(() => guest.id, { onDelete: 'cascade' }),
-    guestThreadId: text('guest_thread_id')
-      .notNull()
-      .references(() => guestThread.id, { onDelete: 'cascade' }),
-    nativeTurnId: text('native_turn_id'),
-    inputText: text('input_text'),
-    model: text('model'),
-    reasoningEffort: text('reasoning_effort'),
-    collaborationMode: text('collaboration_mode').notNull().default('plan'),
-    skillHandles: jsonb('skill_handles').$type<string[]>().notNull().default([]),
-    status: text('status').notNull(),
-    usageDate: text('usage_date').notNull(),
-    actualTokens: integer('actual_tokens').notNull().default(0),
-    error: text('error'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
-  },
-  (table) => [
-    index('guest_turn_job_status_idx').on(table.status, table.createdAt),
-    index('guest_turn_job_guest_idx').on(table.guestId, table.status),
-  ],
-)
-
-export const guestDailyUsage = pgTable(
-  'guest_daily_usage',
-  {
-    guestId: text('guest_id')
-      .notNull()
-      .references(() => guest.id, { onDelete: 'cascade' }),
-    usageDate: text('usage_date').notNull(),
-    usedTokens: integer('used_tokens').notNull().default(0),
-  },
-  (table) => [uniqueIndex('guest_daily_usage_unique').on(table.guestId, table.usageDate)],
-)
-
-export const guestGlobalDailyUsage = pgTable('guest_global_daily_usage', {
-  usageDate: text('usage_date').primaryKey(),
-  usedTokens: integer('used_tokens').notNull().default(0),
-})
 
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),

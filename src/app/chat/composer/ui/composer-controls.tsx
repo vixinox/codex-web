@@ -33,7 +33,7 @@ const effortDisplayName = (value: string) =>
 const ACCESS_LABELS = {
   full: 'Full access',
   readOnly: 'Read-only',
-  workspaceWrite: 'Guest workspace',
+  workspaceWrite: 'Workspace write',
 } as const
 
 export type ComposerControlsProps = {

@@ -15,7 +15,6 @@ import type { ComposerRuntimeAdapter } from './composer-adapter'
 export const ownerComposerAdapter: ComposerRuntimeAdapter = {
   capabilities: EMPTY_OWNER_COMPOSER_CAPABILITIES,
   threads: ownerThreadClient,
-  acceptedTurnIdIsNative: true,
   selection: {
     read: (userId, target) =>
       target.threadId

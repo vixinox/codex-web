@@ -8,7 +8,7 @@ export function SettingsSidebar({
   onGeneral,
   onArchived,
   archivedDisabled = false,
-  archivedDisabledMessage = 'Archived chats are unavailable in Guest Workspace.',
+  archivedDisabledMessage = 'Archived chats are unavailable.',
   showArchived = true,
 }: {
   archivedActive: boolean

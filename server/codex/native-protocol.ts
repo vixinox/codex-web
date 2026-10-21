@@ -18,19 +18,20 @@ export function projectNativeMessage(value: unknown): NativeProjectionResult {
   const threadId = messageThreadId(p)
   const turnId = text(p.turnId)
   let params: Record<string, unknown> | undefined
-  if (value.method === 'thread/status/changed')
+  if (
+    value.method === 'thread/archived' ||
+    value.method === 'thread/unarchived' ||
+    value.method === 'thread/closed' ||
+    value.method === 'thread/deleted'
+  ) {
+    if (!threadId) return invalid()
+    params = compact({ threadId })
+  } else if (value.method === 'thread/status/changed')
     params = compact({ threadId, status: status(p.status) })
   else if (value.method === 'thread/started')
     params = compact({ threadId, thread: projectNativeThread(p.thread) })
   else if (value.method === 'thread/tokenUsage/updated')
     params = compact({ threadId, turnId, tokenUsage: tokenUsage(p.tokenUsage) })
-  else if (value.method === 'webcodex/guest-token-limit')
-    params = compact({
-      threadId,
-      turnId,
-      maxTokens: positiveInteger(p.maxTokens),
-      actualTokens: nonNegativeInteger(p.actualTokens),
-    })
   else if (value.method === 'thread/settings/updated') {
     const settings = record(p.threadSettings) ? p.threadSettings : {}
     params = compact({
@@ -471,12 +472,6 @@ function text(value: unknown) {
 }
 function numeric(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-function positiveInteger(value: unknown) {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
-}
-function nonNegativeInteger(value: unknown) {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 function bool(value: unknown) {
   return typeof value === 'boolean' ? value : undefined

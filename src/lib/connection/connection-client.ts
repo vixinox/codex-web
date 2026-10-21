@@ -13,8 +13,7 @@ function isMetadata(value: unknown): value is InstanceMetadata {
     typeof body.protocolVersion === 'string' &&
     typeof body.minClientVersion === 'string' &&
     Array.isArray(body.capabilities) &&
-    body.capabilities.every((item) => typeof item === 'string') &&
-    (body.profile === 'owner' || body.profile === 'guest')
+    body.capabilities.every((item) => typeof item === 'string')
   )
 }
 
@@ -28,7 +27,7 @@ export async function checkCurrentConnection(): Promise<ConnectionProfile> {
       baseUrl,
       displayName: 'Current instance',
       status: response.status >= 500 ? 'offline' : 'needs_login',
-      capabilities: { mobile: false, notifications: false, fileWorkspace: false, guestMode: false },
+      capabilities: { mobile: false, notifications: false, fileWorkspace: false },
       errorCode: response.status >= 500 ? 'offline' : 'unavailable',
     }
     return profile
@@ -38,9 +37,9 @@ export async function checkCurrentConnection(): Promise<ConnectionProfile> {
   const status = assessMetadata(body)
   return {
     id: 'current',
-    kind: body.profile === 'guest' ? 'guest' : 'self_hosted',
+    kind: 'self_hosted',
     baseUrl,
-    displayName: body.profile === 'guest' ? 'Guest instance' : 'Current instance',
+    displayName: 'Current instance',
     status,
     capabilities: connectionCapabilities(body),
     metadata: body,

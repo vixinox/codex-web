@@ -365,7 +365,7 @@ export function useComposerController({
           accepted: true,
           projectId: acceptedTurn.projectId,
           nativeThreadId: acceptedTurn.threadId,
-          ...(adapter.acceptedTurnIdIsNative ? { nativeTurnId: acceptedTurn.turnId } : {}),
+          nativeTurnId: acceptedTurn.turnId,
         }
         if (generation !== targetGeneration.current) return
         onPendingChange?.(
@@ -437,7 +437,7 @@ export function useComposerController({
 
   const stop = React.useCallback(async () => {
     const current = hostRef.current
-    // Composition-owned cancel (e.g. the Guest lease) clears its own active Turn
+    // Composition-owned cancel clears its own active Turn
     // even when cancel fails; a route-owned cancel only refreshes on success.
     if (current.cancelActiveTurn) {
       try {

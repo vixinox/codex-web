@@ -5,8 +5,7 @@ const metadata = {
   product: 'codex-web' as const,
   protocolVersion: '2026-01',
   minClientVersion: '0.0.1',
-  capabilities: ['threads', 'turns', 'sse', 'pwa', 'workspace', 'guest'],
-  profile: 'guest' as const,
+  capabilities: ['threads', 'turns', 'sse', 'pwa', 'workspace'],
 }
 
 describe('connection metadata', () => {
@@ -16,7 +15,6 @@ describe('connection metadata', () => {
       mobile: true,
       notifications: false,
       fileWorkspace: true,
-      guestMode: true,
     })
   })
 

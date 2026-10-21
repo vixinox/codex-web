@@ -3,11 +3,8 @@ import test from 'node:test'
 
 import type { Auth } from './auth.js'
 import { buildOwnerServer } from './owner/app.js'
-import { buildGuestServer } from './guest/app.js'
 import { createSseWriter, resolveEventCursor } from './http/common.js'
 import type { ServerConfig } from './config.js'
-import type { GuestService } from './guest-service.js'
-import type { Database } from './database.js'
 import { EventHub } from './codex/event-hub.js'
 import type { WorkspaceService } from './workspace.js'
 
@@ -615,21 +612,6 @@ test('does not expose authentication handler failures', async (context) => {
     },
   })
   assert.doesNotMatch(response.body, /private database detail/)
-})
-
-test('guest profile forwards sign-out and its cookie clearing response', async (context) => {
-  const app = await buildGuestServer(
-    { ...config, mode: 'guest' },
-    {} as GuestService,
-    fakeAuth(),
-    {} as Database,
-  )
-  context.after(() => app.close())
-
-  const response = await app.inject({ method: 'POST', url: '/api/auth/sign-out' })
-  assert.equal(response.statusCode, 201)
-  assert.deepEqual(response.json(), { path: '/api/auth/sign-out' })
-  assert.match(String(response.headers['set-cookie']), /session=test/)
 })
 
 test('starts a Project thread and its first Turn through one authenticated command', async (context) => {

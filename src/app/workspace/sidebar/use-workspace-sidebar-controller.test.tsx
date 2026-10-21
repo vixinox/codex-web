@@ -291,6 +291,34 @@ describe('useWorkspaceSidebarController optimistic mutations', () => {
 
     await waitFor(() => expect(bridge.fetchThreads).toHaveBeenCalledTimes(4))
   })
+
+  it('restores an unarchived thread to the sidebar from the native lifecycle event', async () => {
+    let rootThreads: Array<{
+      id: string
+      projectId: null
+      title: string
+      status: 'idle'
+      updatedAt: number
+    }> = []
+    bridge.fetchThreads.mockImplementation((projectId: string | null) =>
+      Promise.resolve(projectId === null ? rootThreads : []),
+    )
+    const { result } = renderHook(() => useWorkspaceSidebarController(runtime))
+    await waitFor(() => expect(rootThreadIds(result.current.model)).toEqual([]))
+
+    rootThreads = [
+      {
+        id: 'restored-thread',
+        projectId: null,
+        title: 'Restored chat',
+        status: 'idle',
+        updatedAt: 2,
+      },
+    ]
+    act(() => eventSource.current?.onEvent(new Event('thread/unarchived')))
+
+    await waitFor(() => expect(rootThreadIds(result.current.model)).toEqual(['restored-thread']))
+  })
 })
 
 function rootThreadIds(model: ReturnType<typeof useWorkspaceSidebarController>['model']) {

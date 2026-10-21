@@ -117,7 +117,7 @@ export function ComposerInput({
       ) : null}
       <div
         className={cn(
-          'flex w-full max-w-2xl xl:max-w-none min-w-0 flex-col rounded-3xl bg-app-surface-raised px-3 pt-3 pb-2',
+          'flex w-full max-w-2xl min-w-0 flex-col rounded-3xl bg-app-surface-raised px-3 pt-3 pb-2 xl:max-w-none',
           className,
         )}
       >

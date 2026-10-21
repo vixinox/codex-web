@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  EMPTY_GUEST_COMPOSER_CAPABILITIES,
   EMPTY_OWNER_COMPOSER_CAPABILITIES,
   composerCapabilitiesFromModels,
 } from './model/composer-capabilities'
@@ -11,21 +10,10 @@ const owner = composerCapabilitiesFromModels(
   'full',
   { attachments: true, contextUsage: true },
 )
-const guest = EMPTY_GUEST_COMPOSER_CAPABILITIES
 describe('composer capability config', () => {
-  it('keeps the Guest capability access mode fixed to its runtime boundary', () => {
-    expect(guest.access).toBe('workspaceWrite')
-  })
-
-  it('keeps Guest attachments isolated until runtime capabilities load', () => {
-    expect(guest.attachments).toBe(false)
-    expect(guest.availableModels).toEqual([])
-    expect(guest.availableEfforts).toEqual([])
-  })
-
   it('keeps every configured access and effort value within the shared unions', () => {
     const accessValues = new Set(['full', 'readOnly', 'workspaceWrite'])
-    for (const capability of [guest, EMPTY_OWNER_COMPOSER_CAPABILITIES, owner]) {
+    for (const capability of [EMPTY_OWNER_COMPOSER_CAPABILITIES, owner]) {
       expect(Object.keys(capability.modelDisplayNames).length).toBe(
         capability.availableModels.length,
       )

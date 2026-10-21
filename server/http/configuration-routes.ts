@@ -97,8 +97,7 @@ export async function registerConfigurationRoutes(
     if (body.credentialId !== undefined && !safeId(body.credentialId))
       return reply.status(400).send(apiError('INVALID_CREDENTIAL', 'Invalid credentialId'))
     const credentialId =
-      (body.credentialId) ??
-      (await dependencies.workspace.getCurrentCredentialId(session.user.id))
+      body.credentialId ?? (await dependencies.workspace.getCurrentCredentialId(session.user.id))
     if (!credentialId)
       return reply
         .status(409)

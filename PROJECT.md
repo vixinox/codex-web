@@ -12,19 +12,13 @@
 - Project 是 bridge 层的逻辑分组。Project/Thread/文件访问和写操作必须执行当前用户及受控根目录归属校验。
 - 用户级 `currentCredentialId` 是持久化的默认 Credential；runtime 的 `activeCredentialId` 只表示当前进程实际使用项。Credential 不绑定 Thread 或 Turn。
 - Thread 详情读取 Codex 原生 `thread/read { includeTurns: true }`；服务端按锁定版本白名单投影后才返回浏览器。EventHub 发布和回放使用同一 SSE 投影。
-- Thread model/reasoning effort 只通过固定产品白名单投影到浏览器；`thread/settings/updated` 不透传原始 settings、路径、sandbox 或 provider 字段，并作为可回放 Thread 事件保持 Composer 真值同步。
+- Thread model/reasoning effort 仅在满足安全标识符格式时投影到浏览器；创建 Thread 或 Turn 时按当前 App Server 模型目录校验支持的组合。`thread/settings/updated` 不透传原始 settings、路径、sandbox 或 provider 字段，并作为可回放 Thread 事件保持 Composer 真值同步。
 - 前端遵循“原生 DTO → native reducer → presentation model → renderer”的单向路径。页面和 renderer 只依赖 UI-facing model；原生 DTO 只存在于 transport、reducer 和 adapter。
-- Owner 与 Guest 的 Thread/Turn 前端生命周期通过共享 Thread client interface 和独立 adapter 收敛；availability、snapshot/status 与事件同步语义位于共享 seam，Owner `/api/*` 与 Guest `/guest-api/*`、认证、runtime 和权限策略仍严格隔离。
-- Guest accepted Turn ID 是 queue/job 取消句柄，不是 App Server native transcript Turn ID；共享 pending lifecycle 通过 adapter capability 区分两类 identity，避免 job ID 污染 transcript reconciliation。
 - App Server 未物化到 Thread 快照的命令与用户问答由 EventHub 安全投影后持久化并通过 `historyEvents` 重放；问答答案使用 bridge 自有事件补足 `serverRequest/resolved`，由 native reducer 统一生成 transcript summary。
 - 前端目录按 `app + lib` 组织：启动与路由位于 `src/app/entry`，组合层位于 `src/app/composition`，Chat/Workspace/Settings 按领域分别维护 application、domain 与 UI modules，跨运行时基础设施位于 `src/lib`，`src/components/ui` 保持 shadcn primitives。
 - `/app/*` 是唯一真实应用入口；不提供旧 `/ui/*`、`/preview/*` 或离线工作台兼容路由。
-- Owner 与 Guest 共用单一 Vite 入口和构建产物：`/startup` 为静态启动页，`/` 和 `/login` 按 Better Auth session 分流到 `/app` 或 Guest profile 下的 `/admin`。Guest 使用 Better Auth anonymous session/cookie，并通过独立的 24 小时 lease 管理 workspace、quota、任务和 reset；lease 不是浏览器身份凭据。
-- Owner 与 Guest 使用固定独立进程入口 `pnpm server:owner` 和 `pnpm server:guest`，不设置运行模式变量，也不存在 combined server，后端 profile 强制执行隔离。
-- 应用仅支持本地回环部署：Owner 和 Guest 由宿主机上的独立进程提供，浏览器通过本地 Fastify bridge 访问；Docker Compose 仅提供绑定 `127.0.0.1:5432` 的 Postgres 开发数据库，不承载应用、静态资源或反向代理。
-- Guest runtime 在 Fastify 监听前自动启动、以独立环境变量 Credential 和 `CODEX_HOME` 运行，API-key 验证或 Windows sandbox readiness 不是 `ready` 时服务必须退出；Owner runtime 仍保持显式启动。每个 lease 分配一个从空目录创建的私有临时 workspace，Reset/到期撤销 lease、停止任务、软删除记录并删除该 workspace。
-- Guest 隔离以 fail-closed 为原则：skills 镜像拒绝 symlink/reparse point、路径逃逸和非普通文件；Thread 固定 `workspace-write`，Turn 固定协议 `workspaceWrite` writable root 与 `networkAccess: false`；Guest 子进程不继承 Owner 进程环境。Windows 额外要求 `windowsSandbox/readiness=ready`，Linux 使用受管 runtime 自带的 `bwrap`。浏览器不接收 native Thread ID、Credential、宿主路径或通用命令/文件系统接口。
-- Guest runtime contract 额外公开经过正整数校验的 `modelContextWindow`（来自 `GUEST_MODEL_CONTEXT_WINDOW`，默认 256000），仅作为 Composer context window 的 Guest fallback，不与每日 quota 或 `maxTokensPerTurn` 混用。
+- Owner 是唯一执行环境和用户工作区；浏览器通过 loopback Fastify bridge 访问本地 Owner。Guest 匿名执行、lease、quota 和管理工作流已完全移除，不作为兼容模式。
+- 远程能力采用最小 pnpm monorepo 扩展：现有根 package 保留 Vite、Owner 和本地数据库；新增 `apps/relay` 与纯 TypeScript `packages/remote-protocol`，不迁移现有应用目录。Relay 首版使用 Hono + Bun，作为独立部署单元；Bun 专属 HTTP/WebSocket 能力限制在 Relay 启动适配层，共享协议和 Relay 核心规则保持运行时无关。Connector 集成在 Owner Fastify 进程内，以独立模块维护协议、权限和命令队列，不作为额外本地进程运行。
 
 ## 架构风险
 
@@ -33,5 +27,6 @@
 
 ## 不可逆决策
 
+- 产品前期只维护一个认证 Owner 用户模型；Guest 匿名工作区及其限时试用能力已干净删除，不保留双运行时、双 API、lease/quota 或兼容入口。公开展示和试用方式待产品稳定后另行决定。
 - 锁定版本的 App Server schema 和原始资料位于 [`docs/vendor/`](docs/vendor/)。
 - 当前 bridge 不发送未验证的 `readOnlyAccess` 或 read-root 格式；runtime 协议能力以下载后的 JSON-RPC smoke test 为准。

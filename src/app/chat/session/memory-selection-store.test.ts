@@ -10,26 +10,26 @@ describe('memory Composer selection store', () => {
     const threadB = { projectId: null, threadId: 'thread-b' }
     const newChat = { projectId: null, threadId: null }
 
-    store.write('guest-1', threadA, {
+    store.write('user-1', threadA, {
       model: 'gpt-5.6-terra',
       effort: 'low',
       collaborationMode: 'plan',
     })
 
-    expect(store.read('guest-1', threadA)).toMatchObject({ model: 'gpt-5.6-terra' })
-    expect(store.read('guest-1', threadB)).toEqual(DEFAULT_COMPOSER_PREFERENCES)
-    expect(store.read('guest-1', newChat)).toEqual(DEFAULT_COMPOSER_PREFERENCES)
+    expect(store.read('user-1', threadA)).toMatchObject({ model: 'gpt-5.6-terra' })
+    expect(store.read('user-1', threadB)).toEqual(DEFAULT_COMPOSER_PREFERENCES)
+    expect(store.read('user-1', newChat)).toEqual(DEFAULT_COMPOSER_PREFERENCES)
   })
 
-  it('does not carry selections into a new Guest lease', () => {
+  it('does not carry selections between user identities', () => {
     const store = createMemorySelectionStore()
     const target = { projectId: null, threadId: null }
-    store.write('guest-old', target, {
+    store.write('user-old', target, {
       model: 'gpt-5.5',
       effort: 'medium',
       collaborationMode: 'default',
     })
 
-    expect(store.read('guest-new', target)).toEqual(DEFAULT_COMPOSER_PREFERENCES)
+    expect(store.read('user-new', target)).toEqual(DEFAULT_COMPOSER_PREFERENCES)
   })
 })

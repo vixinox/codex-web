@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -7,6 +7,8 @@ const repoRoot = runGit(['rev-parse', '--show-toplevel']).trim()
 const stagedFiles = parseStagedFiles(
   runGit(['diff', '--cached', '--name-status', '--diff-filter=ACMR', '-z']),
 )
+const stagedPaths = parseGitPaths(runGit(['ls-files', '-z']))
+const baselinePaths = parseTreePaths(runGit(['ls-tree', '-r', '--name-only', '-z', 'HEAD']))
 
 if (stagedFiles.length === 0) process.exit(0)
 
@@ -15,18 +17,19 @@ const stagedRoot = join(temporaryRoot, 'staged')
 const baselineRoot = join(temporaryRoot, 'baseline')
 
 try {
-  const stagedSnapshotFiles = writeSnapshot(stagedRoot, stagedFiles, ({ path }) =>
-    readGitBlob(`:${path}`),
-  )
-  const baselineFiles = writeSnapshot(baselineRoot, stagedFiles, ({ baselinePath }) => {
-    if (!baselinePath) return undefined
+  writeSnapshot(stagedRoot, stagedPaths, (path) => readIndexBlob(path))
+  writeSnapshot(baselineRoot, baselinePaths, (path) => readHeadBlob(path))
+  linkNodeModules(stagedRoot)
+  linkNodeModules(baselineRoot)
+  const stagedSnapshotFiles = stagedFiles
+    .map(({ path }) => resolve(stagedRoot, path))
+    .filter(existsSync)
+  const baselineFiles = stagedFiles
+    .map(({ baselinePath }) => (baselinePath ? resolve(baselineRoot, baselinePath) : undefined))
+    .filter((path) => path !== undefined && existsSync(path))
 
-    const revision = `HEAD:${baselinePath}`
-    return gitSucceeds(['cat-file', '-e', revision]) ? readGitBlob(revision) : undefined
-  })
-
-  const stagedDiagnostics = lint(stagedSnapshotFiles)
-  const baselineWarnings = countWarnings(lint(baselineFiles))
+  const stagedDiagnostics = lint(stagedSnapshotFiles, stagedRoot)
+  const baselineWarnings = countWarnings(lint(baselineFiles, baselineRoot))
   const newWarnings = []
   const diagnostics = []
 
@@ -54,20 +57,21 @@ try {
   rmSync(temporaryRoot, { force: true, recursive: true })
 }
 
-function writeSnapshot(snapshotRoot, files, readBlob) {
+function writeSnapshot(snapshotRoot, paths, readBlob) {
+  mkdirSync(snapshotRoot, { recursive: true })
   const snapshotFiles = []
 
-  for (const file of files) {
-    const content = readBlob(file)
-    if (!content) continue
+  for (const path of paths) {
+    const content = readBlob(path)
+    if (content === undefined) continue
 
-    const destination = resolve(snapshotRoot, file.path)
+    const destination = resolve(snapshotRoot, path)
     if (
       !destination.startsWith(`${snapshotRoot}\\`) &&
       !destination.startsWith(`${snapshotRoot}/`)
     ) {
       throw new Error(
-        `Refusing to write a staged path outside the temporary directory: ${file.path}`,
+        `Refusing to write a staged path outside the temporary directory: ${path}`,
       )
     }
 
@@ -79,7 +83,15 @@ function writeSnapshot(snapshotRoot, files, readBlob) {
   return snapshotFiles
 }
 
-function lint(files) {
+function linkNodeModules(snapshotRoot) {
+  symlinkSync(
+    join(repoRoot, 'node_modules'),
+    join(snapshotRoot, 'node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  )
+}
+
+function lint(files, snapshotRoot) {
   if (files.length === 0) return []
 
   const result = spawnSync(
@@ -88,9 +100,9 @@ function lint(files) {
       join(repoRoot, 'node_modules', 'oxlint', 'bin', 'oxlint'),
       '--format=json',
       '--config',
-      join(repoRoot, '.oxlintrc.json'),
+      join(snapshotRoot, '.oxlintrc.json'),
       '--tsconfig',
-      join(repoRoot, 'tsconfig.json'),
+      join(snapshotRoot, 'tsconfig.json'),
       '--no-error-on-unmatched-pattern',
       ...files,
     ],
@@ -149,6 +161,16 @@ function readGitBlob(revision) {
   return result.stdout
 }
 
+function readIndexBlob(path) {
+  const revision = `:${path}`
+  return gitSucceeds(['cat-file', '-e', revision]) ? readGitBlob(revision) : undefined
+}
+
+function readHeadBlob(path) {
+  const revision = `HEAD:${path}`
+  return gitSucceeds(['cat-file', '-e', revision]) ? readGitBlob(revision) : undefined
+}
+
 function runGit(args) {
   const result = spawnSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
 
@@ -184,4 +206,12 @@ function parseStagedFiles(output) {
   }
 
   return files
+}
+
+function parseGitPaths(output) {
+  return output.split('\0').filter(Boolean)
+}
+
+function parseTreePaths(output) {
+  return output.split('\0').filter(Boolean).map((entry) => entry.slice(entry.indexOf('\t') + 1))
 }

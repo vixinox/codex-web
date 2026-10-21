@@ -10,7 +10,7 @@ import { log, safeError } from '../logger.js'
 import { createWorkspaceService } from '../workspace.js'
 import { buildOwnerServer } from './app.js'
 
-const config = loadServerConfig('owner')
+const config = loadServerConfig()
 const { db, pool } = createDatabase(config)
 
 try {

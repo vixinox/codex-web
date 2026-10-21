@@ -17,7 +17,7 @@ const owner = composerCapabilitiesFromModels(
   'full',
   { attachments: true, contextUsage: true },
 )
-const guest = composerCapabilitiesFromModels(
+const workspaceWrite = composerCapabilitiesFromModels(
   [{ id: 'gpt-5.6-terra', displayName: 'Terra', reasoningEfforts: ['low', 'medium'] }],
   'workspaceWrite',
   { attachments: false, contextUsage: true },
@@ -37,11 +37,11 @@ describe('Thread Composer selection sync', () => {
 
   it('keeps local values when the Thread fields are missing or unavailable', () => {
     expect(syncComposerPreferences(current, undefined, owner)).toEqual(current)
-    expect(syncComposerPreferences(current, { reasoningEffort: 'high' }, guest)).toEqual({
+    expect(syncComposerPreferences(current, { reasoningEffort: 'high' }, workspaceWrite)).toEqual({
       ...current,
       model: 'gpt-5.6-terra',
     })
-    expect(syncComposerPreferences(current, { model: 'gpt-5.6-sol' }, guest)).toEqual({
+    expect(syncComposerPreferences(current, { model: 'gpt-5.6-sol' }, workspaceWrite)).toEqual({
       ...current,
       model: 'gpt-5.6-terra',
     })

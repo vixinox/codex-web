@@ -16,9 +16,6 @@ export type ComposerUsageView = {
  * Thread snapshot usage to Composer view model. This is the single mapping the
  * Composer usage display consumes: the snapshot owns `tokenUsage`, the runtime
  * owns `contextWindow`, and a not-yet-ready runtime exposes no denominator.
- *
- * Daily Guest quota and `maxTokensPerTurn` are deliberately not inputs here:
- * neither is a context window.
  */
 export function toComposerUsageView({
   thread,

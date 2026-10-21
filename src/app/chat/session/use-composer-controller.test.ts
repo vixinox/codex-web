@@ -185,31 +185,6 @@ describe('shared composer controller', () => {
     await waitFor(() => expect(result.current.viewModel.selectedSkills).toEqual([]))
   })
 
-  it('does not treat an opaque accepted Turn handle as a native transcript id', async () => {
-    const adapter = createAdapter({ acceptedTurnIdIsNative: false })
-    const onPendingChange = vi.fn()
-    const { result } = renderHook(() =>
-      useComposerController({
-        userId: 'user-1',
-        adapter,
-        host: {
-          target: { projectId: null, threadId: 'thread-1' },
-          onTurnAccepted: vi.fn(),
-        },
-        runtimeReady: true,
-        working: false,
-        onPendingChange,
-      }),
-    )
-
-    await act(async () => result.current.actions.submit('Continue.'))
-
-    expect(onPendingChange).toHaveBeenLastCalledWith(
-      expect.not.objectContaining({ nativeTurnId: expect.anything() }),
-      'user:user-1\0thread:<root>\0thread-1',
-    )
-  })
-
   it('cancels the working Turn through the composition when it owns the active Turn', async () => {
     const adapter = createAdapter()
     const cancelActiveTurn = vi.fn(async () => undefined)
@@ -362,7 +337,8 @@ describe('shared composer controller', () => {
       result.current.actions.setEffort('high')
     })
 
-    expect(adapter.selection?.write).toHaveBeenLastCalledWith(
+    const selectionWrite = adapter.selection?.write
+    expect(selectionWrite).toHaveBeenLastCalledWith(
       'user-1',
       { projectId: null, threadId: 'thread-1' },
       { model: 'gpt-5.5', effort: 'high', collaborationMode: 'default' },
@@ -424,7 +400,8 @@ describe('shared composer controller', () => {
     rerender({ model: 'gpt-5.6-terra' as const })
 
     await waitFor(() => expect(result.current.viewModel.model).toBe('gpt-5.6-terra'))
-    expect(adapter.selection?.write).toHaveBeenLastCalledWith(
+    const selectionWrite = adapter.selection?.write
+    expect(selectionWrite).toHaveBeenLastCalledWith(
       'user-1',
       { projectId: null, threadId: 'thread-1' },
       { model: 'gpt-5.6-terra', effort: 'medium', collaborationMode: 'default' },

@@ -1,9 +1,8 @@
 import type { ChatTokenUsage } from '@/app/chat/model/types'
 
 /**
- * Composer usage describes the current Thread snapshot only. Guest capacity
- * and Owner context-window configuration are separate values and are never
- * derived from these numbers.
+ * Composer usage describes the current Thread snapshot only. Owner context-
+ * window configuration is separate and is never derived from these numbers.
  */
 export const EMPTY_COMPOSER_USAGE: ChatTokenUsage = {
   modelContextWindow: null,

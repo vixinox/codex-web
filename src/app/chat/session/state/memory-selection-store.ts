@@ -3,9 +3,8 @@ import { DEFAULT_COMPOSER_PREFERENCES } from '@/app/chat/composer/state/composer
 import type { ComposerSelectionStore, ComposerSelectionTarget } from '../adapters/composer-adapter'
 
 /**
- * In-memory selection for runtimes with no durable per-Thread storage, such as
- * a Guest lease. Scopes are keyed like the durable store, so a new lease (new
- * `userId`) starts from defaults and New Chat cannot inherit a Thread truth.
+ * In-memory selection for runtimes without durable per-Thread storage. Scopes
+ * are keyed by user and Thread so New Chat cannot inherit a Thread selection.
  */
 export function createMemorySelectionStore(
   initial: ComposerPreferences = DEFAULT_COMPOSER_PREFERENCES,

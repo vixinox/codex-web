@@ -2,24 +2,12 @@ import type { FastifyInstance } from 'fastify'
 
 import type { RouteContext } from './types.js'
 
-export async function registerHealthRoutes(
-  app: FastifyInstance,
-  { config, dependencies }: RouteContext,
-) {
-  app.get('/runtime-profile', async () => ({ profile: config.mode }))
+export async function registerHealthRoutes(app: FastifyInstance, { dependencies }: RouteContext) {
   app.get('/metadata', async () => ({
     product: 'codex-web',
     protocolVersion: '2026-01',
     minClientVersion: '0.0.1',
-    capabilities: [
-      'threads',
-      'turns',
-      'sse',
-      'pwa',
-      'workspace',
-      ...(config.guest ? ['guest'] : []),
-    ],
-    profile: 'owner',
+    capabilities: ['threads', 'turns', 'sse', 'pwa', 'workspace'],
   }))
   app.get('/health', async () => ({
     status: 'ok',

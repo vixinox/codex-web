@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 export type ServerConfig = {
-  mode: 'owner' | 'guest'
   host: string
   port: number
   databaseUrl: string
@@ -19,49 +18,11 @@ export type ServerConfig = {
   allowedOutboundSchemes: string[]
   allowedOutboundHosts: string[]
   requireDangerousAccessConfirmation?: boolean
-  guest?: GuestConfig
-}
-
-export type GuestConfig = {
-  provider: string
-  baseUrl: string
-  apiKey: string
-  skillRoots: string[]
-  leaseTtlHours: number
-  globalDailyTokenLimit: number
-  perGuestDailyTokenLimit: number
-  maxActiveThreads: number
-  maxQueue: number
-  maxTokensPerTurn: number
-  modelContextWindow: number
-  allowedModels: string[]
-  allowedReasoningEfforts: string[]
-}
-
-function csv(value: string | undefined) {
-  return (value ?? '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
 }
 
 function positiveInt(value: string | undefined, fallback: number) {
   const parsed = Number(value ?? fallback)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function positiveSafeInt(name: string, value: string | undefined, fallback: number) {
-  if (value === undefined || value.trim() === '') return fallback
-  const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed <= 0)
-    throw new Error(`${name} must be a positive safe integer`)
-  return parsed
-}
-
-function fixedGuestLeaseTtl(value: string | undefined) {
-  if (value === undefined || value.trim() === '') return 24
-  if (Number(value) !== 24) throw new Error('GUEST_LEASE_TTL_HOURS must be 24')
-  return 24
 }
 
 function required(name: string, value: string | undefined): string {
@@ -101,7 +62,7 @@ function credentialEncryptionKey(dataRoot: string): string {
   return generated
 }
 
-export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
+export function loadServerConfig(): ServerConfig {
   const authSecret = process.env.BETTER_AUTH_SECRET?.trim() || ''
   if (authSecret.length < 32) throw new Error('BETTER_AUTH_SECRET must be at least 32 characters')
 
@@ -122,46 +83,7 @@ export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
     .filter(Boolean)
   if (process.env.NODE_ENV === 'production' && allowedOutboundHosts.includes('*'))
     throw new Error('CODEX_ALLOWED_OUTBOUND_HOSTS must be explicit in production')
-  const guestProvider = process.env.GUEST_CODEX_PROVIDER?.trim()
-  const guestBaseUrl = process.env.GUEST_CODEX_BASE_URL?.trim()
-  const guestApiKey = process.env.GUEST_CODEX_API_KEY?.trim()
-  if (
-    [guestProvider, guestBaseUrl, guestApiKey].some(Boolean) &&
-    ![guestProvider, guestBaseUrl, guestApiKey].every(Boolean)
-  )
-    throw new Error(
-      'GUEST_CODEX_PROVIDER, GUEST_CODEX_BASE_URL, and GUEST_CODEX_API_KEY must be configured together',
-    )
-  const guest =
-    guestProvider && guestBaseUrl && guestApiKey
-      ? {
-          provider: guestProvider,
-          baseUrl: url('GUEST_CODEX_BASE_URL', guestBaseUrl),
-          apiKey: guestApiKey,
-          skillRoots: (process.env.GUEST_CODEX_SKILL_ROOTS ?? '')
-            .split(',')
-            .map((entry) => entry.trim())
-            .filter(Boolean),
-          leaseTtlHours: fixedGuestLeaseTtl(process.env.GUEST_LEASE_TTL_HOURS),
-          globalDailyTokenLimit: positiveInt(process.env.GUEST_GLOBAL_DAILY_TOKEN_LIMIT, 1_000_000),
-          perGuestDailyTokenLimit: positiveInt(
-            process.env.GUEST_PER_GUEST_DAILY_TOKEN_LIMIT,
-            128_000,
-          ),
-          maxActiveThreads: positiveInt(process.env.GUEST_MAX_ACTIVE_THREADS, 5),
-          maxQueue: positiveInt(process.env.GUEST_MAX_QUEUE, 20),
-          maxTokensPerTurn: positiveInt(process.env.GUEST_MAX_TOKENS_PER_TURN, 16_000),
-          modelContextWindow: positiveSafeInt(
-            'GUEST_MODEL_CONTEXT_WINDOW',
-            process.env.GUEST_MODEL_CONTEXT_WINDOW,
-            256_000,
-          ),
-          allowedModels: csv(process.env.GUEST_ALLOWED_MODELS),
-          allowedReasoningEfforts: csv(process.env.GUEST_ALLOWED_REASONING_EFFORTS),
-        }
-      : undefined
   return {
-    mode,
     host,
     port: positiveInt(process.env.SERVER_PORT, 3000),
     databaseUrl: required('DATABASE_URL', process.env.DATABASE_URL),
@@ -172,7 +94,7 @@ export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
     enforceOriginChecks: true,
     dataRoot,
     maxActiveTasksPerUser: positiveInt(process.env.CODEX_MAX_ACTIVE_TASKS_PER_USER, 2),
-    credentialEncryptionKey: mode === 'guest' ? '' : credentialEncryptionKey(dataRoot),
+    credentialEncryptionKey: credentialEncryptionKey(dataRoot),
     allowedOutboundSchemes: (process.env.CODEX_ALLOWED_OUTBOUND_SCHEMES ?? 'https')
       .split(',')
       .map((scheme) => scheme.trim().toLowerCase())
@@ -181,6 +103,5 @@ export function loadServerConfig(mode: ServerConfig['mode']): ServerConfig {
     requireDangerousAccessConfirmation:
       process.env.NODE_ENV === 'production' ||
       process.env.CODEX_REQUIRE_DANGEROUS_ACCESS_CONFIRMATION === 'true',
-    guest,
   }
 }

@@ -29,7 +29,7 @@ export async function createHttpServer(
   }
   app.addHook('onResponse', async (request, reply) => {
     const route = request.routeOptions.url ?? request.url.split('?', 1)[0]
-    if (route === '/api/events' || route === '/guest-api/events') return
+    if (route === '/api/events') return
     const elapsed = performance.now() - (requestStartedAt.get(request) ?? performance.now())
     const message = `HTTP ${reply.statusCode} ${request.method} ${route} (${elapsed.toFixed(1)}ms, requestId=${safeError(request.id)})`
     if (reply.statusCode >= 300) log.error(message)

@@ -1,6 +1,6 @@
 # 前端边界
 
-本项目的前端是本地 Codex 工作台，不提供 Hosted 或多实例前端。开发入口由 Vite 提供，生产构建使用 `pnpm build`；服务端 Owner 和 Guest 分别由 `pnpm server:owner`、`pnpm server:guest` 启动。
+本项目的前端是本地 Codex 工作台，不提供 Hosted 或多实例前端。开发入口由 Vite 提供，生产构建使用 `pnpm build`；本地 Owner bridge 使用 `pnpm server:owner` 启动。
 
 前端通过 `@/lib/bridge` 访问 Fastify REST/SSE；页面和 renderer 只消费 UI-facing model，不直接依赖原生 DTO、服务端 payload、宿主机路径或凭据。
 
@@ -15,15 +15,15 @@ app/entry -> app/composition -> app/{chat,workspace,settings}/application
                                       |
                                       +-> domain -> UI-facing model -> renderer
                                       |
-                                      +-> lib/bridge/interfaces -> owner/guest adapters -> transport
+                                      +-> lib/bridge/interfaces -> Owner adapter -> transport
                                       |
                                       +-> components/ui -> lib/utils
 ```
 
-- `app/entry` 负责应用启动、路由、认证过期、runtime profile 守卫和根错误边界。
+- `app/entry` 负责应用启动、路由、认证过期和根错误边界。
 - `app/composition` 负责布局和领域组合，不直接调用 fetch、SSE 或数据库。
 - `app/chat`、`app/settings`、`app/workspace` 负责各自领域的 application、domain 和 renderer；`ChatSession`、`ComposerSession` 与 `WorkspaceCatalog` 是跨 UI 模块的命名接口。
-- `lib/bridge/interfaces` 定义 UI 可用的 bridge 接缝，`lib/bridge/adapters` 分别实现 Owner 与 Guest；raw DTO、HTTP/SSE 和协议解析留在 adapter/transport 内部。
+- `lib/bridge/interfaces` 定义 UI 可用的 bridge 接口，Owner adapter 负责连接本地 Fastify；raw DTO、HTTP/SSE 和协议解析留在 adapter/transport 内部。
 - `components/ui` 只依赖通用库和 `lib/utils`，不访问 API、路由、认证或浏览器持久化。
 - `lib/db` 是 server-only，不能进入浏览器图。
 
@@ -32,8 +32,6 @@ app/entry -> app/composition -> app/{chat,workspace,settings}/application
 应用内导航使用 React Router；数据变化通过 controller、mutation、invalidate 或 refetch 处理，不使用整页重载。认证失效时清理本地状态并导航到 `/login`。
 
 HTTP 响应用于确认命令是否被接受，SSE 事件用于更新 Turn/item 最终状态。Thread/Turn 不携带 Credential identity。Thread ID 以路由为准，不写入 localStorage；Turn 增量和 SSE 事件不写入 localStorage。
-
-Guest 使用独立 `lib/bridge/http/guest.ts` transport、Better Auth anonymous session/cookie、`/guest-api/*` 与 Guest SSE，不调用 Owner `/api/*` transport。Owner 与 Guest 的 Thread/Turn 操作通过共享 Thread client interface 和各自 adapter 接入同一 availability、snapshot/status 与同步语义；adapter 不跨越认证、runtime、workspace 或权限边界。Guest 先读取安全 Thread snapshot，再以 snapshot 的 Guest event cursor 建立 SSE 并在重连后重放；展示仍使用 native reducer。Guest reset 必须清除本地 draft、选中的 skills/model/effort 和已选 Thread。Guest Projects 与 Archived chats 是不可用 UI 状态，不发送 Project、archive 或 restore 请求。
 
 推荐状态：
 
@@ -66,7 +64,7 @@ turn: idle | queued | inProgress | interrupted | completed | failed
 - 浏览器从 offline 恢复或页面从后台重新可见时，先读取 Thread status，再按 cursor 变化读取快照并重新建立 SSE；恢复状态不写入 transcript、命令输出、文件内容、路径或凭据。
 - 未知事件保留诊断信息，但不能让 Chat 崩溃。
 - Thread snapshot 的合法 `model`/`reasoningEffort` 是 Composer Thread scope 的服务端真值；`thread/settings/updated` 只同步发生变化的对应字段。New Chat scope 保持独立缓存，Thread 缺失字段时保留该 scope 的本地选择。
-- Owner accepted Turn ID 可用于 native transcript reconciliation；Guest accepted Turn ID 只是 queue/job 取消句柄。共享 pending seam 通过 adapter capability 区分二者，Guest job ID 不进入 native transcript identity。
+- Owner accepted Turn ID 可用于 native transcript reconciliation。
 - Thread 快照的 `historyEvents` 会重放原生快照未保留的命令与问答事件；问答请求、答案和结束事件必须在 native reducer 中归一化，renderer 不直接解释 bridge 事件。
 
 ## 显示与安全
@@ -74,8 +72,6 @@ turn: idle | queued | inProgress | interrupted | completed | failed
 - API key、绝对路径、内部 stack、原始凭据响应和不透明 provider payload 不进入 UI。
 - 输入框、取消操作和错误状态必须可理解；图标按钮必须有可访问名称和 tooltip。
 - 工具和文件事件按只读信息展示；审批能力以当前实际实现为准，不因协议事件存在而假设 UI 已开放。
-- Guest composer 固定 `workspaceWrite` access；模型和推理强度来自 Guest App Server 的 `model/list`，再应用 `GUEST_ALLOWED_MODELS` 与 `GUEST_ALLOWED_REASONING_EFFORTS` 过滤。模型展示名只影响 UI 标签，不影响可用性；没有附件，Web Search 由运行时默认启用。真实 Guest skill 列表只返回 name、display name、description、scope 与短期 handle，不返回技能文件路径。
-- Guest 前端与 Owner 共用单一 `index.html` 和构建产物，通过 `/`、`/login`、`/app`、`/admin` 路由及 capability 分流，不加载 Guest 不可用的 Credential、Project picker 或 Owner runtime 页面。Guest 仍复用 `WorkspaceSidebar`、`SettingsSidebar`、`ComposerInput` 和通用聊天 renderer；Projects 区域保留统一的 Owner-only 不可用提示，Archived chats 与 Appearance 设置在 Guest capability 下隐藏，避免维护两套样式实现。
 - 主题使用语义 token，不在业务组件中新增具体颜色值；主题解析保持为确定性纯逻辑。
 
 ## 验证

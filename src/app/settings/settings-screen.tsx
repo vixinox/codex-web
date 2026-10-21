@@ -2,17 +2,14 @@ import { AppearanceSection } from '@/app/settings/appearance-section'
 // import { ConfigurationSection } from '@/app/settings/configuration-section'
 import { CredentialPanel } from '@/app/settings/credential/credential-panel'
 import { useSettingsController } from '@/app/settings/credential/use-settings-controller'
-import { GuestCapacitySection } from '@/app/settings/guest-capacity-section'
 import { ArchivedChats } from '@/app/settings/archived-chats'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 
 export function SettingsScreen({
   runtime,
-  isGuest = false,
   archived = false,
 }: {
   runtime?: CodexRuntimeController
-  isGuest?: boolean
   archived?: boolean
 }) {
   return (
@@ -28,7 +25,6 @@ export function SettingsScreen({
           ) : (
             <>
               <AppearanceSection />
-              {isGuest ? <GuestCapacitySection /> : null}
               {/* <ConfigurationSection runtime={runtime} /> */}
               {runtime ? <OwnerCredentialSection runtime={runtime} /> : null}
             </>

@@ -6,8 +6,6 @@ import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import { CodexLogo } from '@/components/shared/codex-logo'
-import { ForbiddenPage } from '@/app/error-pages'
-import { getSessionKind } from '@/app/entry/session-kind'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
@@ -20,12 +18,6 @@ const StartupScreen = startupPageEnabled
       })),
     )
   : null
-
-const AdminScreen = lazy(() =>
-  import('@/app/composition/screens/admin-screen').then(({ AdminScreen: screen }) => ({
-    default: screen,
-  })),
-)
 
 export function StartupRoute() {
   if (!StartupScreen) return null
@@ -40,8 +32,7 @@ export function RootRoute() {
   const { data: session, isPending } = useSession()
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
   if (!session) return <Navigate to="/login" replace />
-  const kind = getSessionKind(session.user)
-  return <Navigate to={kind === 'admin' ? '/admin' : '/app'} replace />
+  return <Navigate to="/app" replace />
 }
 
 export function CandidateRoute() {
@@ -50,21 +41,7 @@ export function CandidateRoute() {
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
   if (!session) return <Navigate to="/login" replace />
 
-  if (getSessionKind(session.user) === 'guest')
-    return <WorkspaceShell userId="guest" profile={{ kind: 'guest' }} />
   return <AuthenticatedWorkspace userId={session.user.id} />
-}
-
-export function AdminRoute() {
-  const { data: session, isPending } = useSession()
-  if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
-  if (!session) return <Navigate to="/login" replace />
-  if (getSessionKind(session.user) !== 'admin') return <ForbiddenPage />
-  return (
-    <Suspense fallback={pageFallback}>
-      <AdminScreen />
-    </Suspense>
-  )
 }
 
 export function AuthenticatedWorkspace({ userId }: { userId: string }) {
@@ -99,6 +76,5 @@ export function LoginRoute() {
   const { data: session, isPending } = useSession()
 
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
-  const kind = session ? getSessionKind(session.user) : undefined
-  return session ? <Navigate to={kind === 'admin' ? '/admin' : '/app'} replace /> : <LoginScreen />
+  return session ? <Navigate to="/app" replace /> : <LoginScreen />
 }

@@ -46,8 +46,8 @@ const MOCK_PROJECT_FIXTURES = [
   },
   {
     id: 'project-sandbox',
-    name: 'guest-sandbox',
-    threads: makeThreads('guest-sandbox', [
+    name: 'sample-workspace',
+    threads: makeThreads('sample-workspace', [
       '事件排序与幂等 middleware',
       '旧客户端快照降级',
       '同步协议集成测试',

@@ -2,8 +2,8 @@ import type { ChatAccess, ChatEffort, ChatModel } from '@/app/chat/model/compose
 
 /**
  * Runtime differences a Composer surface hands to the shared renderer.
- * Owner and Guest keep separate values; the renderer itself stays
- * runtime-agnostic and never branches on which profile it renders.
+ * Runtime capabilities stay explicit; the renderer does not infer them from
+ * authentication or connection state.
  */
 export type ComposerCapabilities = {
   attachments: boolean
@@ -61,7 +61,6 @@ const emptyComposerCapabilities = (access: ChatAccess): ComposerCapabilities => 
 })
 
 export const EMPTY_OWNER_COMPOSER_CAPABILITIES = emptyComposerCapabilities('full')
-export const EMPTY_GUEST_COMPOSER_CAPABILITIES = emptyComposerCapabilities('workspaceWrite')
 
 export function defaultComposerPreferences(
   capabilities: ComposerCapabilities,

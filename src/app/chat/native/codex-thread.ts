@@ -83,36 +83,6 @@ export function applyCodexNotification(
     appendError(state, `Codex protocol error: ${safeCode(params.code)}`)
     return { scope: 'thread' }
   }
-  if (notification.method === 'webcodex/guest-token-limit') {
-    const threadId = stringValue(params.threadId)
-    const turnId = stringValue(params.turnId)
-    const maxTokens = params.maxTokens
-    const actualTokens = params.actualTokens
-    const turn = turnId ? findTurn(state.thread, turnId) : undefined
-    if (
-      threadId !== state.thread.id ||
-      !turnId ||
-      !turn ||
-      typeof maxTokens !== 'number' ||
-      !Number.isSafeInteger(maxTokens) ||
-      maxTokens <= 0 ||
-      (actualTokens !== undefined &&
-        (typeof actualTokens !== 'number' ||
-          !Number.isSafeInteger(actualTokens) ||
-          actualTokens < 0))
-    ) {
-      appendError(state, 'webcodex/guest-token-limit is incomplete')
-      return { scope: 'thread' }
-    }
-    upsertItem(turn, {
-      id: `guest-token-limit:${turnId}`,
-      type: 'guestTurnLimit',
-      maxTokens,
-      ...(actualTokens !== undefined ? { actualTokens } : {}),
-      detail: `This turn reached the ${maxTokens} token limit and was stopped.`,
-    })
-    return { scope: 'turn', turnId }
-  }
   if (notification.method === 'item/tool/requestUserInput') {
     const requestId = notification.id ?? params.requestId
     const threadId = stringValue(params.threadId) ?? stringValue(state.thread.id)
@@ -334,7 +304,6 @@ export function applyHistoryEvents(state: CodexThreadState, events: readonly Cod
       continue
     const method = event.message.method
     const usageEvent = method === 'thread/tokenUsage/updated'
-    const guestTokenLimitEvent = method === 'webcodex/guest-token-limit'
     const item = isRecord(params.item) ? params.item : undefined
     const questionnaireEvent =
       method === 'item/tool/requestUserInput' ||
@@ -358,11 +327,6 @@ export function applyHistoryEvents(state: CodexThreadState, events: readonly Cod
       applyCodexNotification(state, event.message, String(event.id))
       continue
     }
-    if (guestTokenLimitEvent) {
-      applyCodexNotification(state, event.message, String(event.id))
-      continue
-    }
-
     // A complete native snapshot remains authoritative. Replay only fills a
     // terminal missing/sparse turn after a reload or reconnect. An active
     // sparse turn must continue through SSE so its text retains stream timing.

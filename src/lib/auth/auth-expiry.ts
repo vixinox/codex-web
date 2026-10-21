@@ -1,6 +1,6 @@
 export const AUTH_EXPIRED_EVENT = 'codex-web:auth-expired'
 
-const PROTECTED_PATH_PREFIXES = ['/api/', '/guest-api/', '/admin-api/'] as const
+const PROTECTED_PATH_PREFIXES = ['/api/'] as const
 
 let activeRestore: (() => void) | null = null
 

@@ -12,27 +12,23 @@ describe('auth expiry interceptor', () => {
     window.history.replaceState(null, '', '/')
   })
 
-  it.each(['/api/projects', '/guest-api/session', '/admin-api/overview'])(
-    'reports unauthorized responses from %s',
-    async (path) => {
-      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))
-      vi.stubGlobal('fetch', fetchMock)
-      const expired = vi.fn()
-      window.addEventListener(AUTH_EXPIRED_EVENT, expired)
-      restore = installAuthExpiryInterceptor()
+  it.each(['/api/projects'])('reports unauthorized responses from %s', async (path) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const expired = vi.fn()
+    window.addEventListener(AUTH_EXPIRED_EVENT, expired)
+    restore = installAuthExpiryInterceptor()
 
-      const response = await window.fetch(path)
+    const response = await window.fetch(path)
 
-      expect(expired).toHaveBeenCalledTimes(1)
-      expect(response.status).toBe(401)
-      window.removeEventListener(AUTH_EXPIRED_EVENT, expired)
-    },
-  )
+    expect(expired).toHaveBeenCalledTimes(1)
+    expect(response.status).toBe(401)
+    window.removeEventListener(AUTH_EXPIRED_EVENT, expired)
+  })
 
   it.each([
     '/api/auth/sign-in/email',
     '/api/auth/get-session',
-    '/runtime-profile',
     'https://other.example/api/projects',
   ])('does not report unauthorized responses from %s', async (path) => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))

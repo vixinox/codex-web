@@ -13,7 +13,7 @@ import { CodexManager } from './codex/manager.js'
 import { PostgresEventStore } from './codex/event-store.js'
 
 test('persists a Better Auth session across server and pool recreation', async () => {
-  const config = loadServerConfig('owner')
+  const config = loadServerConfig()
   const email = `integration-${Date.now()}@example.com`
 
   const firstDatabase = createDatabase(config)
@@ -58,7 +58,7 @@ test('persists a Better Auth session across server and pool recreation', async (
     url: '/api/credentials',
     headers: { cookie, origin: config.trustedOrigins[0] },
     payload: {
-      provider: 'openai',
+      provider: 'example.proxy',
       baseUrl: 'https://api.example.com/',
       apiKey: 'sk-integration-secret',
     },
@@ -71,7 +71,7 @@ test('persists a Better Auth session across server and pool recreation', async (
     url: '/api/credentials',
     headers: { cookie, origin: config.trustedOrigins[0] },
     payload: {
-      provider: 'openai',
+      provider: 'example.proxy',
       baseUrl: 'https://api.example.com/second',
       apiKey: 'sk-integration-secret-2',
     },
@@ -89,8 +89,8 @@ test('persists a Better Auth session across server and pool recreation', async (
   const invalidCredential = await firstApp.inject({
     method: 'POST',
     url: '/api/credentials',
-    headers: { cookie },
-    payload: { provider: 'openai', baseUrl: 'http://api.example.com', apiKey: 'secret' },
+    headers: { cookie, origin: config.trustedOrigins[0] },
+    payload: { provider: 'example.proxy', baseUrl: 'http://api.example.com', apiKey: 'secret' },
   })
   assert.equal(invalidCredential.statusCode, 400)
   await firstApp.close()
@@ -117,7 +117,7 @@ test('persists a Better Auth session across server and pool recreation', async (
     const deletedCurrent = await secondApp.inject({
       method: 'DELETE',
       url: `/api/credentials/${firstCredentialId}`,
-      headers: { cookie },
+      headers: { cookie, origin: config.trustedOrigins[0] },
     })
     assert.equal(deletedCurrent.statusCode, 204, deletedCurrent.body)
     const fallbackCredentials = await secondApp.inject({

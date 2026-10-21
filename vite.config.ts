@@ -19,9 +19,6 @@ export default defineConfig({
     },
     proxy: {
       '/api': 'http://127.0.0.1:3000',
-      '/admin-api': 'http://127.0.0.1:3000',
-      '/guest-api': 'http://127.0.0.1:3000',
-      '/runtime-profile': 'http://127.0.0.1:3000',
     },
   },
   resolve: {

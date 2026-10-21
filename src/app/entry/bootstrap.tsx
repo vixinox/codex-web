@@ -6,7 +6,7 @@ import { ThemeProvider } from '@/components/shared/theme-provider'
 import { installAuthExpiryInterceptor } from '@/lib/auth/auth-expiry'
 import { AuthExpiryHandler } from '@/app/entry/auth-expiry-handler'
 import { RootErrorBoundary } from '@/app/entry/root-error-boundary'
-import { RuntimeProfileGuard } from '@/app/entry/runtime-profile-guard'
+import { AppRouter } from '@/app/entry/app-router'
 
 export function bootstrapApp(rootElement: HTMLElement = document.getElementById('root')!) {
   installAuthExpiryInterceptor()
@@ -18,7 +18,7 @@ export function bootstrapApp(rootElement: HTMLElement = document.getElementById(
         <BrowserRouter>
           <ThemeProvider>
             <AuthExpiryHandler />
-            <RuntimeProfileGuard />
+            <AppRouter />
           </ThemeProvider>
         </BrowserRouter>
       </RootErrorBoundary>

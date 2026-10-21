@@ -101,34 +101,6 @@ describe('pending turn reconciliation', () => {
     expect(result.turns[0].blocks.map((block) => block.type)).toEqual(['user', 'assistant'])
   })
 
-  it('matches an opaque accepted Guest job to its native transcript turn by user content', () => {
-    const accepted = { ...pending, nativeThreadId: 'thread-1' }
-    const result = reconcilePendingThread(
-      thread([
-        {
-          id: 'native-turn-1',
-          status: 'completed',
-          blocks: [
-            {
-              id: 'native-user',
-              type: 'user',
-              content: [{ type: 'text', text: 'First message' }],
-            },
-            { id: 'answer', type: 'assistant', text: 'Done', final: true },
-          ],
-        },
-      ]),
-      accepted,
-    )
-
-    expect(result.turns).toHaveLength(1)
-    expect(result.turns[0]).toMatchObject({
-      id: 'native-turn-1',
-      presentationId: 'client-1',
-      status: 'completed',
-    })
-  })
-
   it('scopes an accepted pending turn to its exact project and Thread', () => {
     const accepted = { ...pending, nativeThreadId: 'thread-1', nativeTurnId: 'turn-1' }
 

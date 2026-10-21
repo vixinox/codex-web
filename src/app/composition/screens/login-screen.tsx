@@ -5,8 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Loader2, User, KeyRound } from 'lucide-react'
-import { startGuestSession } from '@/lib/bridge/http/guest'
+import { Loader2, KeyRound } from 'lucide-react'
 
 function formText(data: FormData, name: string) {
   const value = data.get(name)
@@ -20,32 +19,17 @@ export function LoginScreen() {
   const [ownerExists, setOwnerExists] = React.useState<boolean | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
-  const [runtimeProfile, setRuntimeProfile] = React.useState<'owner' | 'guest' | null>(null)
 
   React.useEffect(() => {
     const controller = new AbortController()
     const minLoadTime = new Promise((resolve) => setTimeout(resolve, 400))
-    const fetchProfile = fetch('/runtime-profile', { signal: controller.signal })
+    const fetchBootstrap = fetch('/api/auth/bootstrap', {
+      credentials: 'include',
+      signal: controller.signal,
+    })
 
-    void Promise.all([fetchProfile, minLoadTime])
-      .then(async ([profileResponse]) => {
-        if (!profileResponse.ok) throw new Error('Runtime profile is unavailable')
-        const profileBody = (await profileResponse.json()) as { profile?: unknown }
-        if (profileBody.profile !== 'owner' && profileBody.profile !== 'guest') {
-          throw new Error('Runtime profile is unavailable')
-        }
-        setRuntimeProfile(profileBody.profile)
-
-        if (profileBody.profile === 'guest') {
-          setOwnerExists(true)
-          setMode('sign-in')
-          return undefined
-        }
-
-        const bootstrapResponse = await fetch('/api/auth/bootstrap', {
-          credentials: 'include',
-          signal: controller.signal,
-        })
+    void Promise.all([fetchBootstrap, minLoadTime])
+      .then(async ([bootstrapResponse]) => {
         if (!bootstrapResponse.ok) throw new Error('Bootstrap state is unavailable')
         const body = (await bootstrapResponse.json()) as { ownerExists?: unknown }
         const exists = body.ownerExists === true
@@ -86,19 +70,6 @@ export function LoginScreen() {
     void navigate('/app', { replace: true })
   }
 
-  async function handleGuest() {
-    setError(null)
-    setIsSubmitting(true)
-    try {
-      await startGuestSession()
-      window.location.replace('/app')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Guest access failed'
-      setError(message)
-      setIsSubmitting(false)
-    }
-  }
-
   return (
     <div className="flex min-h-svh flex-col items-center justify-center bg-zinc-50 px-4 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:p-8 md:p-10 dark:bg-zinc-950">
       <div className="flex w-full max-w-sm flex-col gap-6">
@@ -115,7 +86,7 @@ export function LoginScreen() {
                   {mode === 'sign-up' && (
                     <div className="mb-6 text-center">
                       <h2 className="text-lg font-medium">Initialize System</h2>
-                      <p className="mt-1 text-sm text-zinc-500">Create the first administrator</p>
+                      <p className="mt-1 text-sm text-zinc-500">Create the local owner account</p>
                     </div>
                   )}
 
@@ -133,7 +104,7 @@ export function LoginScreen() {
                         id="email"
                         name="email"
                         type="email"
-                        placeholder="admin@example.com"
+                        placeholder="you@example.com"
                         autoComplete="email"
                         required
                       />
@@ -187,23 +158,6 @@ export function LoginScreen() {
                     </Field>
                   </FieldGroup>
                 </form>
-
-                <div className="mt-6">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isSubmitting || runtimeProfile !== 'guest'}
-                    onClick={handleGuest}
-                    className="group relative h-12 w-full border-dashed bg-zinc-100/50 hover:bg-zinc-100 dark:bg-zinc-800/30 dark:hover:bg-zinc-800"
-                  >
-                    <User className="mr-2 h-4 w-4 text-zinc-500 transition-colors group-hover:text-zinc-900 dark:group-hover:text-white" />
-                    <span className="font-medium text-zinc-600 transition-colors group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-white">
-                      {runtimeProfile === 'guest'
-                        ? 'Continue as Guest'
-                        : 'Guest currently unavailable'}
-                    </span>
-                  </Button>
-                </div>
               </div>
             )}
           </CardContent>
