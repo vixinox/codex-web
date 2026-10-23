@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "strict": true
+  },
+  "include": ["src/**/*.ts"]
+}

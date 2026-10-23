@@ -25,6 +25,8 @@ Do not expand work into unrelated features, architecture, dependencies, or docum
 - Services are user-operated. Do not start, stop, restart, terminate, or take over Vite, Fastify, databases, preview servers, or test harnesses unless the user explicitly requests process management. Use only Vite `5173` and Fastify `3000` when authorized.
 - Always use `pnpm` as the package manager (`pnpm install`, `pnpm add`, `pnpm run`, etc.). Do not use `npm`, `yarn`, or `bun` for package management.
 - Never invoke a subagent unless explicitly requested by the user.
+- The user authorizes commits for this work. Create commits at meaningful implementation milestones on the current non-`master` branch; never checkout, reset, merge, rebase, push, or otherwise modify `master`.
+- Before each milestone commit, stage only the intended files, run the applicable focused checks and `pnpm lint:staged`, then commit with a concise message describing the completed milestone. Preserve unrelated existing WIP and do not include it in milestone commits.
 
 ## Verification
 
