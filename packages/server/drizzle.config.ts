@@ -3,9 +3,8 @@ import { defineConfig } from 'drizzle-kit'
 
 export default defineConfig({
   schema: './src/db/schema.ts',
-  dialect: 'postgresql',
+  dialect: 'sqlite',
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
-    ssl: process.env.DATABASE_SSL === 'true',
+    url: `${process.env.CODEX_DATA_ROOT ?? './.data/codex'}/owner.sqlite`,
   },
 })

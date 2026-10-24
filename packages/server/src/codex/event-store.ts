@@ -6,7 +6,7 @@ import { projectNativeMessage, type NativeCodexMessage } from './native-protocol
 
 const THREAD_EVENT_LIMIT = 1_000
 
-export class PostgresEventStore {
+export class SqliteEventStore {
   private readonly db: Database
 
   constructor(db: Database) {

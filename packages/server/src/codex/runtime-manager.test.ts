@@ -12,8 +12,6 @@ function config(dataRoot: string): ServerConfig {
   return {
     host: '127.0.0.1',
     port: 3000,
-    databaseUrl: 'postgresql://unused',
-    databaseSsl: false,
     authSecret: 'test-secret-that-is-at-least-32-characters',
     authUrl: 'http://127.0.0.1:3000',
     trustedOrigins: ['http://localhost:5173'],

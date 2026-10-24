@@ -13,7 +13,7 @@ export function createAuth(config: ServerConfig, database: Database) {
     secret: config.authSecret,
     trustedOrigins: config.trustedOrigins,
     database: drizzleAdapter(database, {
-      provider: 'pg',
+      provider: 'sqlite',
       schema,
     }),
     emailAndPassword: {

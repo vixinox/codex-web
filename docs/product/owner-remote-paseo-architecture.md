@@ -1,6 +1,6 @@
 # Paseo 基准的 Relay Transport 专题
 
-状态：总架构的专题文档。Owner 业务协议和持久层决策分别见 [`owner-remote-final-architecture.md`](./owner-remote-final-architecture.md) 和 [`owner-sqlite-refactor-plan.md`](./owner-sqlite-refactor-plan.md)。
+状态：总架构的 Relay transport 专题。整体边界见 [`owner-remote-final-architecture.md`](./owner-remote-final-architecture.md)。
 
 ## 边界
 
@@ -36,7 +36,7 @@ Relay 只依赖 `relay` subpath。Owner Gateway 只依赖 `owner` subpath；Owne
 - 输出脱敏连接级日志和指标；
 - 不读取账户、session、Credential、Thread、事件或业务正文。
 
-Relay 重启只导致连接重建，不影响 Owner 数据和历史。Relay 不使用 Better Auth、SQLite、PostgreSQL 或其他业务持久化。
+Relay 重启只导致连接重建，不影响 Owner 数据和历史。Relay 不使用 Better Auth、SQLite 或其他业务持久化。
 
 ## Owner RelayTransport 责任
 
@@ -44,12 +44,4 @@ Owner 进程主动连接 Relay，处理 attach/ready、重连、远程虚拟连�
 
 信任重置必须轮换 Owner 信任根、清空已授权控制端、关闭旧连接并拒绝旧 epoch，同时保留 Owner 本地业务历史。
 
-## 实施顺序
-
-1. 完成 `@codex-web/protocol/relay` 的 frame parser 和 crypto 测试；
-2. 验证无持久化 Relay 的 attach、路由、替换、断开和重连；
-3. 实现 Owner RelayTransport 与 Gateway 的 transport attachment；
-4. 完成 pairing、ECDH、trust epoch 和远程 Owner session admission；
-5. 验证远程 Thread/Turn/approval/question/cursor 恢复使用 Owner WS 合同。
-
-不得恢复 HTTP/SSE tunnel，也不得让 Relay 解释 Owner method。
+Relay 始终只转发 opaque encrypted payload，不恢复 HTTP/SSE tunnel，也不解释 Owner method。

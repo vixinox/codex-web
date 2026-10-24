@@ -7,14 +7,12 @@ test('rejects non-loopback server hosts', () => {
   const names = [
     'BETTER_AUTH_SECRET',
     'BETTER_AUTH_URL',
-    'DATABASE_URL',
     'SERVER_HOST',
     'CODEX_CREDENTIAL_ENCRYPTION_KEY',
   ]
   const previous = new Map(names.map((name) => [name, process.env[name]]))
   process.env.BETTER_AUTH_SECRET = 'test-secret-that-is-at-least-32-characters'
   process.env.BETTER_AUTH_URL = 'http://127.0.0.1:3000'
-  process.env.DATABASE_URL = 'postgresql://unused'
   process.env.SERVER_HOST = '0.0.0.0'
   process.env.CODEX_CREDENTIAL_ENCRYPTION_KEY = 'test-key'
   try {

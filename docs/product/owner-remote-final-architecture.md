@@ -1,6 +1,6 @@
 # Owner 远程控制最终架构
 
-状态：当前总架构基线。实施细节见 [`../impl/01-owner-websocket-backend.md`](../impl/01-owner-websocket-backend.md)，Relay transport 见 [`owner-remote-paseo-architecture.md`](./owner-remote-paseo-architecture.md)，SQLite 见 [`owner-sqlite-refactor-plan.md`](./owner-sqlite-refactor-plan.md)。
+状态：当前总架构基线。Relay transport 专题见 [`owner-remote-paseo-architecture.md`](./owner-remote-paseo-architecture.md)。
 
 ## 最终决策
 
@@ -47,26 +47,6 @@ Owner method 的认证、资源归属、错误投影、stream、背压、cursor 
 
 ## 持久化
 
-SQLite 是下一阶段 Owner 控制面持久层目标，负责 session、Project、Credential、current credential 和 Owner event journal。Remote trust、节点密钥和加密密钥保持本地文件/OS secret 边界。Codex Thread transcript 继续由 Codex Home/App Server 负责，Relay 不使用业务数据库。
+Owner 控制面使用位于 `CODEX_DATA_ROOT/owner.sqlite` 的本地 SQLite，持久化认证 session、Project、Credential、current credential 和安全投影后的 Owner event journal。数据库初始化与 migration 在 Owner 开始监听前完成；无法安全初始化或恢复时 Owner 不提供服务。
 
-在 SQLite 切换完成前，现有 PostgreSQL 只作为过渡实现；不得因此恢复 REST/SSE 或改变 Owner WS/Application Services 边界。
-
-## 实施顺序
-
-1. 冻结 `@codex-web/protocol` 的 owner/relay subpath 和 Owner session runtime；
-2. 完成 Owner WS、Application Services 和必要外围 HTTP；
-3. 删除旧 REST/SSE business routes、HTTP/SSE tunnel 和旧前端 bridge；
-4. 将运行单元固定在 `packages/app`、`packages/server`、`packages/relay` 和 `packages/protocol`；
-5. 完成 SQLite stores、migration、启动恢复和 PostgreSQL 清理；
-6. 接入 Owner RelayTransport、配对、E2EE、远程 session 和远程 cursor recovery；
-7. 后续实现 App Owner WS client、文件/终端等扩展流。
-
-## 验收
-
-- 本地和远程客户端使用相同 Owner WS 合同；
-- Relay 只能看到连接元数据和密文 payload；
-- Owner、Project、Thread、Credential 归属检查在本地和远程一致；
-- Credential secret、路径、raw Codex payload 和 stack 不进入协议、日志或 UI；
-- Owner 重启后可恢复控制面状态并从 Codex history 恢复 Thread；
-- WS 重连与 event cursor recovery 分离，cursor 失效时回退安全 snapshot；
-- 旧 trust epoch、撤销设备和无效 session 无法建立业务连接。
+Remote trust、节点密钥和 Credential 加密密钥保持在本地文件或 OS secret 边界。Codex Thread transcript 继续由 Codex Home/App Server 管理；SQLite 不保存原始 runtime payload、API key 明文或宿主路径，Relay 不使用 Owner 业务数据库。

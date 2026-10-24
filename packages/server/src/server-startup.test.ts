@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 
 test('exits after a database readiness failure', async () => {
   const dataRoot = mkdtempSync(join(tmpdir(), 'codex-web-db-start-'))
+  const blockedRoot = join(dataRoot, 'not-a-directory')
+  writeFileSync(blockedRoot, 'file')
   const tsxCli = resolve('node_modules/tsx/dist/cli.mjs')
   const withPort = resolve('../../scripts/with-port.mjs')
   const stderr: Buffer[] = []
@@ -23,8 +25,8 @@ test('exits after a database readiness failure', async () => {
               NODE_ENV: 'test',
               BETTER_AUTH_SECRET: '12345678901234567890123456789012',
               BETTER_AUTH_URL: 'http://127.0.0.1:3000',
-              DATABASE_URL: 'postgresql://bad:bad@127.0.0.1:1/bad',
-              CODEX_DATA_ROOT: dataRoot,
+              CODEX_CREDENTIAL_ENCRYPTION_KEY: 'test-key',
+              CODEX_DATA_ROOT: blockedRoot,
               CODEX_EXIT_ON_SERVER_STARTUP_FAILURE: 'true',
             },
             stdio: ['ignore', 'ignore', 'pipe'],
@@ -50,7 +52,8 @@ test('exits after a database readiness failure', async () => {
     const output = Buffer.concat(stderr).toString('utf8')
     assert.equal(result.code, 1)
     assert.equal(result.signal, null)
-    assert.match(output, /Owner server failed to start: connect ECONNREFUSED/)
+    assert.match(output, /EEXIST|ENOTDIR/)
+    assert.match(output, /EEXIST|ENOTDIR/)
     assert.doesNotMatch(output, /Fastify listening at/)
   } finally {
     rmSync(dataRoot, { recursive: true, force: true })

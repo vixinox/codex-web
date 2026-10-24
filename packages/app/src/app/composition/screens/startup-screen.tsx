@@ -31,14 +31,13 @@ const quickStartSteps: readonly QuickStartStep[] = [
     commands: [
       'git clone https://github.com/vixinox/codex-web.git',
       'cd codex-web',
-      'docker compose up -d postgres',
       'pnpm install',
       'cp .env.example .env',
       'Copy-Item .env.example .env',
       'pnpm db:push',
     ],
-    note: 'Use Docker for PostgreSQL, or set DATABASE_URL in .env to connect to an existing database.',
-    zhNote: 'PostgreSQL 可使用 Docker，也可以在 .env 中配置 DATABASE_URL 连接已有数据库。',
+    note: 'Owner creates the SQLite database at CODEX_DATA_ROOT/owner.sqlite during initialization.',
+    zhNote: 'Owner 初始化时会在 CODEX_DATA_ROOT/owner.sqlite 创建 SQLite 数据库。',
   },
   {
     title: 'Start Codex Web',

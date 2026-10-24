@@ -18,6 +18,7 @@
 - 前端目录按 `app + lib` 组织：启动与路由位于 `packages/app/src/app/entry`，组合层位于 `packages/app/src/app/composition`，Chat/Workspace/Settings 按领域分别维护 application、domain 与 UI modules，跨运行时基础设施位于 `packages/app/src/lib`，`packages/app/src/components/ui` 保持 shadcn primitives。
 - `/app/*` 是唯一真实应用入口；不提供旧 `/ui/*`、`/preview/*` 或离线工作台兼容路由。
 - Owner 是唯一执行环境和用户工作区；浏览器通过 loopback Fastify Owner WebSocket 访问本地 Gateway。Guest 匿名执行、lease、quota 和管理工作流已完全移除，不作为兼容模式。
+- Owner 控制面使用 `CODEX_DATA_ROOT/owner.sqlite` 持久化认证、Project、Credential 和安全事件；Thread transcript 由 Codex App Server/Codex Home 管理，remote trust 与加密密钥保持独立本地 secret 边界。
 - 远程能力采用 Paseo 基准的 pnpm monorepo：`packages/app`、`packages/server`、`packages/relay` 和 `packages/protocol`。Owner Gateway 是身份、业务、Agent、Thread、事件和历史的唯一边界；远程端通过 Relay 的 E2EE transport 接入同一个 Owner session runtime。`@codex-web/protocol/owner` 与 `@codex-web/protocol/relay` 在同一 package 内保持显式职责隔离。Relay 只维护内存连接路由、协议版本和连接生命周期，不保存账户、设备、事件或业务正文。产品限定为单个 Owner 节点及其远程控制端，不建立 Relay 账户体系或多节点管理体系。
 
 ## 架构风险

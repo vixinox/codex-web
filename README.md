@@ -10,7 +10,7 @@ Codex Web 是一个运行在本地 Web origin 上、由身份验证保护的单�
 
 - Node.js 18+
 - pnpm
-- PostgreSQL（可通过 Docker Compose 提供本地实例）
+- SQLite（由 Owner 首次启动自动创建）
 
 本项目提供源码、前端构建命令和本地服务启动命令。项目不提供生产环境、数据库托管、反向代理、域名配置或发行分发。
 
@@ -23,13 +23,7 @@ git clone https://github.com/vixinox/codex-web.git
 cd codex-web
 ```
 
-启动本地 PostgreSQL：
-
-```bash
-docker compose up -d postgres
-```
-
-也可以使用已有 PostgreSQL，在 `.env` 中将 `DATABASE_URL` 设置为已有连接地址。然后安装依赖并复制环境配置：
+复制环境配置并初始化本地 SQLite：
 
 ```bash
 pnpm install
@@ -37,7 +31,7 @@ cp .env.example .env
 pnpm db:push
 ```
 
-编辑 `.env`，确认 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL` 和 `BETTER_AUTH_TRUSTED_ORIGINS`。
+编辑 `.env`，确认 `BETTER_AUTH_SECRET`、`BETTER_AUTH_URL` 和 `BETTER_AUTH_TRUSTED_ORIGINS`。数据库文件位于 `CODEX_DATA_ROOT/owner.sqlite`。
 
 在两个终端分别启动 Vite 和 Owner 服务：
 

@@ -1,42 +1,35 @@
 import { relations } from 'drizzle-orm/_relations'
-import {
-  type AnyPgColumn,
-  pgTable,
-  text,
-  timestamp,
-  boolean,
-  index,
-  integer,
-  jsonb,
-  uniqueIndex,
-} from 'drizzle-orm/pg-core'
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
-export const user = pgTable('user', {
+const timestamp = (name: string) => integer(name, { mode: 'timestamp' })
+
+export const user = sqliteTable('user', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
-  emailVerified: boolean('email_verified').default(false).notNull(),
+  emailVerified: integer('email_verified', { mode: 'boolean' }).default(false).notNull(),
   image: text('image'),
-  currentCredentialId: text('current_credential_id').references((): AnyPgColumn => credential.id, {
-    onDelete: 'set null',
-  }),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
+  currentCredentialId: text('current_credential_id'),
+  createdAt: timestamp('created_at')
+    .notNull()
+    .$defaultFn(() => new Date()),
   updatedAt: timestamp('updated_at')
-    .defaultNow()
-    .$onUpdate(() => /* @__PURE__ */ new Date())
-    .notNull(),
+    .notNull()
+    .$defaultFn(() => new Date()),
 })
 
-export const session = pgTable(
+export const session = sqliteTable(
   'session',
   {
     id: text('id').primaryKey(),
     expiresAt: timestamp('expires_at').notNull(),
     token: text('token').notNull().unique(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
     updatedAt: timestamp('updated_at')
-      .$onUpdate(() => /* @__PURE__ */ new Date())
-      .notNull(),
+      .notNull()
+      .$defaultFn(() => new Date()),
     ipAddress: text('ip_address'),
     userAgent: text('user_agent'),
     userId: text('user_id')
@@ -46,7 +39,7 @@ export const session = pgTable(
   (table) => [index('session_userId_idx').on(table.userId)],
 )
 
-export const account = pgTable(
+export const account = sqliteTable(
   'account',
   {
     id: text('id').primaryKey(),
@@ -62,31 +55,34 @@ export const account = pgTable(
     refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
     scope: text('scope'),
     password: text('password'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
     updatedAt: timestamp('updated_at')
-      .$onUpdate(() => /* @__PURE__ */ new Date())
-      .notNull(),
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (table) => [index('account_userId_idx').on(table.userId)],
 )
 
-export const verification = pgTable(
+export const verification = sqliteTable(
   'verification',
   {
     id: text('id').primaryKey(),
     identifier: text('identifier').notNull(),
     value: text('value').notNull(),
     expiresAt: timestamp('expires_at').notNull(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
     updatedAt: timestamp('updated_at')
-      .defaultNow()
-      .$onUpdate(() => /* @__PURE__ */ new Date())
-      .notNull(),
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (table) => [index('verification_identifier_idx').on(table.identifier)],
 )
 
-export const project = pgTable(
+export const project = sqliteTable(
   'project',
   {
     id: text('id').primaryKey(),
@@ -95,8 +91,12 @@ export const project = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     path: text('path').notNull(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: timestamp('updated_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (table) => [
     index('project_userId_idx').on(table.userId),
@@ -105,7 +105,7 @@ export const project = pgTable(
   ],
 )
 
-export const credential = pgTable(
+export const credential = sqliteTable(
   'credential',
   {
     id: text('id').primaryKey(),
@@ -115,13 +115,17 @@ export const credential = pgTable(
     provider: text('provider').notNull(),
     baseUrl: text('base_url').notNull(),
     encryptedApiKey: text('encrypted_api_key').notNull(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: timestamp('updated_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (table) => [index('credential_userId_idx').on(table.userId)],
 )
 
-export const codexEvent = pgTable(
+export const codexEvent = sqliteTable(
   'codex_event',
   {
     id: integer('id').primaryKey(),
@@ -129,8 +133,10 @@ export const codexEvent = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     threadId: text('thread_id'),
-    message: jsonb('message').$type<Record<string, unknown>>().notNull(),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
+    message: text('message', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp('created_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (table) => [
     index('codex_event_user_id_idx').on(table.userId),
@@ -143,25 +149,15 @@ export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
 }))
-
 export const sessionRelations = relations(session, ({ one }) => ({
-  user: one(user, {
-    fields: [session.userId],
-    references: [user.id],
-  }),
+  user: one(user, { fields: [session.userId], references: [user.id] }),
 }))
-
 export const accountRelations = relations(account, ({ one }) => ({
-  user: one(user, {
-    fields: [account.userId],
-    references: [user.id],
-  }),
+  user: one(user, { fields: [account.userId], references: [user.id] }),
 }))
-
 export const projectRelations = relations(project, ({ one }) => ({
   user: one(user, { fields: [project.userId], references: [user.id] }),
 }))
-
 export const credentialRelations = relations(credential, ({ one }) => ({
   user: one(user, { fields: [credential.userId], references: [user.id] }),
 }))

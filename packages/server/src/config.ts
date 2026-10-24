@@ -6,8 +6,6 @@ import { randomBytes } from 'node:crypto'
 export type ServerConfig = {
   host: string
   port: number
-  databaseUrl: string
-  databaseSsl: boolean
   authSecret: string
   authUrl: string
   trustedOrigins: string[]
@@ -24,11 +22,6 @@ export type ServerConfig = {
 function positiveInt(value: string | undefined, fallback: number) {
   const parsed = Number(value ?? fallback)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function required(name: string, value: string | undefined): string {
-  if (!value?.trim()) throw new Error(`${name} is required`)
-  return value.trim()
 }
 
 function url(name: string, value: string): string {
@@ -87,8 +80,6 @@ export function loadServerConfig(): ServerConfig {
   return {
     host,
     port: positiveInt(process.env.SERVER_PORT, 3000),
-    databaseUrl: required('DATABASE_URL', process.env.DATABASE_URL),
-    databaseSsl: process.env.DATABASE_SSL === 'true',
     authSecret,
     authUrl,
     trustedOrigins,

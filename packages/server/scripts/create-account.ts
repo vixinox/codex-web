@@ -108,7 +108,7 @@ async function main() {
     }
     console.log('=========================================\n')
   } finally {
-    await database.pool.end()
+    database.driver.close()
   }
 }
 
