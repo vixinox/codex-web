@@ -1,0 +1,32 @@
+{
+  "name": "@codex-web/server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "start": "node ../../scripts/run-with-env.mjs tsx src/owner/server.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test src/**/*.test.ts",
+    "test:integration": "tsx --test src/**/*.integration.ts",
+    "db:push": "node ../../scripts/run-with-env.mjs drizzle-kit push",
+    "db:reset": "node ../../scripts/run-with-env.mjs tsx scripts/reset-local-database.ts && pnpm db:push --force",
+    "account:create": "node ../../scripts/run-with-env.mjs tsx scripts/create-account.ts"
+  },
+  "dependencies": {
+    "@codex-web/protocol": "workspace:*",
+    "@fastify/sensible": "^6.0.5",
+    "@fastify/websocket": "^11.3.4",
+    "better-auth": "^1.7.4",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "1.0.0-rc.4",
+    "fastify": "^5.12.4",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "1.0.0-rc.4",
+    "tsx": "^4.23.13",
+    "typescript": "7.0.2"
+  }
+}

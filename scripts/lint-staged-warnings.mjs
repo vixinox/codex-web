@@ -4,11 +4,14 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
 const repoRoot = runGit(['rev-parse', '--show-toplevel']).trim()
-const stagedFiles = parseStagedFiles(
-  runGit(['diff', '--cached', '--name-status', '--diff-filter=ACMR', '-z']),
-)
 const stagedPaths = parseGitPaths(runGit(['ls-files', '-z']))
 const baselinePaths = parseTreePaths(runGit(['ls-tree', '-r', '--name-only', '-z', 'HEAD']))
+const stagedFiles = parseStagedFiles(
+  runGit(['diff', '--cached', '--name-status', '--diff-filter=ACMR', '-z']),
+).map((file) => ({
+  ...file,
+  baselinePath: file.baselinePath ?? findMovedBaselinePath(file.path, baselinePaths),
+}))
 
 if (stagedFiles.length === 0) process.exit(0)
 
@@ -70,9 +73,7 @@ function writeSnapshot(snapshotRoot, paths, readBlob) {
       !destination.startsWith(`${snapshotRoot}\\`) &&
       !destination.startsWith(`${snapshotRoot}/`)
     ) {
-      throw new Error(
-        `Refusing to write a staged path outside the temporary directory: ${path}`,
-      )
+      throw new Error(`Refusing to write a staged path outside the temporary directory: ${path}`)
     }
 
     mkdirSync(dirname(destination), { recursive: true })
@@ -92,7 +93,23 @@ function linkNodeModules(snapshotRoot) {
 }
 
 function lint(files, snapshotRoot) {
-  if (files.length === 0) return []
+  const lintableFiles = files.filter((file) => /\.(?:[cm]?ts|tsx)$/.test(file))
+  if (lintableFiles.length === 0) return []
+
+  const filesByTsconfig = new Map()
+  for (const file of lintableFiles) {
+    const relativePath = relative(snapshotRoot, file).replaceAll('\\', '/')
+    const tsconfig = tsconfigForPath(relativePath)
+    const group = filesByTsconfig.get(tsconfig) ?? []
+    group.push(file)
+    filesByTsconfig.set(tsconfig, group)
+  }
+
+  return [...filesByTsconfig].flatMap(([tsconfig, group]) => runLint(group, snapshotRoot, tsconfig))
+}
+
+function runLint(files, snapshotRoot, tsconfig) {
+  const tsconfigPath = resolve(snapshotRoot, tsconfig)
 
   const result = spawnSync(
     process.execPath,
@@ -102,7 +119,7 @@ function lint(files, snapshotRoot) {
       '--config',
       join(snapshotRoot, '.oxlintrc.json'),
       '--tsconfig',
-      join(snapshotRoot, 'tsconfig.json'),
+      tsconfigPath,
       '--no-error-on-unmatched-pattern',
       ...files,
     ],
@@ -112,12 +129,31 @@ function lint(files, snapshotRoot) {
   if (result.error) throw result.error
 
   try {
-    return JSON.parse(result.stdout).diagnostics
+    return JSON.parse(result.stdout).diagnostics.filter(
+      (diagnostic) =>
+        !(
+          diagnostic.code === 'typescript(tsconfig-error)' &&
+          diagnostic.filename?.endsWith('tsconfig.json')
+        ),
+    )
   } catch (error) {
     throw new Error(`oxlint did not produce JSON diagnostics:\n${result.stderr || result.stdout}`, {
       cause: error,
     })
   }
+}
+
+function tsconfigForPath(path) {
+  if (path.startsWith('packages/app/')) return 'packages/app/tsconfig.json'
+  if (path.startsWith('packages/server/')) return 'packages/server/tsconfig.json'
+  if (path.startsWith('packages/protocol/')) return 'packages/protocol/tsconfig.json'
+  if (path.startsWith('packages/relay/')) return 'packages/relay/tsconfig.json'
+  if (path.startsWith('src/')) return 'tsconfig.app.json'
+  if (path.startsWith('server/')) return 'server/tsconfig.json'
+  if (path.startsWith('packages/owner-protocol/')) return 'packages/owner-protocol/tsconfig.json'
+  if (path.startsWith('packages/remote-protocol/')) return 'packages/remote-protocol/tsconfig.json'
+  if (path.startsWith('apps/relay/')) return 'apps/relay/tsconfig.json'
+  return 'tsconfig.json'
 }
 
 function countWarnings(diagnostics) {
@@ -208,10 +244,41 @@ function parseStagedFiles(output) {
   return files
 }
 
+function findMovedBaselinePath(path, baselinePaths) {
+  const candidates = []
+
+  if (path.startsWith('packages/app/')) {
+    const relativePath = path.slice('packages/app/'.length)
+    candidates.push(relativePath)
+    if (relativePath === 'tsconfig.json') candidates.push('tsconfig.app.json')
+  }
+  if (path.startsWith('packages/server/src/'))
+    candidates.push(`server/${path.slice('packages/server/src/'.length)}`)
+  if (path.startsWith('packages/server/scripts/'))
+    candidates.push(`scripts/${path.slice('packages/server/scripts/'.length)}`)
+  if (path === 'packages/server/drizzle.config.ts') candidates.push('drizzle.config.ts')
+  if (path === 'packages/server/tsconfig.json') candidates.push('server/tsconfig.json')
+  if (path.startsWith('packages/relay/src/'))
+    candidates.push(`apps/relay/${path.slice('packages/relay/src/'.length)}`)
+  if (path.startsWith('packages/protocol/src/owner/'))
+    candidates.push(
+      `packages/owner-protocol/src/${path.slice('packages/protocol/src/owner/'.length)}`,
+    )
+  if (path.startsWith('packages/protocol/src/relay/'))
+    candidates.push(
+      `packages/remote-protocol/src/${path.slice('packages/protocol/src/relay/'.length)}`,
+    )
+
+  return candidates.find((candidate) => baselinePaths.includes(candidate))
+}
+
 function parseGitPaths(output) {
   return output.split('\0').filter(Boolean)
 }
 
 function parseTreePaths(output) {
-  return output.split('\0').filter(Boolean).map((entry) => entry.slice(entry.indexOf('\t') + 1))
+  return output
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => entry.slice(entry.indexOf('\t') + 1))
 }

@@ -1,13 +1,13 @@
 # Transcript 渲染架构
 
-本文档描述当前 Chat transcript 的真实前端实现。它记录数据边界、状态归一化、组件职责和流式渲染行为；协议字段的完整定义仍以 [API 契约](../api/README.zh-CN.md) 和 `src/app/chat/native` 为准。
+本文档描述当前 Chat transcript 的真实前端实现。它记录数据边界、状态归一化、组件职责和流式渲染行为；协议字段的完整定义仍以 [API 契约](../api/README.zh-CN.md) 和 `packages/app/src/app/chat/native` 为准。
 
 ## 总体路径
 
 Transcript 遵循单向数据流：
 
 ```text
-Fastify bridge snapshot/SSE
+Owner WS snapshot/stream
         |
         v
 useThreadDetailController
@@ -36,15 +36,15 @@ ThreadAssets
        └─ error / copy actions
 ```
 
-页面和 renderer 只接收 `ChatThreadPresentation`、`ChatTurnPresentation` 及其子类型，不直接读取 native DTO、bridge payload、SSE method 或宿主机信息。
+页面和 renderer 只接收 `ChatThreadPresentation`、`ChatTurnPresentation` 及其子类型，不直接读取 native DTO、Owner WS payload、Owner method 或宿主机信息。
 
 ## 数据进入与归一化
 
 `useThreadDetailController` 负责 Thread 的生命周期，而不是渲染：
 
-1. 等待 bridge availability，读取安全 Thread snapshot 和 `eventCursor`。
-2. 将 snapshot 的 `historyEvents` 重放到 session，再以 `replayAfterId` 建立 SSE 订阅。
-3. SSE 按事件 ID 去重；断线恢复时先读取 status，必要时重新 hydrate snapshot。
+1. 等待 Owner WS availability，读取安全 Thread snapshot 和 `eventCursor`。
+2. 将 snapshot 的 `historyEvents` 重放到 session，再以 `replayAfterId` 建立 Owner WS stream。
+3. Owner WS stream 按事件 ID 去重；断线恢复时先读取 status，必要时重新 hydrate snapshot。
 4. 未知或格式错误事件转换为 protocol error，由 reducer 记录，不能让 transcript 崩溃。
 
 `thread-session-store.ts` 保存每个 Thread 的 native 状态和可变 presentation 缓存。完整 hydrate 时按原生 turn 顺序同步；局部事件只重新投影受影响的 turn，并更新 `turnOrder`、`latestUserBlockId`、busy、compaction 和 user-input 等派生状态。session snapshot 通过 `useThreadSessionSnapshot` 提供稳定的 React 订阅结果。
@@ -63,7 +63,7 @@ ThreadAssets
 `ThreadAssets` 是 transcript 的列表容器和滚动协调器：
 
 - 使用 session 的 `turnOrder` 渲染 turn；没有 session 时使用传入 presentation 的 turn 数组。
-- session 模式下每个 turn 由 `SessionThreadTurn` 按 ID 读取，避免父组件为每个 SSE 增量重建全部 turn 对象。
+- session 模式下每个 turn 由 `SessionThreadTurn` 按 ID 读取，避免父组件为每个 WS 增量重建全部 turn 对象。
 - 只把最后一个 turn 的 `retryState` 和 pending questionnaire 传入。
 - 监听实际可滚动父节点的 scroll/resize。用户位于底部时保持自动滚动；用户向上阅读时锁定位置。
 - 新 user block、compacting、retry 或 `lockEpoch` 请求会重新获取底部锁定并滚动到底部。
@@ -107,7 +107,7 @@ assistant Markdown block 在 turn 进行中按完整 Markdown 边界提交：已
 ## 修改边界与验证
 
 - 新增协议字段时，先在 native reducer/presentation adapter 中完成白名单化，再让 renderer 消费 UI model。
-- 不在 `ThreadAssets` 或 `ThreadBlock` 中解析 SSE method、原生 item 或服务端错误 payload。
+- 不在 `ThreadAssets` 或 `ThreadBlock` 中解析 Owner method、原生 item 或服务端错误 payload。
 - 影响 renderer、CSS 或布局时运行 `pnpm typecheck`、触及文件的 `oxfmt --check`，并进行手工浏览器回归。
-- 影响 reducer、projection、SSE 或 session 时运行对应定向测试，再运行 `pnpm typecheck` 和 `oxfmt --check`。
+- 影响 reducer、projection、Owner WS stream 或 session 时运行对应定向测试，再运行 `pnpm typecheck` 和 `oxfmt --check`。
 - 不新增 React DOM、Playwright 或截图测试，除非任务明确要求。

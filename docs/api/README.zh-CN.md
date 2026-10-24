@@ -1,145 +1,85 @@
 # Codex Web API 契约
 
-浏览器只调用 Fastify bridge 的 REST/SSE 接口，不直接连接 Codex App Server。Owner Base URL 为 `http://127.0.0.1:3000`；前端开发入口为 `http://localhost:5173`。Docker Compose 仅用于提供本地 Postgres 数据库，Better Auth session cookie 由浏览器自动发送。
+Owner 业务统一通过版本化 WebSocket 提供。浏览器、桌面端和远程控制端都连接同一个 Owner Gateway；远程连接经 Relay E2EE transport 接入，不重新模拟 HTTP request/reply。
 
-本项目交付源码、前端构建命令和本地 Owner 服务启动命令。API 契约不包含生产部署、远程托管、反向代理、域名或发行分发方案。
+## HTTP 外围
 
-## 边界
+HTTP 只保留不属于 Owner 核心业务协议的入口：
 
-- 所有接口以当前 session 确定用户身份；未认证请求返回 `401 UNAUTHORIZED`。
-- `projectId`、`threadId` 和 `credentialId` 只能引用当前用户资源。
-- 浏览器永远不会收到 API key、`CODEX_HOME`、宿主机路径、rollout 路径或 App Server 进程信息。
-- `input` 保留 Codex 原生 Turn input 语义；前端不得提交任意宿主机路径。
-- 事件保留原生 `method + params`，bridge 只增加 SSE envelope。
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/health` | 进程存活检查 |
+| `GET` | `/ready` | 依赖和事件 store 就绪检查 |
+| `GET` | `/metadata` | 产品、协议版本和公开能力 |
+| `GET` | `/api/auth/bootstrap` | 本地首次 Owner 创建发现 |
+| `POST` | `/api/remote/pairing/offer` | 本地已认证 Owner 创建一次性配对 offer |
 
-## 认证与资源
+不再提供 credential、project、configuration、codex、skills、thread、event、auth session 或 `/api/me` REST/SSE 业务路由。
 
-## 实例连接 metadata
+## Owner WebSocket
 
-`GET /metadata` 不要求登录，用于启动页检查当前实例是否兼容。响应只包含产品、协议、最低客户端版本和公开能力：
+连接使用 `@codex-web/protocol/owner` 的 UTF-8 JSON frame。`hello` 必须是首帧；服务端返回 `ready`，随后接受 `request`、`cancel` 和服务端的 `response`、`notification`、`stream.*`。
 
-```json
-{
-  "product": "codex-web",
-  "protocolVersion": "2026-01",
-  "minClientVersion": "0.0.1",
-  "capabilities": ["threads", "turns", "sse", "pwa", "workspace"]
-}
-```
-
-该响应不得包含 API key、宿主机路径、`CODEX_HOME`、rollout 路径、Credential 或 App Server 进程信息。Hosted/Self-hosted 的远程地址和多实例配置尚未开放；当前客户端只检查当前 origin。
-
-服务只监听本地回环地址，不提供远程或反向代理部署契约。Origin 不在白名单的状态变更请求仍返回 `ORIGIN_NOT_ALLOWED`。
-
-| 方法     | 路径                                  | 用途                         |
-| -------- | ------------------------------------- | ---------------------------- |
-| `POST`   | `/api/auth/sign-up/email`             | 创建首个本地 owner           |
-| `POST`   | `/api/auth/sign-in/email`             | 登录                         |
-| `GET`    | `/api/auth/get-session`               | 恢复 session                 |
-| `GET`    | `/api/auth/bootstrap`                 | 查询 owner 是否存在          |
-| `POST`   | `/api/auth/sign-out`                  | 退出                         |
-| `GET`    | `/api/me`                             | 获取当前用户                 |
-| `GET`    | `/api/projects`                       | 获取 Project                 |
-| `POST`   | `/api/projects`                       | 创建受控 Project             |
-| `GET`    | `/api/credentials`                    | 获取脱敏 Credential 和当前项 |
-| `POST`   | `/api/credentials`                    | 保存 Credential              |
-| `PUT`    | `/api/credentials/current`            | 选择默认 Credential          |
-| `POST`   | `/api/credentials/:credentialId/test` | 测试 Credential              |
-| `DELETE` | `/api/credentials/:credentialId`      | 删除 Credential              |
-
-Project 是按受控 `cwd` 建立的逻辑分组；删除 Project 不删除目录、文件或 Thread。Credential 响应只包含 `id`、provider、baseUrl 和时间字段，绝不返回 API key。
-
-## Codex runtime
-
-| 方法   | 路径                                | 用途                |
-| ------ | ----------------------------------- | ------------------- |
-| `GET`  | `/api/codex/status`                 | 获取 runtime 状态   |
-| `POST` | `/api/codex/start`                  | 启动 runtime        |
-| `POST` | `/api/codex/restart`                | 重启 runtime        |
-| `GET`  | `/api/configuration/context-window` | 读取 context window |
-| `PUT`  | `/api/configuration/context-window` | 更新 context window |
-
-`GET /api/capabilities` 返回当前 App Server `model/list` 的安全投影：
-
-```json
-{
-  "models": [
-    {
-      "id": "gpt-5.6-sol",
-      "displayName": "...",
-      "defaultReasoningEffort": "medium",
-      "reasoningEfforts": [{ "id": "low", "description": "..." }],
-      "inputModalities": ["text"]
-    }
-  ]
-}
-```
-
-Owner 使用 runtime 返回的模型和推理强度。
-
-`credentialId` 可选；省略时使用持久化的 `currentCredentialId`。启动必须显式确认 `danger-full-access`。当前用户没有 Credential 时返回 `409 CODEX_PROFILE_REQUIRED`，缺少确认时返回 `428 CODEX_DANGEROUS_ACCESS_CONFIRMATION_REQUIRED`。
-
-## Thread 与 Turn
-
-| 方法   | 路径                                           | 用途                             |
-| ------ | ---------------------------------------------- | -------------------------------- |
-| `GET`  | `/api/threads`                                 | 获取当前用户 Thread              |
-| `POST` | `/api/threads`                                 | 创建 Thread                      |
-| `GET`  | `/api/threads/:threadId`                       | 读取 Thread 快照                 |
-| `GET`  | `/api/threads/:threadId/status`                | 获取恢复所需的轻量状态           |
-| `POST` | `/api/threads/:threadId/turns`                 | 启动 Turn                        |
-| `POST` | `/api/threads/:threadId/turns/:turnId/cancel`  | 取消 Turn 或排队任务             |
-| `POST` | `/api/threads/:threadId/user-input/:requestId` | 提交工具问答并持久化安全答案事件 |
-| `POST` | `/api/threads/:threadId/approvals/:requestId`  | 响应审批请求                     |
-
-Thread 响应不返回 `cwd`、rollout 路径或 Git remote。读取响应为 `{ thread, eventCursor, historyEvents }`；服务端按受控 Project 校验归属并投影安全字段。Thread 投影只接受符合安全标识符格式的 `model` 与 `reasoningEffort`；effort 值跟随 App Server 当前模型目录，不使用固定产品枚举。创建 Thread 或 Turn 时，服务端仍按当前 `model/list` 校验模型与 effort 组合。Turn 最终状态以 SSE 的 `turn/completed` 为准。
-
-`historyEvents` 只包含当前用户、当前 Thread、保留窗口内经过安全投影且需要补齐原生 Thread 快照的事件：Thread model/effort 设置更新、命令执行生命周期，以及用户问答的 `item/tool/requestUserInput`、`webcodex/userInput/answered`、`serverRequest/resolved`。`webcodex/userInput/answered` 是 bridge 自有事件，用于持久化 App Server 的 resolved 通知未携带的已提交答案；前端按 `requestId` 将请求、答案和结束事件归一为稳定的 transcript summary。`eventCursor` 是当前 Thread 最后一条历史事件 ID，而非用户级最后 ID，因此跨 Thread 事件不会导致 SSE 漏事件；查询快照与响应之间产生的新事件仍通过 SSE 补回。每个用户 Thread 最多保留最近 1000 条事件，旧的按事件 ID 滚动删除。`historyEvents` 不含 API key、绝对路径、stack 或 raw rollout 字段。
-
-## SSE
-
-```http
-GET /api/events?threadId=thread-id&afterId=123
-Accept: text/event-stream
-Last-Event-ID: 123
-```
-
-连接后先收到 `: connected`，事件格式为：
+主要方法命名空间：
 
 ```text
-id: 124
-event: item/agentMessage/delta
-data: {"method":"item/agentMessage/delta","params":{}}
+owner.status
+owner.bootstrap.create
+owner.session.open
+owner.session.close
+credentials.*
+projects.*
+codex.*
+configuration.contextWindow.*
+capabilities.list
+skills.list
+threads.*
+userInput.respond
+approvals.resolve
+events.subscribe
+events.resume
+remote.status
+remote.pairing.offer
+remote.trust.reset
 ```
 
-规则：
+业务方法只返回安全 DTO。响应、事件和错误不得包含 API key、绝对路径、Codex Home、rollout 路径、App Server 进程信息、原始 Codex payload 或 stack。
 
-- `id` 是 bridge 事件 ID，不是 JSON-RPC request ID。
-- `event` 等于消息 `method`；没有 method 时为 `message`。
-- `data` 是原生 `{ method, params }` envelope。
-- `threadId` 过滤 Thread；`scope=workspace` 接收当前用户的 workspace lifecycle 事件，包括 `thread/archived`、`thread/unarchived`、`thread/closed` 和 `thread/deleted`。这些生命周期通知只投影 `threadId`，不包含运行时或文件系统字段。
-- 首次连接使用 Thread 快照的 `eventCursor` 作为 `afterId`，重连使用最后收到的 `Last-Event-ID`。
-- 游标必须是非负安全整数；非法游标返回 `INVALID_EVENT_CURSOR`。
-- 前端按 Codex item ID 聚合 delta，`item/completed` 是最终事实来源；bridge 不生成 UI block。问答是例外：bridge 发布 `webcodex/userInput/answered` 补足原生 `serverRequest/resolved` 缺失的答案字段，UI block 仍由前端投影生成。
+## 认证与权限
 
-前端应处理 `thread/started`、`thread/settings/updated`、`thread/tokenUsage/updated`、`turn/started`、`item/started`、`item/agentMessage/delta`、`item/completed`、`turn/completed`、`turn/diff/updated`、审批 request、`serverRequest/resolved`、`error` 和 `warning`。`thread/settings/updated` 的浏览器投影只包含 `threadId` 及格式安全的 `model`、`reasoningEffort`，不透传原始 `threadSettings`。同一 SSE ID 只处理一次。
+首次 Owner bootstrap 只能来自本地、可信 Origin 的连接。`owner.session.open` 使用 email/password，通过 Better Auth 公共 API 返回 opaque bearer token；后续连接在 `hello.sessionToken` 携带 token。远程连接必须先通过设备配对、当前 trust epoch 和 E2EE admission。
+
+每个请求都执行 Owner、Project、Thread 和受控路径归属校验。产品只有一个 Owner 不会取消资源归属检查。
+
+## 事件与恢复
+
+事件使用统一 WS stream：
+
+```text
+events.subscribe(scope, threadId?, cursor?)
+events.resume(subscriptionId, cursor)
+stream.event
+stream.close
+```
+
+公共 cursor 为 `{ epoch: string; sequence: number }`。有效 cursor 先回放缺失事件再切换实时订阅；cursor 过期、epoch 不匹配或历史 gap 时发送 `events.reset`，客户端重新读取安全 Thread snapshot 后订阅。
+
+连接断开不会隐式取消已经接受的 Turn；取消必须调用 `threads.cancel`。请求 ID 在单连接内不可重用，stream 和 subscription 受连接、session 和 Owner 范围约束。
 
 ## 错误
 
-统一格式：
+统一响应格式为：
 
 ```json
-{ "error": { "code": "INVALID_PROJECT", "message": "..." } }
+{
+  "type": "response",
+  "requestId": "request-1",
+  "error": {
+    "code": "THREAD_NOT_FOUND",
+    "message": "Thread not found.",
+    "retryable": false
+  }
+}
 ```
 
-常见处理：
-
-| HTTP  | code                                           | 前端动作                |
-| ----- | ---------------------------------------------- | ----------------------- |
-| `400` | `INVALID_PROJECT` / `INVALID_CREDENTIAL`       | 显示表单或请求错误      |
-| `401` | `UNAUTHORIZED`                                 | 清理 session 并跳转登录 |
-| `404` | `CREDENTIAL_NOT_FOUND` / `THREAD_NOT_FOUND`    | 刷新资源或显示不存在    |
-| `502` | `CODEX_UNAVAILABLE` / `CREDENTIAL_TEST_FAILED` | 显示可重试错误          |
-| `500` | `INTERNAL_ERROR` / `AUTH_FAILURE`              | 显示通用错误            |
-
-错误不得展示 stack、数据库错误、API key、宿主机路径或完整环境变量。
+错误只返回稳定的 Owner error code，不暴露 HTTP body、数据库错误、凭据、路径或原始 runtime 信息。

@@ -1,12 +1,6 @@
 # 前端边界
 
-本项目的前端是本地 Codex 工作台，不提供 Hosted 或多实例前端。开发入口由 Vite 提供，生产构建使用 `pnpm build`；本地 Owner bridge 使用 `pnpm server:owner` 启动。
-
-前端通过 `@/lib/bridge` 访问 Fastify REST/SSE；页面和 renderer 只消费 UI-facing model，不直接依赖原生 DTO、服务端 payload、宿主机路径或凭据。
-
-API 契约见 [API 契约](../api/README.zh-CN.md)。稳定架构基线见 [PROJECT.md](../../PROJECT.md)。移动端访问策略见 [移动端访问策略](mobile-access.zh-CN.md)。
-
-Transcript 渲染实现见 [Transcript 渲染架构](transcript-architecture.zh-CN.md)。
+前端位于 `packages/app`，通过 Owner WS client 访问本机 Owner Gateway。页面和 renderer 只消费 UI-facing model，不直接依赖 Owner protocol raw frame、Codex payload、宿主机路径或凭据。
 
 ## 依赖方向
 
@@ -15,67 +9,50 @@ app/entry -> app/composition -> app/{chat,workspace,settings}/application
                                       |
                                       +-> domain -> UI-facing model -> renderer
                                       |
-                                      +-> lib/bridge/interfaces -> Owner adapter -> transport
+                                      +-> lib/owner-ws -> @codex-web/protocol/owner
                                       |
                                       +-> components/ui -> lib/utils
 ```
 
-- `app/entry` 负责应用启动、路由、认证过期和根错误边界。
-- `app/composition` 负责布局和领域组合，不直接调用 fetch、SSE 或数据库。
-- `app/chat`、`app/settings`、`app/workspace` 负责各自领域的 application、domain 和 renderer；`ChatSession`、`ComposerSession` 与 `WorkspaceCatalog` 是跨 UI 模块的命名接口。
-- `lib/bridge/interfaces` 定义 UI 可用的 bridge 接口，Owner adapter 负责连接本地 Fastify；raw DTO、HTTP/SSE 和协议解析留在 adapter/transport 内部。
-- `components/ui` 只依赖通用库和 `lib/utils`，不访问 API、路由、认证或浏览器持久化。
-- `lib/db` 是 server-only，不能进入浏览器图。
+`packages/app` 可以依赖 `@codex-web/protocol/owner` 的类型和 parser，但不依赖 `@codex-web/protocol/relay/crypto`、server-only database 或 Fastify request/reply。
 
-## 导航与状态
+## Owner WS client
 
-应用内导航使用 React Router；数据变化通过 controller、mutation、invalidate 或 refetch 处理，不使用整页重载。认证失效时清理本地状态并导航到 `/login`。
+`lib/owner-ws` 负责连接、session token resume、request/response、stream、cancel、事件 cursor、重连和认证过期状态。领域 controller 通过 adapter 调用方法，不拼接 wire frame，不访问 HTTP 或 SSE。
 
-HTTP 响应用于确认命令是否被接受，SSE 事件用于更新 Turn/item 最终状态。Thread/Turn 不携带 Credential identity。Thread ID 以路由为准，不写入 localStorage；Turn 增量和 SSE 事件不写入 localStorage。
-
-推荐状态：
+连接状态使用：
 
 ```text
-auth: unknown | authenticated | unauthenticated
-connection: disconnected | connecting | connected | reconnecting | failed
-thread: idle | loading | ready | starting | failed
-turn: idle | queued | inProgress | interrupted | completed | failed
+disconnected | connecting | connected | reconnecting | failed
 ```
 
-## SSE 数据流
+认证状态使用：
 
 ```text
-用户输入 -> POST /turns -> queued/starting
-         -> SSE turn/started + item/*
-         -> native reducer 按 itemId 聚合
-         -> SSE turn/completed
-
-用户问答 -> SSE item/tool/requestUserInput（瞬时待回答状态）
-         -> POST /user-input/:requestId
-         -> SSE webcodex/userInput/answered + serverRequest/resolved
-         -> native reducer 按 requestId 物化为持久 transcript summary
+unknown | authenticated | unauthenticated
 ```
 
-- `item/agentMessage/delta` 按 `itemId` 追加。
-- `item/completed` 覆盖对应 item。
-- 同一个 SSE ID 只处理一次；重连重放不能重复文本。
-- 首次打开 Thread 先读取 `eventCursor`，再用 `afterId` 建立详情流。
-- 连接恢复后先读取 Thread 快照校正本地状态。
-- 浏览器从 offline 恢复或页面从后台重新可见时，先读取 Thread status，再按 cursor 变化读取快照并重新建立 SSE；恢复状态不写入 transcript、命令输出、文件内容、路径或凭据。
-- 未知事件保留诊断信息，但不能让 Chat 崩溃。
-- Thread snapshot 的合法 `model`/`reasoningEffort` 是 Composer Thread scope 的服务端真值；`thread/settings/updated` 只同步发生变化的对应字段。New Chat scope 保持独立缓存，Thread 缺失字段时保留该 scope 的本地选择。
-- Owner accepted Turn ID 可用于 native transcript reconciliation。
-- Thread 快照的 `historyEvents` 会重放原生快照未保留的命令与问答事件；问答请求、答案和结束事件必须在 native reducer 中归一化，renderer 不直接解释 bridge 事件。
+认证失效时清理本地 Owner state 并导航到 `/login`。重连后先读取 Thread status；cursor 无法恢复时读取安全 snapshot，再重新订阅。
 
-## 显示与安全
+## 数据流
 
-- API key、绝对路径、内部 stack、原始凭据响应和不透明 provider payload 不进入 UI。
-- 输入框、取消操作和错误状态必须可理解；图标按钮必须有可访问名称和 tooltip。
-- 工具和文件事件按只读信息展示；审批能力以当前实际实现为准，不因协议事件存在而假设 UI 已开放。
-- 主题使用语义 token，不在业务组件中新增具体颜色值；主题解析保持为确定性纯逻辑。
+```text
+用户输入 -> request(threads.send)
+         -> response(accepted turn)
+         -> stream.open/event/close
+         -> native reducer
+         -> presentation model
+         -> renderer
+```
+
+审批、用户问答、Turn cancel 和事件恢复都使用同一条 WS 连接。连接断开不会自动取消正在执行的 Turn。
+
+## 安全显示边界
+
+- API key、session token、绝对路径、Codex Home、rollout 路径、stack 和原始 provider payload 不进入 UI state、日志或缓存。
+- renderer 不解析 `method`、原生 item 或 server error payload；adapter/reducer 先将其投影为 UI model。
+- 文件和终端流属于后续 protocol 扩展；当前 Owner protocol 只支持 JSON text frame。
 
 ## 验证
 
-首批连接入口仅记录不含敏感信息的 session 级产品事件计数：连接检查成功/失败、工作区打开、Thread 打开、Turn 接受和 SSE 重连。事件不会包含实例地址、凭据、路径、native ID 或原始错误，也不会上传到外部服务。
-
-UI、CSS、renderer 和页面布局使用类型检查、触及文件的 `oxfmt --check` 和手工浏览器回归。transport、安全投影、controller、SSE 和纯逻辑改动使用定向测试（如有）、类型检查和格式检查。除非明确要求，不添加 React DOM、renderer、页面流程、Playwright、截图或视觉自动化测试。
+Owner WS transport、cursor 恢复、controller 和纯逻辑变更使用定向测试、`pnpm typecheck` 和触及文件的 `oxfmt --check`。页面验收使用用户启动的 Vite 和 Owner 服务进行手工浏览器回归。

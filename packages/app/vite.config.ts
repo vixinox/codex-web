@@ -1,0 +1,36 @@
+import { fileURLToPath, URL } from 'node:url'
+import tailwindcss from '@tailwindcss/vite'
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  server: {
+    host: true,
+    watch: {
+      ignored: [
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/.data/**',
+        '**/dist/**',
+        '**/docs/vendor/**',
+      ],
+    },
+    proxy: {
+      '/api': 'http://127.0.0.1:3000',
+      '/ws': {
+        target: 'ws://127.0.0.1:3000',
+        ws: true,
+      },
+    },
+  },
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+  optimizeDeps: {
+    include: ['lucide-react', 'react-markdown', 'remark-gfm'],
+  },
+})

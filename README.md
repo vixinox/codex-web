@@ -2,9 +2,9 @@
 
 Codex Web 是一个运行在本地 Web origin 上、由身份验证保护的单用户 Codex 工作台，支持桌面和移动端访问。
 
-浏览器通过 Fastify bridge 使用 REST/SSE；本机 Owner 负责认证、runtime、workspace、history 和 Agent 控制。浏览器只接收安全投影，不接收 API key、宿主机路径或 runtime 进程信息。
+浏览器通过 Fastify Owner WebSocket 访问本机 Gateway；Owner 负责认证、runtime、workspace、history 和 Agent 控制。浏览器只接收安全投影，不接收 API key、宿主机路径或 runtime 进程信息。
 
-![Codex Web 工作区](src/assets/codex-web-workspace.png)
+![Codex Web 工作区](packages/app/src/assets/codex-web-workspace.png)
 
 ## 运行要求
 
@@ -62,7 +62,7 @@ pnpm build
 pnpm typecheck
 pnpm test
 pnpm test:frontend
-pnpm test:bridge
+pnpm test:server
 pnpm exec oxfmt --check "**/*.{ts,tsx}"
 ```
 

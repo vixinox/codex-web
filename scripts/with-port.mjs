@@ -35,7 +35,8 @@ let executableArgs = args
 const serverEntrypoint = args.some((arg) => {
   const normalized = arg.replaceAll('\\', '/')
   return (
-    normalized.endsWith('server/owner/server.ts')
+    normalized.endsWith('packages/server/src/owner/server.ts') ||
+    normalized.endsWith('src/owner/server.ts')
   )
 })
 const exitOnServerStartupFailure =

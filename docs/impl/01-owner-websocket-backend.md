@@ -2,15 +2,15 @@
 
 ## 1. 状态与启动指令
 
-- 状态：Milestone 5 complete; database handoff pending
+- 状态：Milestone 5 complete; package/protocol consolidation complete
 - 目标：完成本机 Owner 的统一 WebSocket 业务入口、单 Owner 认证与 Application Services，使数据库替换能作为下一独立迭代开始。
 - 范围：Owner protocol、session runtime、本地 `/ws`、业务 service 抽取、旧 REST/SSE 业务入口删除；PG 暂留。
-- 启动前先读：本文件、`PROJECT.md`、`server/owner/app.ts`、`server/owner/server.ts`、`server/http/types.ts`、`server/http/`、`server/codex/event-hub.ts`、`server/codex/event-store.ts`、`server/auth.ts`、`server/workspace.ts`、`docs/api/README.zh-CN.md`、`docs/frontend/README.zh-CN.md`。
+- 启动前先读：本文件、`PROJECT.md`、`packages/server/src/owner/app.ts`、`packages/server/src/owner/server.ts`、`packages/server/src/http/types.ts`、`packages/server/src/http/`、`packages/server/src/codex/event-hub.ts`、`packages/server/src/codex/event-store.ts`、`packages/server/src/auth.ts`、`packages/server/src/workspace.ts`、`docs/api/README.zh-CN.md`、`docs/frontend/README.zh-CN.md`。
 - 不需要重做 Codex App Server 协议。遵循 `AGENTS.md` 中的服务管理、TypeScript 格式化、PG 和验证约束。
 
 ## 2. 问题与目标行为
 
-当前本地浏览器经 REST/SSE 访问 Owner；Relay Connector 解密远程帧后又将 HTTP/SSE 请求送回 loopback Fastify。认证、资源归属、Codex 调用和事件逻辑分散在 Fastify route handlers 中。目标是把本地和未来远程 transport 接到同一个 Owner session runtime 和业务 service；Relay 后续只需提供 transport adapter，不再模拟 HTTP。
+当前 Owner 业务经统一 WebSocket 进入 Gateway；本地与未来远程 transport 共享 Owner session runtime 和 Application Services。Relay 只提供 transport adapter，不模拟 HTTP。
 
 单 Owner 仍由本机 Owner 验证身份。首次 Owner 创建只能从本地连接发起；本地与远程都通过 Owner 的 email/password 建立有效期七天的 session，session 更新周期沿用一天。远程 session 还必须来自配对设备和有效 E2EE channel。Relay 接入留待后续工作包。
 
@@ -18,12 +18,12 @@
 
 ### 已实现事实
 
-- `server/owner/app.ts` 注册 Fastify auth、configuration、project、credential、skill、thread、event 和 remote routes；`server/owner/server.ts` 初始化 Better Auth、Workspace、Codex、PG EventStore 和 `OwnerConnector`。
-- `server/auth.ts` 使用 Better Auth Drizzle PostgreSQL adapter；当前首个账户注册后禁止再次注册。`user/account/session` 数据位于 PG，session 有效期为 7 天、更新周期为 1 天。
-- `server/codex/event-store.ts` 持久化安全投影事件；`EventHub` 为 SSE 提供实时订阅和历史回放。Thread 原文仍由 Codex App Server 负责。
-- `server/remote/connector.ts` 通过 Relay E2EE 转发 `http.request`，并把 SSE 分块转换成远程帧；`packages/remote-protocol` 目前包含 Relay 和 HTTP/SSE 隧道帧，没有 Owner 业务协议。
-- 前端 `src/lib/bridge/http/`、`src/lib/bridge/events/event-source.ts` 及 Owner adapter 依赖旧 REST/SSE；其源码将在本工作包中删除，当前前端引用会暂时悬空。
-- `apps/relay`、`packages/remote-protocol` 和相关架构文档目前属于未提交 WIP；实现时保留其现有改动，不把它们当作已验证的 Owner WS 实现。
+- `packages/server/src/owner/app.ts` 注册必要外围 HTTP 与 Owner WS；`packages/server/src/owner/server.ts` 初始化 Better Auth、Workspace、Codex、PG EventStore 和 `OwnerConnector`。
+- `packages/server/src/auth.ts` 使用 Better Auth Drizzle PostgreSQL adapter；当前首个账户注册后禁止再次注册。`user/account/session` 数据位于 PG，session 有效期为 7 天、更新周期为 1 天。
+- `packages/server/src/codex/event-store.ts` 持久化安全投影事件；`EventHub` 为 Owner WS events stream 提供实时订阅和历史回放。Thread 原文仍由 Codex App Server 负责。
+- `packages/server/src/remote/connector.ts` 只负责 Relay transport 和 E2EE，不再转换 HTTP/SSE；`packages/protocol` 通过 owner/relay subpath 隔离两层协议。
+- 前端旧 HTTP/SSE bridge 已删除；`packages/app` 的 Owner WS client 留待后续工作包，当前页面引用可能暂时悬空。
+- `packages/relay`、`packages/protocol` 和相关架构文档属于当前 workspace 迁移范围。
 
 ### 冻结的文档优先级
 
@@ -31,17 +31,17 @@
 
 | 文档 | 被覆盖的描述 | 当前处理 |
 | --- | --- | --- |
-| `PROJECT.md` | 远程客户端继续经 Relay HTTP/SSE 隧道进入 Fastify | Owner WS 与 Service 分离完成后再更新稳定架构基线；不在本工作包顺带改文档之外的架构内容 |
-| `docs/product/owner-remote-paseo-architecture.md` | 保留 REST/SSE 和 Better Auth cookie 作为远程业务合同 | 作为历史方案参考；Owner 业务协议改为 WS，PG/Better Auth 暂时只作为实现依赖 |
-| `docs/product/owner-sqlite-refactor-plan.md` | 数据库切换时维持 Fastify REST/SSE bridge | 本阶段先完成 WS/service 边界；数据库替换独立于本工作包 |
-| `docs/product/owner-remote-final-architecture.md` | 旧业务路由在最后阶段才删除 | 本工作包立即删除旧 REST/SSE 业务路由；前端暂不可用是已接受的阶段性结果 |
+| `PROJECT.md` | Owner 通过旧 REST/SSE bridge 访问 | 已更新为 Owner WS 和 packages workspace 基线 |
+| `docs/product/owner-remote-paseo-architecture.md` | Relay 复用 REST/SSE tunnel | 已收敛为 Relay/E2EE transport 专题 |
+| `docs/product/owner-sqlite-refactor-plan.md` | SQLite 阶段继续依赖 REST/SSE | 已收敛为 Owner WS 之后的 SQLite 控制面迁移 |
+| `docs/product/owner-remote-final-architecture.md` | 旧路由最后才删除 | 已收敛为当前 Owner WS 总架构 |
 
 ## 4. 冻结决策与不变量
 
-- 新建独立 workspace 包 `packages/owner-protocol`，包名 `@codex-web/owner-protocol`；Owner 帧不得并入 `@codex-web/remote-protocol`。
+- 统一 workspace 包 `packages/protocol`，包名 `@codex-web/protocol`；Owner 帧和 Relay frame 分别从 `/owner` 与 `/relay` subpath 导出，不互相导入。
 - Owner protocol v1 使用 UTF-8 JSON 文本帧；不支持二进制文件或终端流。协议常量为 `OWNER_PROTOCOL_VERSION = 1`。
 - Owner WebSocket 仅作为核心业务入口。HTTP 只保留 health/readiness、静态资源、metadata，以及首次 bootstrap/配对发现所需的本地外围入口。
-- 本阶段保留 PG、现有 Drizzle schema、Better Auth、credential encryption 和 `PostgresEventStore`；不做 schema、migration、PG 清理或数据迁移。
+- 当前实现暂保留 PG、现有 Drizzle schema、Better Auth、credential encryption 和 `PostgresEventStore`；SQLite 是下一阶段固定持久层，不在本次 package 重排中实现数据切换。
 - 单 Owner 用户模型与现有 email/password 标识保留；利用 Better Auth 公共 API 创建/验证账户及 session，并通过其公开 `bearer()` plugin 为 WS 客户端提供 opaque bearer token。禁止读取或推断 Better Auth 私有表字段、Cookie 编码或密码 hash 格式。
 - Owner email 是现有 Better Auth 所需的唯一账户标识；Owner 密码是本地和远程共同使用的解锁凭据。`owner.session.open` 使用 email/password，返回 session DTO 和 Better Auth bearer plugin 公共接口暴露的 opaque token；不得自行从 `Set-Cookie` 或数据库中解析 token。
 - 只有 `transport.kind === 'local'` 且 Origin 精确命中 `trustedOrigins` 的连接可执行首次 Owner bootstrap。缺失或不匹配的 Origin 拒绝握手。未来 relay transport 必须由服务端适配器标记，不能信任客户端帧自报 transport。
@@ -119,7 +119,7 @@ type OwnerStream = {
 
 ## 6. Domain、服务与方法范围
 
-新增 `OwnerApplicationServices` 聚合入口，建议放在 `server/owner/application-services.ts`；方法按域分组于同目录，接收显式 `OwnerContext` 和已验证参数。内部可委托现有 `WorkspaceService`、`CodexBridge`、`EventHub`、`SkillHandleStore`、`RemoteTrustStore`。Service 不导入 Fastify request/reply/socket、`Database` 或 Drizzle 类型。WS method registry 是唯一业务入口；health/bootstrap discovery/pairing offer HTTP adapter 只映射输入输出并调用同一服务，不复制领域规则。
+新增 `OwnerApplicationServices` 聚合入口，放在 `packages/server/src/owner/application-services.ts`；方法按域分组于同目录，接收显式 `OwnerContext` 和已验证参数。内部可委托现有 `WorkspaceService`、`CodexBridge`、`EventHub`、`SkillHandleStore`、`RemoteTrustStore`。Service 不导入 Fastify request/reply/socket、`Database` 或 Drizzle 类型。WS method registry 是唯一业务入口；health/bootstrap discovery/pairing offer HTTP adapter 只映射输入输出并调用同一服务，不复制领域规则。
 
 WS v1 必须覆盖现有 Owner 业务功能：
 
@@ -141,7 +141,7 @@ WS v1 必须覆盖现有 Owner 业务功能：
 - 保留 `/health`、`/ready`、`/metadata`、静态资源和 `GET /api/auth/bootstrap`（或等价本地 bootstrap discovery）。
 - 保留本机一次性配对 offer discovery；只返回现有安全 offer DTO。配对 offer 与 trust reset 操作调用 Application Service，不依赖 `OwnerConnector.forwardHttp`。远程状态/配对管理 WS method 只能在本地 transport 使用。
 - 删除 `/api/auth/*` 代理、`/api/me` 和所有 credential/project/configuration/codex/skills/thread/event/remote REST/SSE 业务路由。移除 remote Connector 的 loopback HTTP/SSE forwarding、SSE reader/writer 和过时的 client HTTP/SSE tunnel handlers；Relay transport 和信任 store 实现留给后续工作包。
-- 删除 `src/lib/bridge/http/*`、`src/lib/bridge/events/event-source.ts` 和旧 Owner HTTP adapters；不迁移前端页面/controllers。其余现有前端源码可能保留对这些模块的悬空 imports，且本阶段明确接受因此导致的全仓 `pnpm typecheck` 失败；不增加 stub、兼容模块或 SSE fallback。前端 WS client 与引用更新在 Relay 后续迭代进行。
+- 删除 `packages/app/src/lib/bridge/http/*`、`packages/app/src/lib/bridge/events/event-source.ts` 和旧 Owner HTTP adapters；不迁移前端页面/controllers。其余现有前端源码可能保留对这些模块的悬空 imports，且本阶段明确接受因此导致的全仓 `pnpm typecheck` 失败；不增加 stub、兼容模块或 SSE fallback。前端 WS client 与引用更新在 Relay 后续迭代进行。
 
 ## 7. 生命周期与失败行为
 
@@ -164,11 +164,11 @@ WS v1 必须覆盖现有 Owner 业务功能：
 ## 9. 实施里程碑
 
 1. **Owner protocol package。** 新增 workspace 包、v1 帧/错误/capability 类型、严格 parser/encoder、1 MiB 大小限制和协议测试。更新 workspace/lockfile 时只用 pnpm。
-2. **Session runtime。** 在 `server/owner/session-runtime.ts` 新增 `OwnerTransport`、`OwnerSessionRuntime`、method registry 和 stream/subscription registry；fake transport/service 测试覆盖 hello/version、auth gate、重复 ID、并行限额、取消、断开、超时、背压和错误投影。
-3. **Authentication + services。** 抽出 auth/credential/project/runtime/config/skills/thread/event/remote-trust Application Services；将 WS method handler 接至显式 OwnerContext；先把 `server/auth.integration.ts`、`server/app.test.ts` 中的认证、资源归属、路径、安全投影与 secret redaction 用例迁移为 service/WS 测试，再移除 REST route tests。
-4. **本地 WebSocket + vertical slice。** 用 `@fastify/websocket` 注册本地 `/ws`，校验 Origin、payload、关闭清理；先打通 bootstrap/session open/session token resume、`owner.status`、`credentials.list`、`threads.send` stream 和 `threads.cancel`，再把其余方法接入同一 registry。Bearer auth 配置在 `server/auth.ts` 使用 Better Auth 公共 `bearer()` plugin；`owner.session.open` 通过 `auth.api.signInEmail` 的公开 response headers 读取 `set-auth-token`，hello admission 使用 `auth.api.getSession` + `Authorization` header。
-5. **外围入口与清理。** 将 pairing offer discovery 接到 service；删除旧业务 REST/SSE route registration、Connector HTTP/SSE bridge、`src/lib/bridge/http/*` 和 `src/lib/bridge/events/event-source.ts` 等旧前端 transport API；保留必要外围 HTTP 与 PG。不要为仍引用这些模块的页面增加兼容 stub，已接受该阶段的全仓前端 typecheck 失败。**已完成：** 保留 health/ready/metadata、bootstrap discovery 和本地 pairing offer；旧业务 routes、REST/SSE helper、前端 HTTP/SSE bridge、Owner HTTP adapter 及旧 REST 测试已移除。
-6. **冷启动 handoff。** 对照本文件验收表确认下一阶段数据库替换入口：PG 依赖仅由 auth/session adapter、`server/database.ts`/schema、Workspace stores 和 `PostgresEventStore` 承担；Owner protocol、runtime、Application Services 与 transport ports 不得依赖 Drizzle/PG 类型。更新本工作包状态与实际差异；稳定架构基线需要时再单独更新 `PROJECT.md`。
+2. **Session runtime。** 在 `packages/server/src/owner/session-runtime.ts` 新增 `OwnerTransport`、`OwnerSessionRuntime`、method registry 和 stream/subscription registry；fake transport/service 测试覆盖 hello/version、auth gate、重复 ID、并行限额、取消、断开、超时、背压和错误投影。
+3. **Authentication + services。** 抽出 auth/credential/project/runtime/config/skills/thread/event/remote-trust Application Services；将 WS method handler 接至显式 OwnerContext；先把 `packages/server/src` 中的认证、资源归属、路径、安全投影与 secret redaction 用例迁移为 service/WS 测试，再移除 REST route tests。
+4. **本地 WebSocket + vertical slice。** 用 `@fastify/websocket` 注册本地 `/ws`，校验 Origin、payload、关闭清理；先打通 bootstrap/session open/session token resume、`owner.status`、`credentials.list`、`threads.send` stream 和 `threads.cancel`，再把其余方法接入同一 registry。Bearer auth 配置在 `packages/server/src/auth.ts` 使用 Better Auth 公共 `bearer()` plugin；`owner.session.open` 通过 `auth.api.signInEmail` 的公开 response headers 读取 `set-auth-token`，hello admission 使用 `auth.api.getSession` + `Authorization` header。
+5. **外围入口与清理。** 将 pairing offer discovery 接到 service；删除旧业务 REST/SSE route registration、Connector HTTP/SSE bridge、`packages/app/src/lib/bridge/http/*` 和 `packages/app/src/lib/bridge/events/event-source.ts` 等旧前端 transport API；保留必要外围 HTTP 与 PG。不要为仍引用这些模块的页面增加兼容 stub，已接受该阶段的全仓前端 typecheck 失败。**已完成：** 保留 health/ready/metadata、bootstrap discovery 和本地 pairing offer；旧业务 routes、REST/SSE helper、前端 HTTP/SSE bridge、Owner HTTP adapter 及旧 REST 测试已移除。
+6. **冷启动 handoff。** 对照本文件验收表确认下一阶段数据库替换入口：PG 依赖仅由 auth/session adapter、`packages/server/src/database.ts`/schema、Workspace stores 和 `PostgresEventStore` 承担；Owner protocol、runtime、Application Services 与 transport ports 不得依赖 Drizzle/PG 类型。更新本工作包状态与实际差异；稳定架构基线需要时再单独更新 `PROJECT.md`。
 
 ## 10. 验收与验证
 
@@ -178,7 +178,7 @@ WS v1 必须覆盖现有 Owner 业务功能：
 - runtime 测试：hello 必须为首帧；未认证只开放 auth/bootstrap methods；无效/过期 token、非本地 bootstrap、错误密码拒绝；重复/失败 request ID 不能重放；取消只影响目标 request/stream；断开释放订阅但不取消 Turn；超时要在期限到达时返回 `REQUEST_TIMEOUT` 并向 service 发送 abort；慢消费者超过 queue 上限关闭；敏感错误被映射为通用 `OwnerError`。
 - service/security 测试：跨 Owner 的 Project/Thread/credential id 不能读取或修改；snapshot/event 使用既有安全投影；Credential API key 不进入响应、错误或日志；context-window、dangerous access confirmation、Credential 选择和 App Server model/effort 验证沿用原语义。
 - events 测试：游标正确回放、过滤下允许序号间隙、过期/错误 epoch reset、历史 gap 回退、重连恢复不重放重复事件、实时订阅无回放竞态。
-- 运行 protocol tests、`pnpm exec tsc --noEmit -p packages/owner-protocol/tsconfig.json`、`pnpm exec tsc --noEmit -p server/tsconfig.json`、focused backend tests 和所有 touched TypeScript 文件的 `pnpm exec oxfmt --check <files...>`。全仓 `pnpm typecheck` 因已删除前端 modules 预计失败，继续运行并记录具体错误；只接受 `src/` 下对删除模块的 unresolved-import 错误，其余错误（包括 server、protocol、relay 项目错误）均阻断验收。提交前只暂存本次意图文件后运行 `pnpm lint:staged`。
+- 运行 `pnpm --filter @codex-web/protocol typecheck`、`pnpm --filter @codex-web/server typecheck`、`pnpm --filter @codex-web/relay typecheck`、focused backend tests 和所有 touched TypeScript 文件的 `pnpm exec oxfmt --check <files...>`。`packages/app` 在 Owner WS client 工作包完成前可能因旧页面引用而失败；server、protocol、relay 项目错误均阻断验收。提交前只暂存本次意图文件后运行 `pnpm lint:staged`。
 
 ### 手动验收
 
@@ -195,6 +195,6 @@ WS v1 必须覆盖现有 Owner 业务功能：
 
 ## 11. 下一阶段数据库交接与 blockers
 
-无阻塞的产品决策待确认。完成本工作包后，下一阶段从以下 PG 专属边界开始替换：Better Auth adapter/session persistence、`server/database.ts`、`src/lib/db/schema.ts`、Workspace 的 Drizzle 查询和 `server/codex/event-store.ts`。Owner protocol、SessionRuntime、Application Services、事件服务接口及 transport-neutral 接口必须保持稳定。Thread transcript 仍由 Codex App Server/Codex Home 管理。
+完成本工作包后，下一阶段从以下 PG 专属边界开始替换：Better Auth adapter/session persistence、`packages/server/src/database.ts`、`packages/server/src/db/schema.ts`、Workspace 的 Drizzle 查询和 `packages/server/src/codex/event-store.ts`。Owner protocol、SessionRuntime、Application Services、事件服务接口及 transport-neutral 接口必须保持稳定。Thread transcript 仍由 Codex App Server/Codex Home 管理。
 
 数据库替换不得顺带恢复 REST/SSE、实现 Relay 或迁移前端；这些顺序固定为：Owner 后端 WS → 数据库切换 → Relay → 前端 WS client。

@@ -5,4 +5,4 @@
 - 官方文档：<https://learn.chatgpt.com/docs/app-server>
 - 协议原始资料：[`../vendor/`](../vendor/)
 
-runtime 验证失败时服务 fail closed；浏览器只访问 Fastify bridge，不直接连接 App Server；REST/SSE 契约见 [`../api/README.zh-CN.md`](../api/README.zh-CN.md)。
+runtime 验证失败时服务 fail closed；浏览器只访问 Owner WebSocket Gateway，不直接连接 App Server；Owner WS 与外围 HTTP 契约见 [`../api/README.zh-CN.md`](../api/README.zh-CN.md)。
