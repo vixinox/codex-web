@@ -41,7 +41,11 @@ type RelayWebSocketHandlers = {
   onerror?: ((...args: never[]) => void) | null
 }
 
-type RelayWebSocket = ConnectorTransport & RelayWebSocketHandlers
+type RelayWebSocket = ConnectorTransport &
+  RelayWebSocketHandlers & {
+    ping?: () => void
+    onpong?: (() => void) | null
+  }
 
 type RelayWebSocketFactory = (url: string) => RelayWebSocket
 
@@ -276,13 +280,19 @@ export class OwnerConnector {
 
   private startHeartbeat(socket: RelayWebSocket) {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    socket.onpong = () => {
+      if (this.socket === socket) this.lastRelayActivity = Date.now()
+    }
     this.heartbeatTimer = setInterval(() => {
       if (this.socket !== socket) return
       // A relay that stopped answering while the socket stays half-open never emits `close`.
       // Treat silence past the stale window as a dead link and force a reconnect.
       if (Date.now() - this.lastRelayActivity > RELAY_STALE_TIMEOUT_MS) {
         socket.close?.(4001, 'relay_stale')
+        return
       }
+      // Use a WebSocket control frame so application traffic does not masquerade as liveness.
+      socket.ping?.()
     }, RELAY_HEARTBEAT_INTERVAL_MS)
   }
 

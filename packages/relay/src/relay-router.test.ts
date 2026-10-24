@@ -376,6 +376,19 @@ test('rejects a client attach whose device id differs from the token claim', () 
   assert.equal(owner.messages.length, 0)
 })
 
+test('rejects a client token without a device claim', () => {
+  const router = createRouter()
+  const owner = fakeSocket()
+  router.attach(ownerAttach(), owner.socket)
+  const client = fakeSocket()
+  const result = router.attach(
+    clientAttach({ clientToken: signedToken('client', 'node-1', 0) }),
+    client.socket,
+  )
+  assert.deepEqual(result, { ok: false, reason: 'unauthorized' })
+  assert.equal(router.connectionCount(), 1)
+})
+
 test('closes each socket exactly once when removeSession runs more than once', () => {
   const router = createRouter()
   const owner = fakeSocket()

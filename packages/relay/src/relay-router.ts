@@ -14,6 +14,8 @@ import {
 export type RelaySocket = {
   send(data: string | ArrayBuffer | Uint8Array): void
   close(code?: number, reason?: string): void
+  ping?: () => void
+  onpong?: (() => void) | null
   bufferedAmount?(): number
 }
 
@@ -328,9 +330,7 @@ function verifyToken(
       claims.role === role &&
       // A device-bound token must name exactly the device the socket claims. Bootstrap pairing
       // credentials carry no device yet, so they can only be absent when the caller has none.
-      (deviceId === undefined
-        ? claims.deviceId === undefined
-        : claims.deviceId === undefined || claims.deviceId === deviceId) &&
+      (deviceId === undefined ? claims.deviceId === undefined : claims.deviceId === deviceId) &&
       typeof claims.expiresAt === 'number' &&
       claims.expiresAt > Date.now()
     )

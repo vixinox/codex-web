@@ -22,7 +22,7 @@ Do not expand work into unrelated features, architecture, dependencies, or docum
 - Use `oxfmt` for TypeScript; Prettier is not used.
 - `pnpm lint` intentionally suppresses the existing warning baseline. Before a change is committed, stage its intended files and run `pnpm lint:staged`; it exits nonzero for staged errors or warnings not present in `HEAD`.
 - Pin every shadcn CLI command to `shadcn@4.21.0`.
-- Services are user-operated. Do not start, stop, restart, terminate, or take over Vite, Fastify, databases, preview servers, or test harnesses unless the user explicitly requests process management. Use only Vite `5173` and Fastify `3000` when authorized.
+- Prefer reusing an already-running Vite, Fastify, database, preview server, or test harness. If no suitable instance is available, the Agent may start the service needed for the task; use only Vite `5173` and Fastify `3000` unless the task requires another documented port. The Agent must stop services it started when the work is complete, while leaving pre-existing user-operated services untouched.
 - Always use `pnpm` as the package manager (`pnpm install`, `pnpm add`, `pnpm run`, etc.). Do not use `npm`, `yarn`, or `bun` for package management.
 - Never invoke a subagent unless explicitly requested by the user.
 - The user authorizes commits for this work. Create commits at meaningful implementation milestones on the current non-`master` branch; never checkout, reset, merge, rebase, push, or otherwise modify `master`.

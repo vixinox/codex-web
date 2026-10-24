@@ -34,10 +34,16 @@ export function createRelayApp(router: RelayRouter) {
       const socketFor = (ws: {
         send(data: string | ArrayBuffer | Uint8Array): void
         close(code?: number, reason?: string): void
-        raw?: { getBufferedAmount?: () => number }
+        raw?: {
+          getBufferedAmount?: () => number
+          ping?: () => void
+          onPong?: () => void
+        }
       }): RelaySocket => ({
         send: (data) => ws.send(data),
         close: (code, reason) => ws.close(code, reason),
+        ping: () => ws.raw?.ping?.(),
+        onpong: ws.raw?.onPong ?? null,
         bufferedAmount: () => ws.raw?.getBufferedAmount?.() ?? 0,
       })
 
