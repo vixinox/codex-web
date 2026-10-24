@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { encodeOwnerFrame, type OwnerFrame } from '@codex-web/protocol/owner'
-import { OwnerSessionRuntime, type OwnerTransport } from './session-runtime.js'
+import {
+  OwnerSessionRuntime,
+  VirtualOwnerTransport,
+  type OwnerTransport,
+} from './session-runtime.js'
 
 class FakeTransport implements OwnerTransport {
   readonly sent: string[] = []
@@ -407,4 +411,31 @@ test('keeps session close explicit and closes the socket after the response', as
   await waitFor(() => transport.closed !== undefined)
   assert.equal(transport.closed?.code, 1000)
   assert.ok(readFrames(transport).some((frame) => frame.type === 'response'))
+})
+
+test('virtual remote transport binds verified device identity and carries frames both ways', () => {
+  const sent: Array<string | Uint8Array> = []
+  const closed: Array<{ code?: number; reason?: string }> = []
+  const transport = new VirtualOwnerTransport(
+    'device-1',
+    (frame) => sent.push(frame),
+    (code, reason) => closed.push({ code, reason }),
+  )
+  let received: string | Uint8Array | undefined
+  let closeReason: string | undefined
+  transport.onMessage((frame) => (received = frame))
+  transport.onClose((reason) => (closeReason = reason))
+  transport.receive('owner-request')
+  transport.send('owner-response')
+  transport.close(1000, 'revoked')
+
+  assert.equal(transport.kind, 'relay')
+  assert.equal(transport.pairedDeviceId, 'device-1')
+  assert.equal(transport.e2eeVerified, true)
+  assert.equal(received, 'owner-request')
+  assert.deepEqual(sent, ['owner-response'])
+  assert.deepEqual(closed, [{ code: 1000, reason: 'revoked' }])
+  assert.equal(closeReason, 'revoked')
+  transport.receive('ignored')
+  assert.equal(received, 'owner-request')
 })

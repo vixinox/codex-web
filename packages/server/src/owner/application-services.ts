@@ -1057,6 +1057,21 @@ export function createOwnerApplicationServices(
         throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
       }
     },
+
+    async remoteDevices(context: OwnerMethodContext) {
+      requireLocalOwner(context)
+      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      return dependencies.remote.listDevices()
+    },
+
+    async remoteDeviceRevoke(context: OwnerMethodContext, input: Record<string, unknown>) {
+      requireLocalOwner(context)
+      if (!safeId(input.deviceId)) throw new OwnerMethodError('INVALID_PARAMS')
+      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      const revoked = await dependencies.remote.revokeDevice(input.deviceId)
+      if (!revoked) throw new OwnerMethodError('DEVICE_NOT_FOUND')
+      return { revoked: true }
+    },
   }
 
   async function threadMutation(

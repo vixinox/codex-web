@@ -17,6 +17,61 @@ export type OwnerTransport = {
   onClose(listener: (reason?: string) => void): () => void
 }
 
+export class VirtualOwnerTransport implements OwnerTransport {
+  readonly kind = 'relay' as const
+  readonly pairedDeviceId: string
+  readonly e2eeVerified = true
+  private readonly sendFrame: (frame: string | Uint8Array) => void
+  private readonly closeTransport: (code?: number, reason?: string) => void
+  private readonly messageListeners = new Set<(frame: string | Uint8Array) => void>()
+  private readonly closeListeners = new Set<(reason?: string) => void>()
+  private closed = false
+
+  constructor(
+    pairedDeviceId: string,
+    send: (frame: string | Uint8Array) => void,
+    close: (code?: number, reason?: string) => void,
+  ) {
+    this.pairedDeviceId = pairedDeviceId
+    this.sendFrame = send
+    this.closeTransport = close
+  }
+
+  send(frame: string | Uint8Array) {
+    if (this.closed) return
+    this.sendFrame(frame)
+  }
+
+  close(code?: number, reason?: string) {
+    if (this.closed) return
+    this.closed = true
+    this.closeTransport(code, reason)
+    for (const listener of this.closeListeners) listener(reason)
+    this.messageListeners.clear()
+    this.closeListeners.clear()
+  }
+
+  onMessage(listener: (frame: string | Uint8Array) => void) {
+    if (this.closed) return () => undefined
+    this.messageListeners.add(listener)
+    return () => this.messageListeners.delete(listener)
+  }
+
+  onClose(listener: (reason?: string) => void) {
+    if (this.closed) {
+      listener()
+      return () => undefined
+    }
+    this.closeListeners.add(listener)
+    return () => this.closeListeners.delete(listener)
+  }
+
+  receive(frame: string | Uint8Array) {
+    if (this.closed) return
+    for (const listener of this.messageListeners) listener(frame)
+  }
+}
+
 export type OwnerContext = {
   ownerId: string
   sessionId: string
@@ -504,6 +559,7 @@ const SAFE_ERROR_MESSAGES: Record<OwnerErrorCode, string> = {
   RESOURCE_NOT_FOUND: 'Requested resource was not found.',
   REMOTE_UNAVAILABLE: 'Remote administration is unavailable.',
   REMOTE_RELAY_REQUIRED: 'A relay URL is required for pairing.',
+  DEVICE_NOT_FOUND: 'Paired device was not found.',
 }
 
 function isOwnerErrorCode(code: string): code is OwnerErrorCode {

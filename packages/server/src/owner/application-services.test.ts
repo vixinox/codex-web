@@ -241,6 +241,8 @@ test('remote application methods require local authenticated context and use the
       trust: { status: async () => ({ nodeId: 'node-1', pairedClients: 1 }) },
       createPairingOffer: async (relayUrl?: string) => ({ relayUrl: relayUrl ?? 'wss://relay' }),
       resetRemoteTrust: async () => ({ trustEpoch: 2 }),
+      listDevices: async () => [{ id: 'device-1', createdAt: '2026-01-01', lastSeenAt: null }],
+      revokeDevice: async (id: string) => id === 'device-1',
     },
   }
   const services = createOwnerApplicationServices(deps as never, {
@@ -266,6 +268,15 @@ test('remote application methods require local authenticated context and use the
     { relayUrl: 'wss://relay-alt' },
   )
   assert.deepEqual(await services.remoteTrustReset(context({}, owner)), { trustEpoch: 2 })
+  assert.deepEqual(await services.remoteDevices(context({}, owner)), [
+    { id: 'device-1', createdAt: '2026-01-01', lastSeenAt: null },
+  ])
+  assert.deepEqual(
+    await services.remoteDeviceRevoke(context({}, owner), { deviceId: 'device-1' }),
+    {
+      revoked: true,
+    },
+  )
   await assert.rejects(
     () =>
       services.remoteTrustReset(

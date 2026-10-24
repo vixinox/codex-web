@@ -89,19 +89,27 @@ export async function importPrivateKey(serialized: string) {
   ])
 }
 
-export async function deriveSessionKey(privateKey: CryptoKey, peerPublicKey: CryptoKey) {
+export async function deriveSessionKey(
+  privateKey: CryptoKey,
+  peerPublicKey: CryptoKey,
+  context = 'application-channel',
+) {
   const sharedSecret = await subtle().deriveBits(
     { ...ECDH_ALGORITHM, public: peerPublicKey },
     privateKey,
     256,
   )
+  // An all-zero result means the peer key was not a valid point on the curve. HKDF would then
+  // hand both sides the same predictable key, so treat it as a handshake failure.
+  if (new Uint8Array(sharedSecret).every((byte) => byte === 0))
+    throw new Error('Invalid peer public key')
   const material = await subtle().importKey('raw', sharedSecret, 'HKDF', false, ['deriveKey'])
   return subtle().deriveKey(
     {
       name: 'HKDF',
       hash: 'SHA-256',
       salt: textToBytes('codex-web-remote-session'),
-      info: textToBytes('application-channel'),
+      info: textToBytes(context),
     },
     material,
     AES_ALGORITHM,

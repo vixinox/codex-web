@@ -1,19 +1,113 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { RELAY_PROTOCOL_VERSION, encodeFrame, isRelayAttachFrame, parseFrame } from './index.js'
+import {
+  MAX_ROUTE_ID_BYTES,
+  RELAY_PROTOCOL_VERSION,
+  encodeFrame,
+  isHandshakeOkFrame,
+  isRelayAttachFrame,
+  isRelayForwardFrame,
+  parseFrame,
+} from './index.js'
 
-test('round trips a relay attachment frame', () => {
-  const frame = {
+const ownerToken = 'relay-owner-token-that-is-at-least-32-characters'
+
+function ownerAttachment(overrides: Record<string, unknown> = {}) {
+  return {
     type: 'relay.attach' as const,
     version: RELAY_PROTOCOL_VERSION,
     nodeId: 'node-1',
     role: 'owner' as const,
     connectionId: 'connection-1',
+    ownerToken,
+    ownerPublicKey: '{"kty":"EC"}',
+    trustEpoch: 0,
+    ...overrides,
   }
+}
+
+function clientAttachment(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'relay.attach' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    role: 'client' as const,
+    connectionId: 'connection-1',
+    clientToken: 'client-token',
+    deviceId: 'device-1',
+    trustEpoch: 0,
+    ...overrides,
+  }
+}
+
+test('round trips a relay attachment frame', () => {
+  const frame = ownerAttachment()
   const parsed = parseFrame(encodeFrame(frame))
   assert.equal(isRelayAttachFrame(parsed), true)
   assert.deepEqual(parsed, frame)
+})
+
+test('requires a device binding on client attachments', () => {
+  assert.equal(isRelayAttachFrame(parseFrame(encodeFrame(clientAttachment()))), true)
+  assert.equal(
+    isRelayAttachFrame(parseFrame(encodeFrame(clientAttachment({ deviceId: undefined })))),
+    false,
+  )
+  assert.equal(
+    isRelayAttachFrame(parseFrame(encodeFrame(clientAttachment({ deviceId: '' })))),
+    false,
+  )
+  assert.equal(
+    isRelayAttachFrame(
+      parseFrame(encodeFrame(clientAttachment({ deviceId: 'd'.repeat(MAX_ROUTE_ID_BYTES + 1) }))),
+    ),
+    false,
+  )
+})
+
+test('binds routing identifiers to a bounded length', () => {
+  assert.equal(
+    isRelayAttachFrame(
+      parseFrame(
+        encodeFrame(ownerAttachment({ connectionId: 'c'.repeat(MAX_ROUTE_ID_BYTES + 1) })),
+      ),
+    ),
+    false,
+  )
+  assert.equal(
+    isRelayForwardFrame(
+      parseFrame(
+        encodeFrame({
+          type: 'relay.forward',
+          version: RELAY_PROTOCOL_VERSION,
+          connectionId: 'c'.repeat(MAX_ROUTE_ID_BYTES + 1),
+          payload: 'opaque',
+        }),
+      ),
+    ),
+    false,
+  )
+})
+
+test('accepts a well-formed handshake confirmation and rejects missing bindings', () => {
+  const frame: Record<string, unknown> = {
+    type: 'handshake.ok' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    trustEpoch: 2,
+    ownerPublicKey: '{"kty":"EC","crv":"P-256"}',
+    clientPublicKey: '{"kty":"EC","crv":"P-256"}',
+  }
+  assert.equal(isHandshakeOkFrame(parseFrame(encodeFrame(frame as never))), true)
+  assert.equal(
+    isHandshakeOkFrame(parseFrame(encodeFrame({ ...frame, clientPublicKey: undefined } as never))),
+    false,
+  )
+  assert.equal(
+    isHandshakeOkFrame(parseFrame(encodeFrame({ ...frame, trustEpoch: '2' } as never))),
+    false,
+  )
 })
 
 test('rejects unknown versions and obsolete HTTP/SSE tunnel frames', () => {

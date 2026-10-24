@@ -14,6 +14,7 @@ import { buildOwnerServer } from './app.js'
 
 const config = loadServerConfig()
 const { db, driver } = createDatabase(config)
+let remote: OwnerConnector | undefined
 
 try {
   driver.prepare('SELECT 1').get()
@@ -25,24 +26,30 @@ try {
   codex.events.attachStore(eventStore)
   await codex.events.restoreFrom(eventStore)
   await eventStore.retainPerThread()
-  const remote = new OwnerConnector(config, new RemoteTrustStore(config.dataRoot))
-  await remote.start()
+  const connector = new OwnerConnector(config, new RemoteTrustStore(config.dataRoot))
+  remote = connector
   const app = await buildOwnerServer(config, {
     auth: createAuth(config, db),
     workspace,
     codex,
-    remote,
+    remote: connector,
   })
   app.addHook('onClose', async () => {
-    await remote.stop()
+    await connector.stop()
     await codex.events.flush()
     await codex.shutdown()
     driver.close()
   })
+  await connector.start()
   await app.listen({ host: config.host, port: config.port })
   log.success(`Owner server listening at http://${config.host}:${config.port}`)
 } catch (error) {
   log.error(`Owner server failed to start: ${safeError(error)}`)
+  try {
+    await remote?.stop()
+  } catch {
+    // Relay cleanup must not mask the startup failure.
+  }
   try {
     driver.close()
   } catch {

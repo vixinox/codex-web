@@ -9,7 +9,14 @@ import {
 
 import { RelayRouter, type RelaySocket } from './relay-router.js'
 
-export function createRelayApp(router = new RelayRouter()) {
+/**
+ * Every attach failure closes with the same frame and reason. Distinguishing "unknown node",
+ * "bad token" and "at capacity" would let an unauthenticated caller probe for live nodes.
+ */
+const ATTACH_REJECTED = 'attach_rejected'
+const encoder = new TextEncoder()
+
+export function createRelayApp(router: RelayRouter) {
   const app = new Hono()
 
   app.get('/healthz', (context) =>
@@ -27,9 +34,11 @@ export function createRelayApp(router = new RelayRouter()) {
       const socketFor = (ws: {
         send(data: string | ArrayBuffer | Uint8Array): void
         close(code?: number, reason?: string): void
+        raw?: { getBufferedAmount?: () => number }
       }): RelaySocket => ({
         send: (data) => ws.send(data),
         close: (code, reason) => ws.close(code, reason),
+        bufferedAmount: () => ws.raw?.getBufferedAmount?.() ?? 0,
       })
 
       return {
@@ -38,15 +47,19 @@ export function createRelayApp(router = new RelayRouter()) {
             ws.close(1003, 'text frames required')
             return
           }
+          if (encoder.encode(event.data).byteLength > router.maxFrameBytes) {
+            ws.close(1009, 'frame too large')
+            return
+          }
           if (!sessionId) {
             const frame = parseFrame(event.data)
             if (!isRelayAttachFrame(frame)) {
-              ws.close(1002, 'relay.attach required')
+              ws.close(1008, ATTACH_REJECTED)
               return
             }
             const result = router.attach(frame, socketFor(ws))
             if (!result.ok) {
-              ws.close(1008, result.reason)
+              ws.close(1008, ATTACH_REJECTED)
               return
             }
             sessionId = result.session.sessionId
@@ -63,6 +76,7 @@ export function createRelayApp(router = new RelayRouter()) {
           }
           const session = router.getSession(sessionId)
           if (!session) {
+            // This socket no longer owns a slot; close only this socket and leave the node alone.
             ws.close(1008, 'session_not_found')
             return
           }
@@ -71,6 +85,7 @@ export function createRelayApp(router = new RelayRouter()) {
               ? router.forward(sessionId, event.data)
               : router.forwardFromClient(sessionId, event.data)
           if (!forwarded) ws.close(1008, 'invalid_forward_frame')
+          return
         },
         onClose() {
           if (sessionId) router.detach(sessionId)

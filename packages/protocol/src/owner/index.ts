@@ -55,6 +55,7 @@ export const OWNER_ERROR_CODES = [
   'RESOURCE_NOT_FOUND',
   'REMOTE_UNAVAILABLE',
   'REMOTE_RELAY_REQUIRED',
+  'DEVICE_NOT_FOUND',
 ] as const
 
 export type OwnerErrorCode = (typeof OWNER_ERROR_CODES)[number]

@@ -34,6 +34,9 @@ export async function registerOwnerWebSocket(
       remoteRelayUrl: config.remoteRelayUrl,
     })
   const registry = createOwnerMethodRegistry(services)
+  dependencies.remote?.configureRemoteSessions(registry, (token, transport) =>
+    services.resumeSession(token, transport),
+  )
 
   app.get('/ws', { websocket: true }, (socket, request) => {
     const origin = request.headers.origin

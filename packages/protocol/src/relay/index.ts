@@ -2,12 +2,20 @@ export const RELAY_PROTOCOL_VERSION = 1 as const
 
 export type ConnectionRole = 'owner' | 'client'
 
+/** Upper bound for routing identifiers carried in `relay.attach`. */
+export const MAX_ROUTE_ID_BYTES = 128
+
 export type RelayAttachFrame = {
   type: 'relay.attach'
   version: typeof RELAY_PROTOCOL_VERSION
   nodeId: string
   role: ConnectionRole
   connectionId: string
+  ownerToken?: string
+  clientToken?: string
+  deviceId?: string
+  trustEpoch?: number
+  ownerPublicKey?: string
 }
 
 export type RelayReadyFrame = {
@@ -23,6 +31,7 @@ export type RelayClientConnectedFrame = {
   version: typeof RELAY_PROTOCOL_VERSION
   nodeId: string
   connectionId: string
+  deviceId?: string
 }
 
 export type RelayClientDisconnectedFrame = {
@@ -47,6 +56,7 @@ export type PairingOfferFrame = {
   challenge: string
   expiresAt: string
   trustEpoch: number
+  clientToken: string
 }
 
 export type PairingAcceptFrame = {
@@ -72,6 +82,21 @@ export type PairingResultFrame = {
   accepted: boolean
   trustEpoch: number
   ownerPublicKey: string
+  deviceId?: string
+  clientToken?: string
+}
+
+/**
+ * Owner's key-confirmation reply to `handshake`. It is sent through the session key as the first
+ * encrypted record, so a client that decrypts it has proof the Owner derived the same context.
+ */
+export type HandshakeOkFrame = {
+  type: 'handshake.ok'
+  version: typeof RELAY_PROTOCOL_VERSION
+  nodeId: string
+  trustEpoch: number
+  ownerPublicKey: string
+  clientPublicKey: string
 }
 
 export type EncryptedFrame = {
@@ -99,6 +124,7 @@ export type RelayFrame =
   | PairingAcceptFrame
   | PairingResultFrame
   | HandshakeFrame
+  | HandshakeOkFrame
   | EncryptedFrame
   | ConnectionCloseFrame
 
@@ -112,6 +138,7 @@ const frameTypes = new Set<RelayFrame['type']>([
   'pairing.accept',
   'pairing.result',
   'handshake',
+  'handshake.ok',
   'encrypted',
   'connection.close',
 ])
@@ -139,9 +166,20 @@ export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAtta
     frame.version === RELAY_PROTOCOL_VERSION &&
     typeof frame.nodeId === 'string' &&
     frame.nodeId.length > 0 &&
+    frame.nodeId.length <= MAX_ROUTE_ID_BYTES &&
     (frame.role === 'owner' || frame.role === 'client') &&
     typeof frame.connectionId === 'string' &&
-    frame.connectionId.length > 0,
+    frame.connectionId.length > 0 &&
+    frame.connectionId.length <= MAX_ROUTE_ID_BYTES &&
+    Number.isSafeInteger(frame.trustEpoch) &&
+    (frame.role !== 'owner' || typeof frame.ownerPublicKey === 'string') &&
+    (frame.role !== 'client' ||
+      (typeof frame.deviceId === 'string' &&
+        frame.deviceId.length > 0 &&
+        frame.deviceId.length <= MAX_ROUTE_ID_BYTES)) &&
+    (frame.role === 'owner'
+      ? typeof frame.ownerToken === 'string' && frame.ownerToken.length >= 32
+      : typeof frame.clientToken === 'string' && frame.clientToken.length > 0),
   )
 }
 
@@ -167,6 +205,18 @@ export function isHandshakeFrame(frame: RelayFrame | null): frame is HandshakeFr
   )
 }
 
+export function isHandshakeOkFrame(frame: RelayFrame | null): frame is HandshakeOkFrame {
+  return Boolean(
+    frame &&
+    frame.type === 'handshake.ok' &&
+    frame.version === RELAY_PROTOCOL_VERSION &&
+    typeof frame.nodeId === 'string' &&
+    typeof frame.ownerPublicKey === 'string' &&
+    typeof frame.clientPublicKey === 'string' &&
+    Number.isSafeInteger(frame.trustEpoch),
+  )
+}
+
 export function isEncryptedFrame(frame: RelayFrame | null): frame is EncryptedFrame {
   return Boolean(
     frame &&
@@ -183,7 +233,10 @@ export function isRelayForwardFrame(frame: RelayFrame | null): frame is RelayFor
   return Boolean(
     frame &&
     frame.type === 'relay.forward' &&
+    frame.version === RELAY_PROTOCOL_VERSION &&
     typeof frame.connectionId === 'string' &&
+    frame.connectionId.length > 0 &&
+    frame.connectionId.length <= MAX_ROUTE_ID_BYTES &&
     typeof frame.payload === 'string',
   )
 }

@@ -19,6 +19,7 @@ type PendingOffer = {
 }
 
 type RemotePeer = {
+  id: string
   publicKey: string
   createdAt: string
   lastSeenAt: string | null
@@ -40,6 +41,8 @@ export type PairingOffer = {
   trustEpoch: number
 }
 
+export type PairingOfferWithClientToken = PairingOffer & { relayUrl: string; clientToken: string }
+
 export class RemoteTrustStore {
   private state?: TrustState
   private writeChain = Promise.resolve()
@@ -53,7 +56,9 @@ export class RemoteTrustStore {
     if (this.state) return this.state
     try {
       const raw = await readFile(this.path(), 'utf8')
-      this.state = parseState(raw)
+      const { state, legacyPeerIds } = parseState(raw)
+      this.state = state
+      if (legacyPeerIds) await this.persist()
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       const keyPair = await serializeKeyPair(await generateKeyPair())
@@ -98,21 +103,46 @@ export class RemoteTrustStore {
         !candidate.used &&
         Date.parse(candidate.expiresAt) > Date.now(),
     )
-    if (!offer) return false
+    if (!offer) return null
     offer.used = true
-    state.peers = state.peers.filter((peer) => peer.publicKey !== clientPublicKey)
+    if (state.peers.some((peer) => peer.publicKey === clientPublicKey)) {
+      // Re-pairing an already trusted key must not mint a second device identity for it.
+      await this.persist()
+      return null
+    }
+    const deviceId = randomToken(12)
     state.peers.push({
+      id: deviceId,
       publicKey: clientPublicKey,
       createdAt: new Date().toISOString(),
       lastSeenAt: null,
     })
     await this.persist()
-    return true
+    return deviceId
   }
 
   async isAuthorized(clientPublicKey: string) {
     const state = await this.load()
     return state.peers.some((peer) => peer.publicKey === clientPublicKey)
+  }
+
+  async listPeers() {
+    const state = await this.load()
+    return state.peers.map(({ id, createdAt, lastSeenAt }) => ({ id, createdAt, lastSeenAt }))
+  }
+
+  async revokePeer(id: string) {
+    const state = await this.load()
+    const peer = state.peers.find((candidate) => candidate.id === id)
+    if (!peer) return null
+    state.peers = state.peers.filter((candidate) => candidate.id !== id)
+    await this.persist()
+    return peer.publicKey
+  }
+
+  async deviceId(clientPublicKey: string) {
+    const state = await this.load()
+    return state.peers.find((peer) => peer.publicKey === clientPublicKey)?.id
   }
 
   async markSeen(clientPublicKey: string) {
@@ -182,17 +212,85 @@ export class RemoteTrustStore {
   }
 }
 
-function parseState(raw: string): TrustState {
-  const parsed = JSON.parse(raw) as Partial<TrustState>
+/**
+ * Parses the trust file strictly. A partially valid file is treated as corruption rather than
+ * silently repaired, because a dropped peer entry or reset epoch would change who is authorized.
+ * The only tolerated legacy shape is a peer written before device ids existed.
+ */
+function parseState(raw: string): { state: TrustState; legacyPeerIds: boolean } {
+  const value: unknown = JSON.parse(raw)
+  if (!isRecord(value)) throw new Error('Invalid remote trust state')
+  const { nodeId, trustEpoch, keyPair, pendingOffers, peers } = value
   if (
-    typeof parsed.nodeId !== 'string' ||
-    !Number.isSafeInteger(parsed.trustEpoch) ||
-    !parsed.keyPair ||
-    typeof parsed.keyPair.publicKey !== 'string' ||
-    typeof parsed.keyPair.privateKey !== 'string' ||
-    !Array.isArray(parsed.pendingOffers) ||
-    !Array.isArray(parsed.peers)
+    typeof nodeId !== 'string' ||
+    nodeId.length === 0 ||
+    !Number.isSafeInteger(trustEpoch) ||
+    !isRecord(keyPair) ||
+    typeof keyPair.publicKey !== 'string' ||
+    typeof keyPair.privateKey !== 'string' ||
+    !Array.isArray(pendingOffers) ||
+    !Array.isArray(peers)
   )
     throw new Error('Invalid remote trust state')
-  return parsed as TrustState
+
+  const parsedOffers: PendingOffer[] = pendingOffers.map((offer) => {
+    if (
+      !isRecord(offer) ||
+      typeof offer.challenge !== 'string' ||
+      offer.challenge.length === 0 ||
+      typeof offer.expiresAt !== 'string' ||
+      !Number.isFinite(Date.parse(offer.expiresAt)) ||
+      typeof offer.used !== 'boolean'
+    )
+      throw new Error('Invalid remote trust offer')
+    return { challenge: offer.challenge, expiresAt: offer.expiresAt, used: offer.used }
+  })
+
+  const seenKeys = new Set<string>()
+  const seenIds = new Set<string>()
+  let legacyPeerIds = false
+  const parsedPeers: RemotePeer[] = peers.map((peer) => {
+    if (
+      !isRecord(peer) ||
+      typeof peer.publicKey !== 'string' ||
+      peer.publicKey.length === 0 ||
+      typeof peer.createdAt !== 'string' ||
+      !(peer.lastSeenAt === null || typeof peer.lastSeenAt === 'string')
+    )
+      throw new Error('Invalid remote trust peer')
+    if (seenKeys.has(peer.publicKey)) throw new Error('Duplicate remote trust peer')
+    seenKeys.add(peer.publicKey)
+    let id: string
+    if (typeof peer.id === 'string' && peer.id.length > 0) {
+      id = peer.id
+    } else if (peer.id === undefined) {
+      legacyPeerIds = true
+      id = randomToken(12)
+    } else {
+      throw new Error('Invalid remote trust peer id')
+    }
+    if (seenIds.has(id)) throw new Error('Duplicate remote trust peer id')
+    seenIds.add(id)
+    return {
+      id,
+      publicKey: peer.publicKey,
+      createdAt: peer.createdAt,
+      lastSeenAt: peer.lastSeenAt as string | null,
+    }
+  })
+
+  return {
+    state: {
+      nodeId,
+      trustEpoch: trustEpoch as number,
+      keyPair: { publicKey: keyPair.publicKey, privateKey: keyPair.privateKey },
+      pendingOffers: parsedOffers,
+      peers: parsedPeers,
+    },
+    legacyPeerIds,
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

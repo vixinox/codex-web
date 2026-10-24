@@ -17,6 +17,7 @@ export type ServerConfig = {
   allowedOutboundHosts: string[]
   requireDangerousAccessConfirmation?: boolean
   remoteRelayUrl?: string
+  remoteRelayOwnerToken?: string
 }
 
 function positiveInt(value: string | undefined, fallback: number) {
@@ -77,6 +78,10 @@ export function loadServerConfig(): ServerConfig {
     .filter(Boolean)
   if (process.env.NODE_ENV === 'production' && allowedOutboundHosts.includes('*'))
     throw new Error('CODEX_ALLOWED_OUTBOUND_HOSTS must be explicit in production')
+  const remoteRelayUrl = process.env.CODEX_REMOTE_RELAY_URL?.trim() || undefined
+  const remoteRelayOwnerToken = process.env.CODEX_REMOTE_RELAY_OWNER_TOKEN?.trim() || undefined
+  if (remoteRelayUrl && (!remoteRelayOwnerToken || remoteRelayOwnerToken.length < 32))
+    throw new Error('CODEX_REMOTE_RELAY_OWNER_TOKEN must be configured with at least 32 characters')
   return {
     host,
     port: positiveInt(process.env.SERVER_PORT, 3000),
@@ -95,6 +100,7 @@ export function loadServerConfig(): ServerConfig {
     requireDangerousAccessConfirmation:
       process.env.NODE_ENV === 'production' ||
       process.env.CODEX_REQUIRE_DANGEROUS_ACCESS_CONFIRMATION === 'true',
-    remoteRelayUrl: process.env.CODEX_REMOTE_RELAY_URL?.trim() || undefined,
+    remoteRelayUrl,
+    remoteRelayOwnerToken,
   }
 }
