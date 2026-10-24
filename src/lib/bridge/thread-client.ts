@@ -9,7 +9,6 @@ export type {
   ThreadSnapshot,
   ThreadSummary,
 } from './interfaces/thread'
-export { THREAD_EVENT_METHODS } from './events/thread-event-methods'
 export {
   isThreadAvailabilityRace,
   waitForThreadAvailability,
