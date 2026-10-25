@@ -358,6 +358,14 @@ test('rejects a client attach without a device id as an invalid attachment', () 
   assert.equal(router.connectionCount(), 1)
 })
 
+test('rejects an empty device id when the router is called without protocol parsing', () => {
+  const router = createRouter()
+  router.attach(ownerAttach(), fakeSocket().socket)
+  const result = router.attach(clientAttach({ deviceId: '' }), fakeSocket().socket)
+  assert.deepEqual(result, { ok: false, reason: 'invalid_attachment' })
+  assert.equal(router.connectionCount(), 1)
+})
+
 test('rejects a client attach whose device id differs from the token claim', () => {
   const router = createRouter()
   const owner = fakeSocket()
@@ -450,6 +458,28 @@ test('detaching a replaced session leaves the replacement alive and closes it on
   assert.equal(router.connectionCount(), 1)
 })
 
+test('allows replacing a routing slot at the global connection limit', () => {
+  const router = new RelayRouter({ ownerToken, maxConnections: 2 })
+  const owner = fakeSocket()
+  const firstClient = fakeSocket()
+  const replacement = fakeSocket()
+  const ownerResult = router.attach(ownerAttach(), owner.socket)
+  const firstClientResult = router.attach(clientAttach(), firstClient.socket)
+  assert.equal(ownerResult.ok, true)
+  assert.equal(firstClientResult.ok, true)
+  if (!ownerResult.ok || !firstClientResult.ok) return
+  assert.equal(router.connectionCount(), 2)
+
+  const replacementResult = router.attach(clientAttach(), replacement.socket)
+  assert.equal(replacementResult.ok, true)
+  if (!replacementResult.ok) return
+  assert.deepEqual(firstClient.closed, [{ code: 4002, reason: 'replaced' }])
+  assert.deepEqual(replacement.closed, [])
+  assert.equal(router.connectionCount(), 2)
+  assert.equal(router.getSession(firstClientResult.session.sessionId), undefined)
+  assert.equal(router.getSession(replacementResult.session.sessionId), replacementResult.session)
+})
+
 test('closes a peer whose buffered bytes plus the current frame exceed the queue cap', () => {
   const frame = JSON.stringify({
     type: 'relay.forward',
@@ -506,6 +536,35 @@ test('delivers a frame that exactly fits the queue cap without closing the peer'
   assert.deepEqual(client.closed, [{ code: 4002, reason: 'slow_consumer' }])
   assert.equal(router.connectionCount(), 1)
   assert.equal(client.messages.length, 1)
+})
+
+test('enforces the queue cap before forwarding owner close frames', () => {
+  const frame = JSON.stringify({
+    type: 'relay.forward',
+    version: RELAY_PROTOCOL_VERSION,
+    connectionId: 'client',
+    payload: JSON.stringify({
+      type: 'connection.close',
+      version: RELAY_PROTOCOL_VERSION,
+      code: 'reset',
+    }),
+  })
+  const frameBytes = Buffer.byteLength(frame, 'utf8')
+  const router = new RelayRouter({ ownerToken, maxQueuedBytes: frameBytes })
+  const owner = fakeSocket()
+  const client = fakeSocket()
+  const ownerResult = router.attach(ownerAttach(), owner.socket)
+  const clientResult = router.attach(clientAttach(), client.socket)
+  assert.equal(ownerResult.ok, true)
+  assert.equal(clientResult.ok, true)
+  if (!ownerResult.ok || !clientResult.ok) return
+
+  client.setBufferedBytes(1)
+  assert.equal(router.forward(ownerResult.session.sessionId, frame), true)
+  assert.deepEqual(client.closed, [{ code: 4002, reason: 'slow_consumer' }])
+  assert.equal(router.getSession(clientResult.session.sessionId), undefined)
+  assert.equal(router.getSession(ownerResult.session.sessionId), ownerResult.session)
+  assert.equal(router.connectionCount(), 1)
 })
 
 test('closes exactly one slot and is a no-op when the session is already gone', () => {

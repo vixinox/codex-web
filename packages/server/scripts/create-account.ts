@@ -33,6 +33,50 @@ async function prompt(
   return answer.trim() || fallback
 }
 
+async function promptHidden(question: string): Promise<string> {
+  const input = process.stdin
+  if (!input.isTTY || typeof input.setRawMode !== 'function') {
+    throw new Error('Hidden password input requires an interactive terminal')
+  }
+
+  process.stdout.write(question)
+  input.setRawMode(true)
+  input.resume()
+
+  return new Promise((resolve, reject) => {
+    let password = ''
+    const decoder = new TextDecoder()
+    const cleanup = (error?: Error) => {
+      input.off('data', onData)
+      input.setRawMode(false)
+      input.pause()
+      process.stdout.write('\n')
+      if (error) reject(error)
+      else resolve(password)
+    }
+    const onData = (chunk: Buffer | string) => {
+      for (const character of typeof chunk === 'string'
+        ? chunk
+        : decoder.decode(chunk, { stream: true })) {
+        if (character === '\u0003') {
+          cleanup(new Error('Password input cancelled'))
+          return
+        }
+        if (character === '\r' || character === '\n') {
+          cleanup()
+          return
+        }
+        if (character === '\u007f' || character === '\b') {
+          password = Array.from(password).slice(0, -1).join('')
+          continue
+        }
+        if (character >= ' ' && character !== '\u007f') password += character
+      }
+    }
+    input.on('data', onData)
+  })
+}
+
 async function main() {
   const cliOptions = parseArgs(process.argv.slice(2))
   const isInteractive = process.stdin.isTTY && !cliOptions.email
@@ -57,17 +101,12 @@ async function main() {
         const defaultName = 'Owner'
         name = await prompt(rl, `Display Name [${defaultName}]: `, defaultName)
       }
-
-      if (!password) {
-        const enteredPassword = await prompt(
-          rl,
-          'Password (leave empty to generate a secure random password): ',
-          '',
-        )
-        password = enteredPassword
-      }
     } finally {
       rl.close()
+    }
+
+    if (!password) {
+      password = await promptHidden('Password (leave empty to generate a secure random password): ')
     }
   }
 

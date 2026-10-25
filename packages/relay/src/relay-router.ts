@@ -74,14 +74,19 @@ export class RelayRouter {
       attachment.nodeId.length > MAX_ROUTE_ID_BYTES ||
       attachment.connectionId.length > MAX_ROUTE_ID_BYTES ||
       !Number.isSafeInteger(trustEpoch) ||
-      (attachment.role === 'client' && typeof attachment.deviceId !== 'string')
+      (attachment.role === 'client' &&
+        (typeof attachment.deviceId !== 'string' || attachment.deviceId.length === 0))
     ) {
       return { ok: false, reason: 'invalid_attachment' }
     }
     const epoch = trustEpoch as number
-    if (this.sessions.size >= (this.options.maxConnections ?? DEFAULT_MAX_CONNECTIONS))
-      return { ok: false, reason: 'capacity' }
     const existingNode = this.nodes.get(attachment.nodeId)
+    const existing =
+      attachment.role === 'owner'
+        ? existingNode?.owner
+        : existingNode?.clients.get(attachment.connectionId)
+    if (this.sessions.size >= (this.options.maxConnections ?? DEFAULT_MAX_CONNECTIONS) && !existing)
+      return { ok: false, reason: 'capacity' }
     if (attachment.role === 'client') {
       if (
         !existingNode?.owner ||
@@ -116,8 +121,6 @@ export class RelayRouter {
       node.clients.size >= (this.options.maxClientsPerNode ?? DEFAULT_MAX_CLIENTS_PER_NODE)
     )
       return { ok: false, reason: 'capacity' }
-    const existing =
-      attachment.role === 'owner' ? node.owner : node.clients.get(attachment.connectionId)
     const session: RelaySession = {
       sessionId: randomUUID(),
       nodeId: attachment.nodeId,
@@ -165,6 +168,10 @@ export class RelayRouter {
       // the addressed slot. The peer already received the explanation inside the opaque payload.
       const target = this.nodes.get(session.nodeId)?.clients.get(frame.connectionId)
       if (target) {
+        if (!this.hasOutboundCapacity(target.socket, frameBytes)) {
+          this.removeSession(target, 'slow_consumer')
+          return true
+        }
         target.socket.send(data)
         this.removeSession(target, 'closed_by_owner')
       }
