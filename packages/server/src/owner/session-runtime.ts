@@ -337,6 +337,10 @@ export class OwnerSessionRuntime {
       })
       return
     }
+    if (this.options.provisional && !['owner.status', 'owner.session.open', 'remote.device.trust', 'remote.device.binding.status', 'remote.device.binding.verifyTotp'].includes(methodName)) {
+      await this.respondError(requestId, AUTH_FAILURE)
+      return
+    }
     if (
       this.options.provisional &&
       ![

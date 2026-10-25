@@ -320,13 +320,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
         handle: (params, context) => services.remoteDeviceTrust(context, asRecord(params)),
       },
     ],
-    [
-      'remote.device.invite',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.remotePairingOffer(context, asRecord(params)),
-      },
-    ],
   ])
 }
 

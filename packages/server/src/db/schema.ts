@@ -16,6 +16,17 @@ export const user = sqliteTable('user', {
   updatedAt: timestamp('updated_at')
     .notNull()
     .$defaultFn(() => new Date()),
+  twoFactorEnabled: integer('two_factor_enabled', { mode: 'boolean' }).default(false).notNull(),
+})
+
+export const twoFactor = sqliteTable('twoFactor', {
+  id: text('id').primaryKey(),
+  secret: text('secret').notNull(),
+  backupCodes: text('backup_codes').notNull(),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  verified: integer('verified', { mode: 'boolean' }).default(true).notNull(),
+  failedVerificationCount: integer('failed_verification_count').default(0).notNull(),
+  lockedUntil: timestamp('locked_until'),
 })
 
 export const session = sqliteTable(

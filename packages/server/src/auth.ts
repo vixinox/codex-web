@@ -1,6 +1,6 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { bearer } from 'better-auth/plugins/bearer'
+import { bearer, twoFactor } from 'better-auth/plugins'
 
 import * as schema from './db/schema.js'
 import type { ServerConfig } from './config.js'
@@ -19,7 +19,7 @@ export function createAuth(config: ServerConfig, database: Database) {
     emailAndPassword: {
       enabled: true,
     },
-    plugins: [bearer()],
+    plugins: [bearer(), twoFactor({ issuer: 'Codex Web' })],
     session: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
