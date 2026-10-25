@@ -6,6 +6,8 @@ import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import { CodexLogo } from '@/components/shared/codex-logo'
+import { OwnerManageScreen } from '@/app/owner/owner-manage-screen'
+import { createOwnerManagementClient } from '@/app/owner/owner-management-client'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
@@ -77,4 +79,21 @@ export function LoginRoute() {
 
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
   return session ? <Navigate to="/app" replace /> : <LoginScreen />
+}
+
+export function OwnerManageRoute() {
+  const { data: session, isPending } = useSession()
+  if (isPending) return pageFallback
+  if (!session) return <Navigate to="/login" replace />
+  const rpc = async (method: string, params?: Record<string, unknown>) => {
+    const response = await fetch('/api/owner/method', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method, params: params ?? {} }),
+    })
+    if (!response.ok) throw new Error(`Owner method failed (${response.status})`)
+    return response.json() as Promise<unknown>
+  }
+  return <OwnerManageScreen client={createOwnerManagementClient(rpc)} />
 }
