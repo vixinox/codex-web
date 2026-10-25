@@ -196,6 +196,7 @@ export class OwnerSessionRuntime {
   private started = false
   private closed = false
   private provisionalExpiresAt?: number
+  private provisionalExpiryTimer?: ReturnType<typeof setTimeout>
 
   constructor(
     transport: OwnerTransport,
@@ -235,10 +236,7 @@ export class OwnerSessionRuntime {
       await this.rejectConnection(parsed.error.code, parsed.error.message, closeCode)
       return
     }
-    if (this.provisionalExpiresAt && this.provisionalExpiresAt <= Date.now()) {
-      this.session = null
-      this.provisionalExpiresAt = undefined
-    }
+    this.expireProvisionalSessionIfNeeded()
 
     const frame = parsed.frame
     if (!this.clientId) {
@@ -291,6 +289,7 @@ export class OwnerSessionRuntime {
           )) ?? undefined
         if (!this.provisionalExpiresAt || this.provisionalExpiresAt <= Date.now())
           this.session = null
+        else this.scheduleProvisionalExpiry()
       }
     }
     await this.send({
@@ -430,6 +429,7 @@ export class OwnerSessionRuntime {
           )
           if (!expiresAt || expiresAt <= Date.now()) throw new OwnerMethodError('UNAUTHORIZED')
           this.provisionalExpiresAt = expiresAt
+          this.scheduleProvisionalExpiry()
         }
         this.session = admission
       },
@@ -532,6 +532,8 @@ export class OwnerSessionRuntime {
   private shutdown(code?: number, reason?: string): void {
     if (this.closed) return
     this.closed = true
+    if (this.provisionalExpiryTimer) clearTimeout(this.provisionalExpiryTimer)
+    this.provisionalExpiryTimer = undefined
     this.removeMessageListener?.()
     this.removeCloseListener?.()
     for (const request of this.activeRequests.values()) {
@@ -544,6 +546,27 @@ export class OwnerSessionRuntime {
     this.activeRequests.clear()
     this.activeStreams.clear()
     this.transport.close(code, reason)
+  }
+
+  private scheduleProvisionalExpiry() {
+    if (this.provisionalExpiryTimer) clearTimeout(this.provisionalExpiryTimer)
+    if (!this.provisionalExpiresAt) return
+    this.provisionalExpiryTimer = setTimeout(
+      () => {
+        this.provisionalExpiryTimer = undefined
+        this.session = null
+        this.provisionalExpiresAt = undefined
+      },
+      Math.max(0, this.provisionalExpiresAt - Date.now()),
+    )
+  }
+
+  private expireProvisionalSessionIfNeeded() {
+    if (!this.provisionalExpiresAt || this.provisionalExpiresAt > Date.now()) return
+    if (this.provisionalExpiryTimer) clearTimeout(this.provisionalExpiryTimer)
+    this.provisionalExpiryTimer = undefined
+    this.session = null
+    this.provisionalExpiresAt = undefined
   }
 }
 

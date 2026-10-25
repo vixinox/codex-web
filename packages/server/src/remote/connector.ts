@@ -195,7 +195,12 @@ export class OwnerConnector {
 
   async consumeBootstrapCapability(token: string) {
     const identity = await this.trust.identity()
-    const bootstrapId = await this.bootstrap.consume(token, identity.nodeId, identity.trustEpoch)
+    const bootstrapId = await this.bootstrap.consume(
+      token,
+      this.requireRelaySecret(),
+      identity.nodeId,
+      identity.trustEpoch,
+    )
     if (!bootstrapId) throw new Error('INVALID_BOOTSTRAP_CAPABILITY')
     const capability = await this.bootstrap.capability(bootstrapId)
     if (!capability) throw new Error('INVALID_BOOTSTRAP_CAPABILITY')
