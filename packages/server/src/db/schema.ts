@@ -23,7 +23,9 @@ export const twoFactor = sqliteTable('twoFactor', {
   id: text('id').primaryKey(),
   secret: text('secret').notNull(),
   backupCodes: text('backup_codes').notNull(),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  userId: text('user_id')
+    .notNull()
+    .references(() => user.id, { onDelete: 'cascade' }),
   verified: integer('verified', { mode: 'boolean' }).default(true).notNull(),
   failedVerificationCount: integer('failed_verification_count').default(0).notNull(),
   lockedUntil: timestamp('locked_until'),
