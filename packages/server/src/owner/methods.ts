@@ -22,6 +22,24 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
+      'remote.bootstrap.create',
+      {
+        access: 'local' as const,
+        handle: async (params, context) => {
+          const result = await services.bootstrapCreate(context, asRecord(params))
+          await context.authenticate(result.admission satisfies OwnerAdmission)
+          return { token: result.token, session: result.session }
+        },
+      },
+    ],
+    [
+      'remote.bootstrap.consume',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.bootstrapConsume(context, asRecord(params)),
+      },
+    ],
+    [
       'owner.session.open',
       {
         access: 'public' as const,
@@ -300,6 +318,13 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (params, context) => services.remoteDeviceTrust(context, asRecord(params)),
+      },
+    ],
+    [
+      'remote.device.invite',
+      {
+        access: 'authenticated' as const,
+        handle: (params, context) => services.remotePairingOffer(context, asRecord(params)),
       },
     ],
   ])

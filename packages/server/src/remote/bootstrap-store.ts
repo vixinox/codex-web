@@ -1,7 +1,7 @@
 import { randomToken } from '@codex-web/protocol/relay/crypto'
-import { createHmac, timingSafeEqual } from 'node:crypto'
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { verifyAdmissionToken } from './admission-token.js'
 
 const STORE_NAME = 'remote-bootstrap.json'
 const LOCK_NAME = 'remote-bootstrap.lock'
@@ -58,12 +58,18 @@ export class RemoteBootstrapStore {
     trustEpoch: number,
     clientPublicKey: string,
   ): Promise<boolean> {
-    const entry = (await this.readState()).entries.find(
-      (candidate) => candidate.bootstrapId === bootstrapId,
-    )
-    if (!entry || entry.nodeId !== nodeId || entry.trustEpoch !== trustEpoch) return false
-    if (entry.clientPublicKey === null) return entry.expiresAt > Date.now()
-    return entry.clientPublicKey === clientPublicKey && (entry.sessionExpiresAt ?? 0) > Date.now()
+    return this.withLock(async () => {
+      const state = await this.readState()
+      const entry = state.entries.find((candidate) => candidate.bootstrapId === bootstrapId)
+      if (!entry || entry.nodeId !== nodeId || entry.trustEpoch !== trustEpoch) return false
+      if (entry.clientPublicKey === null) {
+        if (entry.expiresAt <= Date.now()) return false
+        entry.clientPublicKey = clientPublicKey
+        await this.writeState(state)
+        return true
+      }
+      return entry.clientPublicKey === clientPublicKey && (entry.sessionExpiresAt ?? 0) > Date.now()
+    })
   }
 
   async consume(token: string, secret: string, nodeId: string, trustEpoch: number) {
@@ -73,7 +79,7 @@ export class RemoteBootstrapStore {
       claims.nodeId !== nodeId ||
       claims.trustEpoch !== trustEpoch ||
       claims.role !== 'client' ||
-      claims.admission !== 'bootstrap' ||
+      claims.purpose !== 'bootstrap-attach' ||
       typeof claims.bootstrapId !== 'string' ||
       typeof claims.expiresAt !== 'number' ||
       claims.expiresAt <= Date.now()
@@ -115,7 +121,8 @@ export class RemoteBootstrapStore {
       const entry = state.entries.find((candidate) => candidate.bootstrapId === bootstrapId)
       if (!entry || entry.nodeId !== nodeId || entry.trustEpoch !== trustEpoch) return null
       const now = Date.now()
-      if (entry.clientPublicKey === null) {
+      if (entry.clientPublicKey === null || entry.sessionExpiresAt === null) {
+        if (entry.clientPublicKey !== null && entry.clientPublicKey !== clientPublicKey) return null
         if (entry.expiresAt <= now) return null
         entry.clientPublicKey = clientPublicKey
         entry.sessionExpiresAt = now + PROVISIONAL_SESSION_TTL_MS
@@ -203,18 +210,8 @@ export class RemoteBootstrapStore {
   }
 }
 
-function verifyBootstrapToken(token: string, secret: string): Record<string, unknown> | null {
-  const [encoded, signature, extra] = token.split('.')
-  if (!encoded || !signature || extra) return null
-  const expected = createHmac('sha256', secret).update(encoded).digest()
-  const actual = Buffer.from(signature, 'base64url')
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null
-  try {
-    const value: unknown = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
-    return isRecord(value) ? value : null
-  } catch {
-    return null
-  }
+function verifyBootstrapToken(token: string, secret: string) {
+  return verifyAdmissionToken(token, secret, 'bootstrap-attach')
 }
 
 function parseEntry(value: unknown): BootstrapEntry {

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { createHmac } from 'node:crypto'
 
 import {
   decryptPayload,
@@ -29,6 +28,7 @@ import {
 } from '../owner/session-runtime.js'
 import { RemoteTrustStore, type PairingOfferWithClientToken } from './trust-store.js'
 import { RemoteBootstrapStore } from './bootstrap-store.js'
+import { signAdmissionToken } from './admission-token.js'
 
 export type ConnectorTransport = {
   send(data: string): void
@@ -187,6 +187,7 @@ export class OwnerConnector {
         trustEpoch: identity.trustEpoch,
         role: 'client',
         admission: 'bootstrap',
+        purpose: 'bootstrap-attach',
         bootstrapId: capability.bootstrapId,
         expiresAt: capability.expiresAt,
       }),
@@ -214,6 +215,7 @@ export class OwnerConnector {
         trustEpoch: identity.trustEpoch,
         role: 'client',
         admission: 'bootstrap',
+        purpose: 'bootstrap-attach',
         bootstrapId,
         expiresAt: capability.expiresAt,
       }),
@@ -228,6 +230,7 @@ export class OwnerConnector {
       trustEpoch: identity.trustEpoch,
       role: 'client',
       deviceId,
+      purpose: 'paired-attach',
       expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
     })
   }
@@ -723,7 +726,11 @@ function sessionKeyContext(
 }
 
 function signRelayToken(secret: string, claims: Record<string, string | number>) {
-  const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url')
-  const signature = createHmac('sha256', secret).update(encoded).digest('base64url')
-  return `${encoded}.${signature}`
+  const purpose =
+    claims.purpose === 'bootstrap-attach'
+      ? 'bootstrap-attach'
+      : claims.purpose === 'paired-attach'
+        ? 'paired-attach'
+        : 'paired-attach'
+  return signAdmissionToken(secret, { ...claims, purpose } as never)
 }

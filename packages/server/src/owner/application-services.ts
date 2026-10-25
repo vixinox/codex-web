@@ -175,6 +175,16 @@ export function createOwnerApplicationServices(
       })
     },
 
+    async bootstrapConsume(context: OwnerMethodContext, input: { token?: unknown }) {
+      if (
+        context.transport.kind !== 'relay' ||
+        !dependencies.remote ||
+        typeof input.token !== 'string'
+      )
+        throw new OwnerMethodError('INVALID_PARAMS')
+      return dependencies.remote.consumeBootstrapCapability(input.token)
+    },
+
     async sessionOpen(input: { email?: unknown; password?: unknown }): Promise<OwnerSessionResult> {
       if (typeof input.email !== 'string' || typeof input.password !== 'string')
         throw new OwnerMethodError('INVALID_PARAMS')
@@ -190,7 +200,10 @@ export function createOwnerApplicationServices(
       }
     },
 
-    async remoteDeviceTrust(context: OwnerMethodContext, input: { publicKey?: unknown }) {
+    async remoteDeviceTrust(
+      context: OwnerMethodContext,
+      input: { publicKey?: unknown; challenge?: unknown },
+    ) {
       const owner = requireOwner(context)
       if (
         context.transport.kind !== 'relay' ||
@@ -211,6 +224,21 @@ export function createOwnerApplicationServices(
         !dependencies.remote
       )
         throw new OwnerMethodError('INVALID_PARAMS')
+      if (!context.owner) throw new OwnerMethodError('UNAUTHORIZED')
+      if (typeof input.challenge !== 'string') {
+        return dependencies.remote.trust.issueTrustChallenge(
+          context.owner.sessionId,
+          input.publicKey,
+        )
+      }
+      if (
+        !dependencies.remote.trust.consumeTrustChallenge(
+          input.challenge,
+          context.owner.sessionId,
+          input.publicKey,
+        )
+      )
+        throw new OwnerMethodError('UNAUTHORIZED')
       const deviceId = await dependencies.remote.trust.trustPeer(input.publicKey)
       const token = await dependencies.remote.createPairedClientToken(deviceId)
       provisional.promote(deviceId, token)

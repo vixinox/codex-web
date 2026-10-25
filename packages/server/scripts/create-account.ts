@@ -153,6 +153,8 @@ async function main() {
         identity.nodeId,
         identity.trustEpoch,
       )
+      if (!config.remoteAppUrl) throw new Error('REMOTE_APP_REQUIRED')
+      if (!config.remoteAppUrl.startsWith('https://')) throw new Error('INVALID_REMOTE_APP_URL')
       const bootstrapUrl = new URL(config.remoteAppUrl)
       bootstrapUrl.hash = new URLSearchParams({
         bootstrapId: capability.bootstrapId,
@@ -164,6 +166,7 @@ async function main() {
           trustEpoch: identity.trustEpoch,
           role: 'client',
           admission: 'bootstrap',
+          purpose: 'bootstrap-attach',
           bootstrapId: capability.bootstrapId,
           expiresAt: capability.expiresAt,
         }),

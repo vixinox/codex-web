@@ -11,6 +11,7 @@ import { importPublicKey } from '@codex-web/protocol/relay/crypto'
 
 const STORE_NAME = 'remote-trust.json'
 const OFFER_TTL_MS = 5 * 60 * 1_000
+const TRUST_CHALLENGE_TTL_MS = 60_000
 
 type PendingOffer = {
   challenge: string
@@ -47,6 +48,7 @@ export class RemoteTrustStore {
   private state?: TrustState
   private writeChain = Promise.resolve()
   private readonly dataRoot: string
+  private readonly trustChallenges = new Map<string, { publicKey: string; expiresAt: number }>()
 
   constructor(dataRoot: string) {
     this.dataRoot = dataRoot
@@ -135,6 +137,21 @@ export class RemoteTrustStore {
     })
     await this.persist()
     return deviceId
+  }
+
+  issueTrustChallenge(_sessionId: string, publicKey: string) {
+    const challenge = randomToken(24)
+    this.trustChallenges.set(challenge, {
+      publicKey,
+      expiresAt: Date.now() + TRUST_CHALLENGE_TTL_MS,
+    })
+    return { challenge, expiresAt: new Date(Date.now() + TRUST_CHALLENGE_TTL_MS).toISOString() }
+  }
+
+  consumeTrustChallenge(challenge: string, _sessionId: string, publicKey: string) {
+    const entry = this.trustChallenges.get(challenge)
+    this.trustChallenges.delete(challenge)
+    return Boolean(entry && entry.publicKey === publicKey && entry.expiresAt > Date.now())
   }
 
   async isAuthorized(clientPublicKey: string) {

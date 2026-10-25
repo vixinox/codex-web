@@ -339,7 +339,12 @@ export class OwnerSessionRuntime {
     }
     if (
       this.options.provisional &&
-      !['owner.status', 'owner.session.open', 'remote.device.trust'].includes(methodName)
+      ![
+        'owner.status',
+        'owner.session.open',
+        'remote.bootstrap.consume',
+        'remote.device.trust',
+      ].includes(methodName)
     ) {
       await this.respondError(requestId, AUTH_FAILURE)
       return
