@@ -53,12 +53,20 @@
 - capability 只能消费一次，消费、过期、trust reset 后立即失效；
 - capability 不等于 Owner session，不允许直接调用业务方法；
 - bootstrap URL 不包含 Owner 私钥、设备私钥、密码或长期 bearer token。
+- bootstrap capability 放在 URL fragment；官方网页读取后立即从地址栏清除，避免被 HTTP 日志、Referer 或后续链接携带。
 
 ### 远程临时 session
 
 - bootstrap 只把浏览器绑定到指定 Owner 节点，不自动成为长期受信任设备；
+- Relay client attach 增加独立的 `admission: "bootstrap"` 形态和有界 `bootstrapId`；该形态不携带 `deviceId`，但携带 Owner 签发的短时 client token；
+- Relay 只校验部署 admission secret、node、trust epoch、用途、`bootstrapId` 和有效期，并把不透明的 bootstrap 标识转发给 Owner；
+- Owner 先允许 capability 建立受限 E2EE runtime；首次成功账号认证时原子消费 capability 并绑定当前客户端公钥和 trust epoch；同一 capability 不能被不同公钥再次使用；
+- 同一公钥可在 capability 短期有效期间重连，但同一 `bootstrapId` 不得同时占用多个连接；
+- 临时连接完成 E2EE 后可以进入受限 Owner runtime，但 transport admission 仍标记为 `bootstrap`，不能冒充已配对设备；
 - 用户完成账号登录后获得短期临时 session；
-- 临时 session 允许完成登录后所需的远程初始化和设置操作，生命周期短于正常 session；
+- 临时 runtime 只允许 `owner.status`、`owner.session.open` 和 `remote.device.trust`；不得访问 threads、credentials、projects、Codex、events 或其他 Owner 业务方法；
+- `remote.device.trust` 返回设备 ID和新的正常 client token；浏览器随后使用该 token 重新 attach，才能获得 paired admission 和正常 Owner 业务权限；
+- 临时 session 从成功登录起最长 30 分钟；失效后必须重新走邀请和登录流程；
 - 05 负责 2FA 和正式 session 策略，04 只提供 session/device trust 的状态字段和服务边界；
 - Owner WebSocket、Relay admission 和 E2EE 握手仍必须同时成立。
 
@@ -88,6 +96,14 @@
 - `remote.devices.list`、`remote.devices.revoke`、`remote.trust.reset`：本地 Owner 管理操作；
 - Owner 长期密钥、设备公钥、challenge、trust epoch 继续保存在 `CODEX_DATA_ROOT/remote-trust.json`；
 - Relay 不持久化任何上述状态；Owner session 继续由 Better Auth 管理。
+
+bootstrap attach 的具体边界：
+
+- `relay.attach` 的 bootstrap client 不发送 `deviceId`，发送 `admission: "bootstrap"` 和 `bootstrapId`；
+- bootstrap client token 的 HMAC claims 必须包含 node、trust epoch、role、用途、bootstrapId 和过期时间，且不得包含 device claim；
+- `relay.client.connected` 只转发 admission 类型和 bootstrapId，不转发 token、密码或 Owner session；
+- paired client 继续使用现有 `deviceId` + device-bound client token；
+- trust promotion 走加密 Owner request/response，不新增明文 Relay trust frame；成功后客户端断开并以新的 device token 重连。
 
 ## 验证
 

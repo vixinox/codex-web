@@ -2,11 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  MAX_BOOTSTRAP_ID_BYTES,
   MAX_ROUTE_ID_BYTES,
   RELAY_PROTOCOL_VERSION,
   encodeFrame,
   isHandshakeOkFrame,
   isRelayAttachFrame,
+  isRelayClientConnectedFrame,
   isRelayForwardFrame,
   parseFrame,
 } from './index.js'
@@ -61,6 +63,84 @@ test('requires a device binding on client attachments', () => {
   assert.equal(
     isRelayAttachFrame(
       parseFrame(encodeFrame(clientAttachment({ deviceId: 'd'.repeat(MAX_ROUTE_ID_BYTES + 1) }))),
+    ),
+    false,
+  )
+})
+
+test('accepts bootstrap client attachments without a device binding', () => {
+  const frame = {
+    type: 'relay.attach' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    role: 'client' as const,
+    connectionId: 'connection-1',
+    admission: 'bootstrap' as const,
+    bootstrapId: 'bootstrap-1',
+    clientToken: 'short-lived-owner-signed-token',
+    trustEpoch: 2,
+  }
+  const parsed = parseFrame(encodeFrame(frame))
+  assert.equal(isRelayAttachFrame(parsed), true)
+  assert.deepEqual(parsed, frame)
+})
+
+test('rejects mixed, missing, empty, or oversized bootstrap attachment bindings', () => {
+  const frame = {
+    type: 'relay.attach' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    role: 'client' as const,
+    connectionId: 'connection-1',
+    admission: 'bootstrap' as const,
+    bootstrapId: 'bootstrap-1',
+    clientToken: 'short-lived-owner-signed-token',
+    trustEpoch: 2,
+  }
+  const malformed: unknown[] = [
+    { ...frame, admission: 'paired' },
+    { ...frame, bootstrapId: undefined },
+    { ...frame, bootstrapId: '' },
+    { ...frame, bootstrapId: 'b'.repeat(MAX_BOOTSTRAP_ID_BYTES + 1) },
+    { ...frame, deviceId: 'device-1' },
+    { ...frame, clientToken: '' },
+    { ...frame, trustEpoch: -1 },
+  ]
+
+  for (const candidate of malformed) {
+    assert.equal(isRelayAttachFrame(parseFrame(JSON.stringify(candidate))), false)
+  }
+})
+
+test('validates bootstrap and paired relay client-connected notifications', () => {
+  const paired = {
+    type: 'relay.client.connected' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    connectionId: 'connection-1',
+    deviceId: 'device-1',
+  }
+  const bootstrap = {
+    type: 'relay.client.connected' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    connectionId: 'connection-2',
+    admission: 'bootstrap' as const,
+    bootstrapId: 'bootstrap-1',
+  }
+  assert.equal(isRelayClientConnectedFrame(parseFrame(encodeFrame(paired))), true)
+  assert.equal(isRelayClientConnectedFrame(parseFrame(encodeFrame(bootstrap))), true)
+  assert.equal(
+    isRelayClientConnectedFrame(
+      parseFrame(encodeFrame({ ...bootstrap, deviceId: 'device-1' } as never)),
+    ),
+    false,
+  )
+  assert.equal(
+    isRelayClientConnectedFrame(
+      parseFrame(
+        encodeFrame({ ...bootstrap, bootstrapId: 'b'.repeat(MAX_BOOTSTRAP_ID_BYTES + 1) }),
+      ),
     ),
     false,
   )

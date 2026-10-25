@@ -4,19 +4,45 @@ export type ConnectionRole = 'owner' | 'client'
 
 /** Upper bound for routing identifiers carried in `relay.attach`. */
 export const MAX_ROUTE_ID_BYTES = 128
+/** Upper bound for the opaque, one-time bootstrap identifier carried in relay metadata. */
+export const MAX_BOOTSTRAP_ID_BYTES = MAX_ROUTE_ID_BYTES
 
-export type RelayAttachFrame = {
+type RelayAttachBase = {
   type: 'relay.attach'
   version: typeof RELAY_PROTOCOL_VERSION
   nodeId: string
-  role: ConnectionRole
   connectionId: string
-  ownerToken?: string
-  clientToken?: string
-  deviceId?: string
-  trustEpoch?: number
-  ownerPublicKey?: string
 }
+
+export type RelayOwnerAttachFrame = RelayAttachBase & {
+  role: 'owner'
+  ownerToken: string
+  trustEpoch: number
+  ownerPublicKey: string
+}
+
+export type RelayPairedClientAttachFrame = RelayAttachBase & {
+  role: 'client'
+  clientToken: string
+  deviceId: string
+  trustEpoch: number
+  admission?: undefined
+  bootstrapId?: never
+}
+
+export type RelayBootstrapClientAttachFrame = RelayAttachBase & {
+  role: 'client'
+  admission: 'bootstrap'
+  bootstrapId: string
+  clientToken: string
+  trustEpoch: number
+  deviceId?: never
+}
+
+export type RelayAttachFrame =
+  | RelayOwnerAttachFrame
+  | RelayPairedClientAttachFrame
+  | RelayBootstrapClientAttachFrame
 
 export type RelayReadyFrame = {
   type: 'relay.ready'
@@ -26,13 +52,28 @@ export type RelayReadyFrame = {
   connectionId: string
 }
 
-export type RelayClientConnectedFrame = {
+type RelayClientConnectedBase = {
   type: 'relay.client.connected'
   version: typeof RELAY_PROTOCOL_VERSION
   nodeId: string
   connectionId: string
-  deviceId?: string
 }
+
+export type RelayPairedClientConnectedFrame = RelayClientConnectedBase & {
+  deviceId: string
+  admission?: undefined
+  bootstrapId?: never
+}
+
+export type RelayBootstrapClientConnectedFrame = RelayClientConnectedBase & {
+  admission: 'bootstrap'
+  bootstrapId: string
+  deviceId?: never
+}
+
+export type RelayClientConnectedFrame =
+  | RelayPairedClientConnectedFrame
+  | RelayBootstrapClientConnectedFrame
 
 export type RelayClientDisconnectedFrame = {
   type: 'relay.client.disconnected'
@@ -160,26 +201,100 @@ export function parseFrame(value: string): RelayFrame | null {
 }
 
 export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAttachFrame {
-  return Boolean(
-    frame &&
-    frame.type === 'relay.attach' &&
-    frame.version === RELAY_PROTOCOL_VERSION &&
-    typeof frame.nodeId === 'string' &&
-    frame.nodeId.length > 0 &&
-    frame.nodeId.length <= MAX_ROUTE_ID_BYTES &&
-    (frame.role === 'owner' || frame.role === 'client') &&
-    typeof frame.connectionId === 'string' &&
-    frame.connectionId.length > 0 &&
-    frame.connectionId.length <= MAX_ROUTE_ID_BYTES &&
-    Number.isSafeInteger(frame.trustEpoch) &&
-    (frame.role !== 'owner' || typeof frame.ownerPublicKey === 'string') &&
-    (frame.role !== 'client' ||
-      (typeof frame.deviceId === 'string' &&
-        frame.deviceId.length > 0 &&
-        frame.deviceId.length <= MAX_ROUTE_ID_BYTES)) &&
-    (frame.role === 'owner'
-      ? typeof frame.ownerToken === 'string' && frame.ownerToken.length >= 32
-      : typeof frame.clientToken === 'string' && frame.clientToken.length > 0),
+  if (
+    !frame ||
+    frame.type !== 'relay.attach' ||
+    frame.version !== RELAY_PROTOCOL_VERSION ||
+    !isRouteIdentifier(frame.nodeId) ||
+    !isRouteIdentifier(frame.connectionId) ||
+    !Number.isSafeInteger(frame.trustEpoch) ||
+    frame.trustEpoch < 0
+  )
+    return false
+
+  if (frame.role === 'owner')
+    return (
+      hasOnlyKeys(frame, [
+        'type',
+        'version',
+        'nodeId',
+        'role',
+        'connectionId',
+        'ownerToken',
+        'ownerPublicKey',
+        'trustEpoch',
+      ]) &&
+      typeof frame.ownerToken === 'string' &&
+      frame.ownerToken.length >= 32 &&
+      typeof frame.ownerPublicKey === 'string'
+    )
+
+  if (frame.role !== 'client') return false
+
+  if ('admission' in frame && frame.admission === 'bootstrap')
+    return (
+      hasOnlyKeys(frame, [
+        'type',
+        'version',
+        'nodeId',
+        'role',
+        'connectionId',
+        'admission',
+        'bootstrapId',
+        'clientToken',
+        'trustEpoch',
+      ]) &&
+      isBoundedRouteIdentifier(frame.bootstrapId, MAX_BOOTSTRAP_ID_BYTES) &&
+      typeof frame.clientToken === 'string' &&
+      frame.clientToken.length > 0
+    )
+
+  return (
+    frame.admission === undefined &&
+    hasOnlyKeys(frame, [
+      'type',
+      'version',
+      'nodeId',
+      'role',
+      'connectionId',
+      'clientToken',
+      'deviceId',
+      'trustEpoch',
+    ]) &&
+    isRouteIdentifier(frame.deviceId) &&
+    typeof frame.clientToken === 'string' &&
+    frame.clientToken.length > 0
+  )
+}
+
+export function isRelayClientConnectedFrame(
+  frame: RelayFrame | null,
+): frame is RelayClientConnectedFrame {
+  if (
+    !frame ||
+    frame.type !== 'relay.client.connected' ||
+    frame.version !== RELAY_PROTOCOL_VERSION ||
+    !isRouteIdentifier(frame.nodeId) ||
+    !isRouteIdentifier(frame.connectionId)
+  )
+    return false
+
+  if ('admission' in frame && frame.admission === 'bootstrap')
+    return (
+      hasOnlyKeys(frame, [
+        'type',
+        'version',
+        'nodeId',
+        'connectionId',
+        'admission',
+        'bootstrapId',
+      ]) && isBoundedRouteIdentifier(frame.bootstrapId, MAX_BOOTSTRAP_ID_BYTES)
+    )
+
+  return (
+    frame.admission === undefined &&
+    hasOnlyKeys(frame, ['type', 'version', 'nodeId', 'connectionId', 'deviceId']) &&
+    isRouteIdentifier(frame.deviceId)
   )
 }
 
@@ -243,4 +358,20 @@ export function isRelayForwardFrame(frame: RelayFrame | null): frame is RelayFor
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isRouteIdentifier(value: unknown): value is string {
+  return isBoundedRouteIdentifier(value, MAX_ROUTE_ID_BYTES)
+}
+
+function isBoundedRouteIdentifier(value: unknown, maxBytes: number): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    new TextEncoder().encode(value).byteLength <= maxBytes
+  )
+}
+
+function hasOnlyKeys(value: object, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key))
 }
