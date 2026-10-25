@@ -1,5 +1,7 @@
 # Codex Web
 
+远程 Owner、Relay、认证和设备信任的统一架构入口见 [`docs/owner-remote-architecture.md`](docs/owner-remote-architecture.md)。
+
 最后审阅：2026-10-22
 
 本文档只记录稳定的架构基线、跨模块约束、安全边界、架构风险和难以逆转的决策。当前任务范围由 `AGENTS.md` 维护。

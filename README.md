@@ -65,6 +65,7 @@ pnpm exec oxfmt --check "**/*.{ts,tsx}"
 ## 文档
 
 - [架构与安全边界](PROJECT.md)
+- [Owner 远程架构](docs/owner-remote-architecture.md)
 - [API 契约](docs/api/README.zh-CN.md)
 - [前端边界与数据流](docs/frontend/README.zh-CN.md)
 - [App Server 协议资料](docs/app-server/README.md)
