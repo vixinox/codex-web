@@ -121,6 +121,22 @@ export class RemoteTrustStore {
     return deviceId
   }
 
+  async trustPeer(clientPublicKey: string) {
+    const state = await this.load()
+    await importPublicKey(clientPublicKey)
+    const existing = state.peers.find((peer) => peer.publicKey === clientPublicKey)
+    if (existing) return existing.id
+    const deviceId = randomToken(12)
+    state.peers.push({
+      id: deviceId,
+      publicKey: clientPublicKey,
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+    })
+    await this.persist()
+    return deviceId
+  }
+
   async isAuthorized(clientPublicKey: string) {
     const state = await this.load()
     return state.peers.some((peer) => peer.publicKey === clientPublicKey)

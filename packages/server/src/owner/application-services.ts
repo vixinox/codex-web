@@ -190,6 +190,33 @@ export function createOwnerApplicationServices(
       }
     },
 
+    async remoteDeviceTrust(context: OwnerMethodContext, input: { publicKey?: unknown }) {
+      const owner = requireOwner(context)
+      if (
+        context.transport.kind !== 'relay' ||
+        !context.transport.e2eeVerified ||
+        !context.transport.pairedDeviceId?.startsWith('bootstrap:')
+      )
+        throw new OwnerMethodError('UNAUTHORIZED')
+      const provisional = context.transport as OwnerTransport & {
+        bootstrapId?: string
+        clientPublicKey?: string
+        promote?: (deviceId: string, clientToken: string) => void
+      }
+      if (
+        typeof input.publicKey !== 'string' ||
+        input.publicKey !== provisional.clientPublicKey ||
+        !provisional.bootstrapId ||
+        !provisional.promote ||
+        !dependencies.remote
+      )
+        throw new OwnerMethodError('INVALID_PARAMS')
+      const deviceId = await dependencies.remote.trust.trustPeer(input.publicKey)
+      const token = await dependencies.remote.createPairedClientToken(deviceId)
+      provisional.promote(deviceId, token)
+      return { deviceId, clientToken: token, ownerId: owner.ownerId }
+    },
+
     async resumeSession(token: string, transport: OwnerTransport) {
       if (
         transport.kind === 'relay' &&

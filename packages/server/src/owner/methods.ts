@@ -16,7 +16,7 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
         access: 'local' as const,
         handle: async (params, context) => {
           const result = await services.bootstrapCreate(context, asRecord(params))
-          context.authenticate(result.admission satisfies OwnerAdmission)
+          await context.authenticate(result.admission satisfies OwnerAdmission)
           return { token: result.token, session: result.session }
         },
       },
@@ -27,7 +27,7 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
         access: 'public' as const,
         handle: async (params, context) => {
           const result = await services.sessionOpen(asRecord(params))
-          context.authenticate(result.admission satisfies OwnerAdmission)
+          await context.authenticate(result.admission satisfies OwnerAdmission)
           return { token: result.token, session: result.session }
         },
       },
@@ -293,6 +293,13 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (params, context) => services.remoteDeviceRevoke(context, asRecord(params)),
+      },
+    ],
+    [
+      'remote.device.trust',
+      {
+        access: 'authenticated' as const,
+        handle: (params, context) => services.remoteDeviceTrust(context, asRecord(params)),
       },
     ],
   ])

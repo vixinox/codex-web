@@ -52,8 +52,10 @@
 - capability 绑定 `nodeId`、当前 `trustEpoch`、用途和过期时间；
 - capability 只能消费一次，消费、过期、trust reset 后立即失效；
 - capability 不等于 Owner session，不允许直接调用业务方法；
+- bootstrap URL fragment 包含 `bootstrapId`、`nodeId`、`trustEpoch`、Relay URL 和短时 Owner HMAC 签名的 bootstrap client token；
 - bootstrap URL 不包含 Owner 私钥、设备私钥、密码或长期 bearer token。
 - bootstrap capability 放在 URL fragment；官方网页读取后立即从地址栏清除，避免被 HTTP 日志、Referer 或后续链接携带。
+- 官方网页 origin 由 `CODEX_REMOTE_APP_URL` 配置；只接受 HTTPS origin，不在源码中猜测或写死产品域名。
 
 ### 远程临时 session
 
@@ -96,11 +98,12 @@
 - `remote.devices.list`、`remote.devices.revoke`、`remote.trust.reset`：本地 Owner 管理操作；
 - Owner 长期密钥、设备公钥、challenge、trust epoch 继续保存在 `CODEX_DATA_ROOT/remote-trust.json`；
 - Relay 不持久化任何上述状态；Owner session 继续由 Better Auth 管理。
+- `CODEX_REMOTE_APP_URL` 是生成 bootstrap URL 的必需配置；未配置时拒绝生成 URL，不降级为猜测域名或明文 HTTP。
 
 bootstrap attach 的具体边界：
 
 - `relay.attach` 的 bootstrap client 不发送 `deviceId`，发送 `admission: "bootstrap"` 和 `bootstrapId`；
-- bootstrap client token 的 HMAC claims 必须包含 node、trust epoch、role、用途、bootstrapId 和过期时间，且不得包含 device claim；
+- bootstrap client token 的 HMAC claims 必须包含 node、trust epoch、role、用途、bootstrapId 和过期时间，且不得包含 device claim；它仅用于 Relay attach，Owner 仍须校验本地 capability store；
 - `relay.client.connected` 只转发 admission 类型和 bootstrapId，不转发 token、密码或 Owner session；
 - paired client 继续使用现有 `deviceId` + device-bound client token；
 - trust promotion 走加密 Owner request/response，不新增明文 Relay trust frame；成功后客户端断开并以新的 device token 重连。

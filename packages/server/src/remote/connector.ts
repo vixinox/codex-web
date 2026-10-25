@@ -28,6 +28,7 @@ import {
   type OwnerMethodRegistry,
 } from '../owner/session-runtime.js'
 import { RemoteTrustStore, type PairingOfferWithClientToken } from './trust-store.js'
+import { RemoteBootstrapStore } from './bootstrap-store.js'
 
 export type ConnectorTransport = {
   send(data: string): void
@@ -100,16 +101,26 @@ export class OwnerConnector {
 
   private readonly config: ServerConfig
   readonly trust: RemoteTrustStore
+  readonly bootstrap: RemoteBootstrapStore
   private readonly webSocketFactory: RelayWebSocketFactory
 
   constructor(
     config: ServerConfig,
     trust: RemoteTrustStore,
+    bootstrapOrFactory: RemoteBootstrapStore | RelayWebSocketFactory = new RemoteBootstrapStore(
+      config.dataRoot,
+    ),
     webSocketFactory: RelayWebSocketFactory = defaultWebSocketFactory,
   ) {
     this.config = config
     this.trust = trust
-    this.webSocketFactory = webSocketFactory
+    if (typeof bootstrapOrFactory === 'function') {
+      this.bootstrap = new RemoteBootstrapStore(config.dataRoot)
+      this.webSocketFactory = bootstrapOrFactory
+    } else {
+      this.bootstrap = bootstrapOrFactory
+      this.webSocketFactory = webSocketFactory
+    }
   }
 
   async start() {
@@ -159,6 +170,61 @@ export class OwnerConnector {
         expiresAt,
       }),
     }
+  }
+
+  async createBootstrapCapability() {
+    if (!this.config.remoteRelayUrl) throw new Error('CODEX_REMOTE_RELAY_URL_REQUIRED')
+    if (!this.config.remoteRelayOwnerToken) throw new Error('CODEX_REMOTE_RELAY_ADMISSION_REQUIRED')
+    const identity = await this.trust.identity()
+    const capability = await this.bootstrap.issue(identity.nodeId, identity.trustEpoch)
+    return {
+      ...capability,
+      nodeId: identity.nodeId,
+      trustEpoch: identity.trustEpoch,
+      relayUrl: this.config.remoteRelayUrl,
+      clientToken: signRelayToken(this.requireRelaySecret(), {
+        nodeId: identity.nodeId,
+        trustEpoch: identity.trustEpoch,
+        role: 'client',
+        admission: 'bootstrap',
+        bootstrapId: capability.bootstrapId,
+        expiresAt: capability.expiresAt,
+      }),
+    }
+  }
+
+  async consumeBootstrapCapability(token: string) {
+    const identity = await this.trust.identity()
+    const bootstrapId = await this.bootstrap.consume(token, identity.nodeId, identity.trustEpoch)
+    if (!bootstrapId) throw new Error('INVALID_BOOTSTRAP_CAPABILITY')
+    const capability = await this.bootstrap.capability(bootstrapId)
+    if (!capability) throw new Error('INVALID_BOOTSTRAP_CAPABILITY')
+    return {
+      bootstrapId,
+      nodeId: identity.nodeId,
+      trustEpoch: identity.trustEpoch,
+      relayUrl: this.config.remoteRelayUrl,
+      clientToken: signRelayToken(this.requireRelaySecret(), {
+        nodeId: identity.nodeId,
+        trustEpoch: identity.trustEpoch,
+        role: 'client',
+        admission: 'bootstrap',
+        bootstrapId,
+        expiresAt: capability.expiresAt,
+      }),
+      expiresAt: capability.expiresAt,
+    }
+  }
+
+  async createPairedClientToken(deviceId: string) {
+    const identity = await this.trust.identity()
+    return signRelayToken(this.requireRelaySecret(), {
+      nodeId: identity.nodeId,
+      trustEpoch: identity.trustEpoch,
+      role: 'client',
+      deviceId,
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    })
   }
 
   async acceptPairing(challenge: string, clientPublicKey: string) {
@@ -338,13 +404,14 @@ export class OwnerConnector {
     }
     if (frame.type === 'relay.client.connected') {
       const deviceId = frame.deviceId
-      if (!deviceId) {
+      const bootstrapId = frame.bootstrapId
+      if (!deviceId && !(frame.admission === 'bootstrap' && bootstrapId)) {
         // Relay admission always carries the device binding; without it the Owner cannot tell
         // which paired device owns this connection.
         this.socket?.close?.(1008, 'invalid_client_binding')
         return
       }
-      this.connectedClientIds.set(frame.connectionId, deviceId)
+      this.connectedClientIds.set(frame.connectionId, deviceId ?? `bootstrap:${bootstrapId}`)
       this.connections.set(frame.connectionId, { phase: 'awaiting_handshake' })
       return
     }
@@ -433,11 +500,21 @@ export class OwnerConnector {
     const identity = await this.trust.identity()
     const attachedDeviceId = this.connectedClientIds.get(connectionId)
     const deviceId = await this.trust.deviceId(frame.clientPublicKey)
+    const bootstrapId = attachedDeviceId?.startsWith('bootstrap:')
+      ? attachedDeviceId.slice('bootstrap:'.length)
+      : undefined
+    const provisional = Boolean(bootstrapId)
     if (
       frame.nodeId !== identity.nodeId ||
       frame.trustEpoch !== identity.trustEpoch ||
-      !deviceId ||
-      attachedDeviceId !== deviceId ||
+      (!provisional && (!deviceId || attachedDeviceId !== deviceId)) ||
+      (provisional &&
+        !(await this.bootstrap.authorizeAttach(
+          bootstrapId!,
+          identity.nodeId,
+          identity.trustEpoch,
+          frame.clientPublicKey,
+        ))) ||
       !this.runtimeRegistry ||
       !this.resumeSession
     ) {
@@ -462,20 +539,36 @@ export class OwnerConnector {
     }
     if (this.connections.get(connectionId)?.phase !== 'handshaking') return
     const transport = new VirtualOwnerTransport(
-      deviceId,
+      deviceId ?? `bootstrap:${bootstrapId}`,
       (ownerFrame) => void this.sendEncrypted(connectionId, ownerFrame),
       (code, reason) => this.teardownConnection(connectionId, reason, code),
     )
+    if (provisional && bootstrapId) {
+      transport.bootstrapId = bootstrapId
+      transport.clientPublicKey = frame.clientPublicKey
+      transport.promote = (promotedDeviceId) => {
+        transport.pairedDeviceId = promotedDeviceId
+      }
+    }
     const runtime = new OwnerSessionRuntime(transport, this.runtimeRegistry, {
       connectionId,
       resumeSession: this.resumeSession,
+      provisional: provisional
+        ? {
+            bootstrapId: bootstrapId!,
+            nodeId: identity.nodeId,
+            trustEpoch: identity.trustEpoch,
+            clientPublicKey: frame.clientPublicKey,
+            store: this.bootstrap,
+          }
+        : undefined,
     })
     const session: ClientSession = {
       key,
       lastReceiveSequence: 0,
       sendSequence: 0,
       publicKey: frame.clientPublicKey,
-      deviceId,
+      deviceId: deviceId ?? `bootstrap:${bootstrapId}`,
       transport,
       runtime,
     }

@@ -13,6 +13,7 @@ const signedToken = (
   nodeId = 'node-1',
   trustEpoch = 0,
   deviceId?: string,
+  bootstrapId?: string,
 ) => {
   const encoded = Buffer.from(
     JSON.stringify({
@@ -20,6 +21,7 @@ const signedToken = (
       trustEpoch,
       role,
       ...(deviceId ? { deviceId } : {}),
+      ...(bootstrapId ? { admission: 'bootstrap', bootstrapId } : {}),
       expiresAt: Date.now() + 60_000,
     }),
   ).toString('base64url')
@@ -27,8 +29,24 @@ const signedToken = (
   return `${encoded}.${signature}`
 }
 
+const bootstrapClientAttach = (
+  overrides: Partial<Extract<RelayAttachFrame, { role: 'client'; admission: 'bootstrap' }>> = {},
+  bootstrapId = 'bootstrap-1',
+): RelayAttachFrame => ({
+  type: 'relay.attach',
+  version: RELAY_PROTOCOL_VERSION,
+  nodeId: 'node-1',
+  role: 'client',
+  connectionId: 'bootstrap-connection',
+  admission: 'bootstrap',
+  bootstrapId,
+  clientToken: signedToken('client', 'node-1', 0, undefined, bootstrapId),
+  trustEpoch: 0,
+  ...overrides,
+})
+
 const ownerAttach = (
-  overrides: Partial<RelayAttachFrame> = {},
+  overrides: Partial<Extract<RelayAttachFrame, { role: 'owner' }>> = {},
   nodeId = 'node-1',
   trustEpoch = 0,
 ): RelayAttachFrame => ({
@@ -44,7 +62,7 @@ const ownerAttach = (
 })
 
 const clientAttach = (
-  overrides: Partial<RelayAttachFrame> = {},
+  overrides: Partial<Extract<RelayAttachFrame, { role: 'client'; admission?: undefined }>> = {},
   nodeId = 'node-1',
   trustEpoch = 0,
   deviceId = 'device-1',
@@ -82,6 +100,7 @@ test('forwards opaque frames only between matching owner and client attachments'
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'connection-1',
       ownerToken: signedToken('owner'),
       trustEpoch: 0,
@@ -133,6 +152,7 @@ test('separates connection ids and closes a peer when its counterpart disconnect
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'a',
       ownerToken: signedToken('owner'),
       trustEpoch: 0,
@@ -158,6 +178,7 @@ test('separates connection ids and closes a peer when its counterpart disconnect
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'b',
       ownerToken: signedToken('owner'),
       trustEpoch: 0,
@@ -180,6 +201,7 @@ test('rejects owner impersonation and enforces per-node client capacity', () => 
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: 'wrong-owner-token-that-is-long-enough',
       trustEpoch: 0,
@@ -194,6 +216,7 @@ test('rejects owner impersonation and enforces per-node client capacity', () => 
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner'),
       trustEpoch: 0,
@@ -239,6 +262,7 @@ test('rejects client tokens for another node, role, or trust epoch', () => {
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner', 'node-1', 4),
       trustEpoch: 4,
@@ -270,6 +294,7 @@ test('rejects forwarding above the per-connection message rate', () => {
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner'),
       trustEpoch: 0,
@@ -312,6 +337,7 @@ test('closes a slow peer without dropping the healthy endpoint', () => {
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner'),
       trustEpoch: 0,
@@ -394,6 +420,61 @@ test('rejects a client token without a device claim', () => {
     client.socket,
   )
   assert.deepEqual(result, { ok: false, reason: 'unauthorized' })
+  assert.equal(router.connectionCount(), 1)
+})
+
+test('accepts a bootstrap client without a device id and notifies the owner with its bootstrap id', () => {
+  const router = createRouter()
+  const owner = fakeSocket()
+  const ownerResult = router.attach(ownerAttach(), owner.socket)
+  assert.equal(ownerResult.ok, true)
+
+  const bootstrap = fakeSocket()
+  const result = router.attach(bootstrapClientAttach(), bootstrap.socket)
+  assert.equal(result.ok, true)
+  assert.equal(bootstrap.messages.length, 0)
+  assert.equal(owner.messages.length, 1)
+  assert.deepEqual(JSON.parse(String(owner.messages[0])), {
+    type: 'relay.client.connected',
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    connectionId: 'bootstrap-connection',
+    admission: 'bootstrap',
+    bootstrapId: 'bootstrap-1',
+  })
+})
+
+test('rejects bootstrap clients when the token and attachment bootstrap ids differ', () => {
+  const router = createRouter()
+  router.attach(ownerAttach(), fakeSocket().socket)
+  const result = router.attach(
+    bootstrapClientAttach({
+      clientToken: signedToken('client', 'node-1', 0, undefined, 'token-bootstrap'),
+    }),
+    fakeSocket().socket,
+  )
+  assert.deepEqual(result, { ok: false, reason: 'unauthorized' })
+  assert.equal(router.connectionCount(), 1)
+})
+
+test('rejects bootstrap clients that include a device id or exceed the bootstrap id limit', () => {
+  const router = createRouter()
+  router.attach(ownerAttach(), fakeSocket().socket)
+  const withDevice = router.attach(
+    { ...bootstrapClientAttach(), deviceId: 'device-1' } as unknown as RelayAttachFrame,
+    fakeSocket().socket,
+  )
+  assert.deepEqual(withDevice, { ok: false, reason: 'invalid_attachment' })
+
+  const oversized = 'x'.repeat(129)
+  const tooLong = router.attach(
+    bootstrapClientAttach({
+      bootstrapId: oversized,
+      clientToken: signedToken('client', 'node-1', 0, undefined, oversized),
+    }),
+    fakeSocket().socket,
+  )
+  assert.deepEqual(tooLong, { ok: false, reason: 'invalid_attachment' })
   assert.equal(router.connectionCount(), 1)
 })
 

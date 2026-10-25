@@ -3,6 +3,7 @@ import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto'
 import {
   encodeFrame,
   isRelayForwardFrame,
+  MAX_BOOTSTRAP_ID_BYTES,
   MAX_ROUTE_ID_BYTES,
   parseFrame,
   type ConnectionRole,
@@ -26,6 +27,8 @@ export type RelaySession = {
   trustEpoch: number
   role: ConnectionRole
   socket: RelaySocket
+  admission?: 'paired' | 'bootstrap'
+  bootstrapId?: string
   deviceId?: string
   rateTokens: number
   lastRateUpdate: number
@@ -75,7 +78,12 @@ export class RelayRouter {
       attachment.connectionId.length > MAX_ROUTE_ID_BYTES ||
       !Number.isSafeInteger(trustEpoch) ||
       (attachment.role === 'client' &&
-        (typeof attachment.deviceId !== 'string' || attachment.deviceId.length === 0))
+        (attachment.admission === 'bootstrap'
+          ? 'deviceId' in attachment ||
+            typeof attachment.bootstrapId !== 'string' ||
+            attachment.bootstrapId.length === 0 ||
+            encoder.encode(attachment.bootstrapId).byteLength > MAX_BOOTSTRAP_ID_BYTES
+          : typeof attachment.deviceId !== 'string' || attachment.deviceId.length === 0))
     ) {
       return { ok: false, reason: 'invalid_attachment' }
     }
@@ -91,15 +99,7 @@ export class RelayRouter {
       if (
         !existingNode?.owner ||
         existingNode.trustEpoch !== epoch ||
-        typeof attachment.deviceId !== 'string' ||
-        !verifyToken(
-          attachment.clientToken,
-          this.options.ownerToken,
-          attachment.nodeId,
-          epoch,
-          'client',
-          attachment.deviceId,
-        )
+        !verifyClientToken(attachment, this.options.ownerToken, epoch)
       )
         return { ok: false, reason: 'unauthorized' }
     } else if (
@@ -128,8 +128,14 @@ export class RelayRouter {
       trustEpoch: epoch,
       role: attachment.role,
       socket,
-      ...(attachment.role === 'client' && attachment.deviceId
-        ? { deviceId: attachment.deviceId }
+      ...(attachment.role === 'client'
+        ? {
+            admission:
+              attachment.admission === 'bootstrap' ? ('bootstrap' as const) : ('paired' as const),
+            ...(attachment.admission === 'bootstrap'
+              ? { bootstrapId: attachment.bootstrapId }
+              : { deviceId: attachment.deviceId }),
+          }
         : {}),
       rateTokens: this.options.messagesPerSecond ?? DEFAULT_MESSAGES_PER_SECOND,
       lastRateUpdate: Date.now(),
@@ -254,7 +260,9 @@ export class RelayRouter {
       version: 1,
       nodeId: client.nodeId,
       connectionId: client.connectionId,
-      ...(client.deviceId ? { deviceId: client.deviceId } : {}),
+      ...(client.admission === 'bootstrap'
+        ? { admission: 'bootstrap' as const, bootstrapId: client.bootstrapId! }
+        : { deviceId: client.deviceId! }),
     }
     owner.socket.send(encodeFrame(frame))
   }
@@ -316,6 +324,8 @@ function verifyToken(
   trustEpoch: number,
   role: 'owner' | 'client',
   deviceId?: string,
+  admission?: 'bootstrap',
+  bootstrapId?: string,
 ) {
   if (typeof token !== 'string') return false
   const [encoded, signature, extra] = token.split('.')
@@ -330,18 +340,47 @@ function verifyToken(
       role?: unknown
       expiresAt?: unknown
       deviceId?: unknown
+      admission?: unknown
+      bootstrapId?: unknown
     }
     return (
       claims.nodeId === nodeId &&
       claims.trustEpoch === trustEpoch &&
       claims.role === role &&
-      // A device-bound token must name exactly the device the socket claims. Bootstrap pairing
-      // credentials carry no device yet, so they can only be absent when the caller has none.
       (deviceId === undefined ? claims.deviceId === undefined : claims.deviceId === deviceId) &&
+      (admission === undefined
+        ? claims.admission === undefined && claims.bootstrapId === undefined
+        : claims.admission === admission && claims.bootstrapId === bootstrapId) &&
       typeof claims.expiresAt === 'number' &&
       claims.expiresAt > Date.now()
     )
   } catch {
     return false
   }
+}
+
+function verifyClientToken(
+  attachment: Extract<RelayAttachFrame, { role: 'client' }>,
+  secret: string,
+  trustEpoch: number,
+) {
+  if (attachment.admission === 'bootstrap')
+    return verifyToken(
+      attachment.clientToken,
+      secret,
+      attachment.nodeId,
+      trustEpoch,
+      'client',
+      undefined,
+      'bootstrap',
+      attachment.bootstrapId,
+    )
+  return verifyToken(
+    attachment.clientToken,
+    secret,
+    attachment.nodeId,
+    trustEpoch,
+    'client',
+    attachment.deviceId,
+  )
 }

@@ -18,6 +18,7 @@ export type ServerConfig = {
   requireDangerousAccessConfirmation?: boolean
   remoteRelayUrl?: string
   remoteRelayOwnerToken?: string
+  remoteAppUrl: string
 }
 
 function positiveInt(value: string | undefined, fallback: number) {
@@ -82,6 +83,14 @@ export function loadServerConfig(): ServerConfig {
   const remoteRelayOwnerToken = process.env.CODEX_REMOTE_RELAY_OWNER_TOKEN?.trim() || undefined
   if (remoteRelayUrl && (!remoteRelayOwnerToken || remoteRelayOwnerToken.length < 32))
     throw new Error('CODEX_REMOTE_RELAY_OWNER_TOKEN must be configured with at least 32 characters')
+  const remoteAppUrl = url(
+    'CODEX_REMOTE_APP_URL',
+    process.env.CODEX_REMOTE_APP_URL ??
+      (() => {
+        throw new Error('CODEX_REMOTE_APP_URL is required')
+      })(),
+  )
+  if (!remoteAppUrl.startsWith('https://')) throw new Error('CODEX_REMOTE_APP_URL must use HTTPS')
   return {
     host,
     port: positiveInt(process.env.SERVER_PORT, 3000),
@@ -102,5 +111,6 @@ export function loadServerConfig(): ServerConfig {
       process.env.CODEX_REQUIRE_DANGEROUS_ACCESS_CONFIRMATION === 'true',
     remoteRelayUrl,
     remoteRelayOwnerToken,
+    remoteAppUrl,
   }
 }
