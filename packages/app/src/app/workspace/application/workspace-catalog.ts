@@ -4,7 +4,7 @@ import type {
   WorkspaceSidebarModel,
   WorkspaceThread,
 } from '@/app/workspace/workspace-model'
-import type { ProjectSummary } from '@/lib/bridge/http/projects'
+import type { ProjectSummary } from '@/app/workspace/domain/owner-workspace'
 import {
   applyOptimisticOperations,
   findThread,

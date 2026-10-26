@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { fetchContextWindow, updateContextWindow } from '@/lib/bridge/http/configuration'
+import { ownerSettings } from '@/app/settings/domain/owner-settings'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 
 export function ConfigurationSection({ runtime }: { runtime: CodexRuntimeController }) {
@@ -37,7 +37,8 @@ export function ConfigurationSection({ runtime }: { runtime: CodexRuntimeControl
   React.useEffect(() => {
     if (!runtimeStarted) return
     const controller = new AbortController()
-    void fetchContextWindow(controller.signal)
+    void ownerSettings.configuration
+      .read(controller.signal)
       .then((config) => {
         if (controller.signal.aborted) return undefined
         setValue(String(config.modelContextWindow))
@@ -78,7 +79,7 @@ export function ConfigurationSection({ runtime }: { runtime: CodexRuntimeControl
     setSaving(true)
     setError(null)
     try {
-      await updateContextWindow(parsedValue)
+      await ownerSettings.configuration.write(parsedValue)
       setConfirmOpen(false)
       const restarted = await runtime.restart(credentialId)
       if (!restarted) setError('Configuration was saved, but Codex could not restart.')

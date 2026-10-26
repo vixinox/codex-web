@@ -1,11 +1,20 @@
 import * as React from 'react'
 
-import {
-  fetchCodexStatus,
-  restartCodex,
-  startCodex,
-  type CodexStatus,
-} from '@/lib/bridge/http/codex'
+import { getOwnerBridge } from '@/lib/bridge/owner-runtime'
+
+type CodexStatus = {
+  status: 'ready' | 'starting' | 'restarting' | 'stopped' | 'failed'
+  currentCredentialId: string | null
+  activeCredentialId: string | null
+  error?: string
+}
+
+const fetchCodexStatus = (signal?: AbortSignal) =>
+  getOwnerBridge().request<CodexStatus>('codex.status', undefined, { signal })
+const startCodex = (credentialId?: string, wait = false) =>
+  getOwnerBridge().request<CodexStatus>('codex.start', { credentialId, wait }, { mutation: true })
+const restartCodex = (credentialId: string, wait = false) =>
+  getOwnerBridge().request<CodexStatus>('codex.restart', { credentialId, wait }, { mutation: true })
 
 export type WorkspaceRuntimeModel =
   | { status: 'started'; codex: CodexStatus }

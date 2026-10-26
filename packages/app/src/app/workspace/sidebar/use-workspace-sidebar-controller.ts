@@ -1,18 +1,7 @@
 import * as React from 'react'
 
-import {
-  createProject as requestCreateProject,
-  deleteProject as requestDeleteProject,
-  fetchProjects,
-  renameProject as requestRenameProject,
-  type ProjectSummary,
-} from '@/lib/bridge/http/projects'
-import {
-  archiveThread as requestArchiveThread,
-  deleteThread as requestDeleteThread,
-  fetchThreads,
-} from '@/lib/bridge/http/threads'
-import { subscribeToEvents } from '@/lib/bridge/events/event-source'
+import { ownerWorkspace, type ProjectSummary } from '@/app/workspace/domain/owner-workspace'
+import { getOwnerBridge } from '@/lib/bridge/owner-runtime'
 import type { WorkspaceThread, WorkspaceSidebarModel } from '@/app/workspace/workspace-model'
 import type { WorkspaceRuntimeModel } from '@/app/workspace/runtime/use-codex-runtime-controller'
 import {
@@ -41,22 +30,24 @@ export function useWorkspaceSidebarController(
   if (!catalogRef.current) {
     catalogRef.current = createWorkspaceCatalog({
       projects: {
-        list: fetchProjects,
-        create: requestCreateProject,
-        rename: requestRenameProject,
-        delete: requestDeleteProject,
+        list: ownerWorkspace.projects.list,
+        create: ownerWorkspace.projects.create,
+        rename: ownerWorkspace.projects.rename,
+        delete: ownerWorkspace.projects.delete,
       },
       threads: {
-        list: (projectId, signal) => fetchThreads(projectId, signal),
-        archive: requestArchiveThread,
-        delete: requestDeleteThread,
+        list: (projectId, signal) => ownerWorkspace.threads.list(projectId, signal),
+        archive: ownerWorkspace.threads.archive,
+        delete: ownerWorkspace.threads.delete,
       },
       subscribeToWorkspaceEvents: (onEvent) =>
-        subscribeToEvents({
-          url: '/api/events?scope=workspace',
-          events: ['thread/archived', 'thread/unarchived', 'thread/closed', 'thread/deleted'],
-          onEvent,
-        }),
+        (() => {
+          const stream = getOwnerBridge().openStream(
+            { method: 'events.subscribe', params: { scope: 'workspace' } },
+            { onEvent: () => onEvent(new Event('workspace')) },
+          )
+          return () => stream.cancel()
+        })(),
     })
   }
   const catalog = catalogRef.current

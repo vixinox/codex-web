@@ -2,14 +2,8 @@ import * as React from 'react'
 import { FolderClosed, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { fetchProjects } from '@/lib/bridge/http/projects'
-import {
-  fetchThreads,
-  deleteAllArchivedThreads,
-  deleteThread,
-  unarchiveThread,
-  type ThreadSummary,
-} from '@/lib/bridge/http/threads'
+import { ownerWorkspace } from '@/app/workspace/domain/owner-workspace'
+import type { ThreadSummary } from '@/lib/bridge/interfaces/thread'
 import { Separator } from '@/components/ui/separator'
 import { useSettingsLoadEnter } from './use-settings-load-enter'
 
@@ -27,8 +21,8 @@ export function ArchivedChats() {
     setError(null)
     try {
       const [threads, projects] = await Promise.all([
-        fetchThreads(null, undefined, true),
-        fetchProjects(),
+        ownerWorkspace.threads.list(null, undefined, true),
+        ownerWorkspace.projects.list(),
       ])
       setItems(threads)
       setProjectNames(Object.fromEntries(projects.map((project) => [project.id, project.name])))
@@ -135,13 +129,19 @@ export function ArchivedChats() {
                             size="icon"
                             aria-label="Delete chat"
                             className="text-muted-foreground"
-                            onClick={() => void run(() => deleteThread(item.projectId, item.id))}
+                            onClick={() =>
+                              void run(() => ownerWorkspace.threads.delete(item.projectId, item.id))
+                            }
                           >
                             <Trash2 />
                           </Button>
                           <Button
                             variant="secondary"
-                            onClick={() => void run(() => unarchiveThread(item.projectId, item.id))}
+                            onClick={() =>
+                              void run(() =>
+                                ownerWorkspace.threads.unarchive(item.projectId, item.id),
+                              )
+                            }
                           >
                             Unarchive
                           </Button>
@@ -172,7 +172,7 @@ export function ArchivedChats() {
               <Button
                 variant="destructive"
                 onClick={() =>
-                  void run(deleteAllArchivedThreads).then((completed) => {
+                  void run(ownerWorkspace.threads.deleteAllArchived).then((completed) => {
                     if (completed) setDeleteAllOpen(false)
                     return undefined
                   })

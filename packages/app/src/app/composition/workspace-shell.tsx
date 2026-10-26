@@ -14,7 +14,7 @@ import {
   type WorkspaceSidebarController,
 } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
 import { useWorkspaceOrchestration } from '@/app/workspace/use-workspace-orchestration'
-import { fetchRuntimeCapabilities } from '@/lib/bridge/http/configuration'
+import { ownerWorkspace } from '@/app/workspace/domain/owner-workspace'
 import {
   composerCapabilitiesFromModels,
   type ComposerCapabilities,
@@ -46,7 +46,7 @@ function WorkspaceShellContents({
   const [capabilities, setCapabilities] = React.useState<ComposerCapabilities>()
   React.useEffect(() => {
     if (runtime.model.status !== 'started') return
-    void fetchRuntimeCapabilities().then((catalog) =>
+    void ownerWorkspace.capabilities().then((catalog) =>
       setCapabilities(
         composerCapabilitiesFromModels(catalog.models, 'full', {
           attachments: true,

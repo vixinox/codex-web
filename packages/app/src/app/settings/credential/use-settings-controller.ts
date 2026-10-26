@@ -1,13 +1,6 @@
 import * as React from 'react'
 
-import {
-  createCredential,
-  deleteCredential,
-  fetchCredentials,
-  selectCurrentCredential,
-  testCredential,
-  type CredentialSummary,
-} from '@/lib/bridge/http/credentials'
+import { ownerSettings, type CredentialSummary } from '@/app/settings/domain/owner-settings'
 import type { CredentialFormErrors, SettingsCollection } from '@/app/settings/model-types'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
 
@@ -41,7 +34,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
   const [retryKey, setRetryKey] = React.useState(0)
 
   const loadCredentials = React.useCallback(async (signal?: AbortSignal) => {
-    const snapshot = await fetchCredentials(signal)
+    const snapshot = await ownerSettings.credentials.list(signal)
     setCredentials({ status: 'ready', items: snapshot.items })
     setSelectedCredentialId(snapshot.currentCredentialId)
     return snapshot
@@ -49,7 +42,8 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
 
   React.useEffect(() => {
     const controller = new AbortController()
-    void fetchCredentials(controller.signal)
+    void ownerSettings.credentials
+      .list(controller.signal)
       .then((snapshot) => {
         setCredentials({ status: 'ready', items: snapshot.items })
         setSelectedCredentialId(snapshot.currentCredentialId)
@@ -86,7 +80,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
     }
     setCredentialSavePending(true)
     try {
-      await createCredential(input)
+      await ownerSettings.credentials.create(input)
       await loadCredentials()
       await runtime.refresh()
       return true
@@ -109,7 +103,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
     setCredentialActionError(null)
     setCodexActionPending(true)
     try {
-      const currentCredentialId = await selectCurrentCredential(id)
+      const currentCredentialId = await ownerSettings.credentials.select(id)
       setSelectedCredentialId(currentCredentialId)
       if (
         runtime.model.status === 'started' &&
@@ -132,7 +126,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
   async function deleteSavedCredential(id: string) {
     setCredentialActionError(null)
     try {
-      await deleteCredential(id)
+      await ownerSettings.credentials.delete(id)
       await loadCredentials()
       await runtime.refresh()
     } catch (error) {
@@ -163,6 +157,9 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
     selectCredential,
     deleteCredential: deleteSavedCredential,
     retryCredentials: () => setRetryKey((value) => value + 1),
-    testSavedCredential: async (credential) => testCredential(credential.id),
+    testSavedCredential: async (credential) => {
+      await ownerSettings.credentials.test(credential.id)
+      return true
+    },
   }
 }

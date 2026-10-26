@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { FolderIcon, RefreshCwIcon } from 'lucide-react'
-import type { ProjectSummary } from '@/lib/bridge/http/projects'
+import type { ProjectSummary } from '@/app/workspace/domain/owner-workspace'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'

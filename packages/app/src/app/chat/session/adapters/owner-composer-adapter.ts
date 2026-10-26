@@ -1,6 +1,6 @@
 import { ownerThreadDomainAdapter } from '@/app/chat/domain/owner-thread-adapter'
-import { fetchSkills } from '@/lib/bridge/http/skills'
-import { fetchContextWindow } from '@/lib/bridge/http/configuration'
+import { ownerWorkspace } from '@/app/workspace/domain/owner-workspace'
+import { ownerSettings } from '@/app/settings/domain/owner-settings'
 import { getOwnerBridge } from '@/lib/bridge/owner-runtime'
 import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import {
@@ -26,8 +26,15 @@ export const ownerComposerAdapter: ComposerRuntimeAdapter = {
       else writeNewChatSelection(userId, preferences)
     },
   },
-  listSkills: (projectId, signal) => fetchSkills(projectId, signal),
-  readContextWindow: async (signal) => (await fetchContextWindow(signal)).modelContextWindow,
+  listSkills: async (projectId, signal) => {
+    const skills = await ownerWorkspace.skills(projectId, signal)
+    return skills.map((skill) => ({
+      ...skill,
+      scope: skill.scope === 'project' ? 'repo' : skill.scope,
+    }))
+  },
+  readContextWindow: async (signal) =>
+    (await ownerSettings.configuration.read(signal)).modelContextWindow,
   subscribeToSkillChanges: (onChange) =>
     (() => {
       const stream = getOwnerBridge().openStream(

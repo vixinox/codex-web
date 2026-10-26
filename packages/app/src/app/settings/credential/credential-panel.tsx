@@ -25,7 +25,7 @@ import {
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { RadioGroup } from '@/components/ui/radio-group'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import type { ProjectSummary } from '@/lib/bridge/http/projects'
+import type { ProjectSummary } from '@/app/workspace/domain/owner-workspace'
 import type { SettingsController } from './use-settings-controller'
 import type { SettingsCollection, SettingsCredential } from '../model-types'
 import { CredentialForm } from './credential-form'
