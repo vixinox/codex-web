@@ -1,7 +1,7 @@
-import { ownerThreadClient } from '@/lib/bridge/adapters/owner-thread-client'
+import { ownerThreadDomainAdapter } from '@/app/chat/domain/owner-thread-adapter'
 import { fetchSkills } from '@/lib/bridge/http/skills'
 import { fetchContextWindow } from '@/lib/bridge/http/configuration'
-import { subscribeToEvents } from '@/lib/bridge/events/event-source'
+import { getOwnerBridge } from '@/lib/bridge/owner-runtime'
 import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import {
   readNewChatSelection,
@@ -14,7 +14,7 @@ import type { ComposerRuntimeAdapter } from './composer-adapter'
 /** Owner runtime: `/api/*` transport, Owner capabilities, durable selection. */
 export const ownerComposerAdapter: ComposerRuntimeAdapter = {
   capabilities: EMPTY_OWNER_COMPOSER_CAPABILITIES,
-  threads: ownerThreadClient,
+  threads: ownerThreadDomainAdapter,
   selection: {
     read: (userId, target) =>
       target.threadId
@@ -29,9 +29,11 @@ export const ownerComposerAdapter: ComposerRuntimeAdapter = {
   listSkills: (projectId, signal) => fetchSkills(projectId, signal),
   readContextWindow: async (signal) => (await fetchContextWindow(signal)).modelContextWindow,
   subscribeToSkillChanges: (onChange) =>
-    subscribeToEvents({
-      url: '/api/events?scope=workspace',
-      events: ['skills/changed'],
-      onEvent: () => onChange(),
-    }),
+    (() => {
+      const stream = getOwnerBridge().openStream(
+        { method: 'events.subscribe', params: { scope: 'workspace', events: ['skills/changed'] } },
+        { onEvent: onChange },
+      )
+      return () => stream.cancel()
+    })(),
 }

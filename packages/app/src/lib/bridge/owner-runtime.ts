@@ -7,7 +7,7 @@ export type OwnerRequestOptions = {
 }
 
 export type OwnerBridge = {
-  request(method: string, params?: unknown, options?: OwnerRequestOptions): Promise<unknown>
+  request<T = unknown>(method: string, params?: unknown, options?: OwnerRequestOptions): Promise<T>
   openStream(request: StreamRequest, handlers: StreamHandlers): StreamHandle
 }
 

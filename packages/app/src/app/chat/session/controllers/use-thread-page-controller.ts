@@ -7,7 +7,7 @@ import { optimisticThread } from '../state/thread-pending-reconciliation'
 import { usePendingThreadPresentation } from '../presentation/use-pending-thread-presentation'
 import { useThreadSessionSnapshot } from '../state/thread-session-store'
 import { buildThreadComposerSlot } from '../presentation/thread-composer-slot'
-import { ownerThreadClient } from '@/lib/bridge/adapters/owner-thread-client'
+import { ownerThreadDomainAdapter } from '@/app/chat/domain/owner-thread-adapter'
 import type { ThreadClient } from '@/lib/bridge/interfaces/thread'
 import type { ComposerRuntimeAdapter } from '../adapters/composer-adapter'
 import { ownerComposerAdapter } from '../adapters/owner-composer-adapter'
@@ -52,7 +52,7 @@ export function useThreadPageController({
   onThreadCreationStart,
   onThreadCreationFailed,
   onThreadCreationResolved,
-  client = ownerThreadClient,
+  client = ownerThreadDomainAdapter,
   adapter = ownerComposerAdapter,
   capabilities,
 }: ThreadPageControllerOptions): ThreadPageSession {
