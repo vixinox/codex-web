@@ -324,12 +324,12 @@ pnpm lint:staged
 ## 12. 当前实现记录
 
 - 06A-2 已加入三层 runtime/session controller、有限重连退避、retry、target switch 和连接生命周期测试；页面通过 controller 的 request/stream/close 入口访问运行时。
-- 06C 已加入 Owner Thread domain adapter 和 Chat UI-facing contract；review 发现 cursor 与 Server/API 类型不匹配，`events.reset` 处理缺失，故不得标记 Chat event recovery 完成。
 - 06C 已按 `{ epoch, sequence }` cursor 合同完成 subscribe/resume/reset recovery、事件去重和 snapshot hydrate。
 - 06D 已将 Workspace/Settings 生产调用迁移到 Owner domain adapters；生产代码不再引用业务 HTTP/SSE bridge。
 - 远程 Relay/E2EE socket、设备记录、provisional admission、TOTP/recovery 验证、trust promotion、paired token 写入和刷新后 admission 已形成实际调用闭环。
 - `relay-owner-socket.ts` 对 `@codex-web/protocol/relay/crypto` 的直接依赖违反当前前端边界文档，需先收敛边界再判定 06B 完成。
 - 受测试环境限制，少量纯 controller 测试仍通过 Owner bridge mock 模拟事件；生产调用已统一走 Owner domain adapter。
+- 06E 已删除未使用的业务 HTTP/SSE bridge 实现；外围 bootstrap/metadata HTTP 不受影响。
 - 远程端已消费 `remote.device.paired` 通知，支持本机批准后自动保存 paired token、切换 admission 并建立 Owner session。
 - 06 review 基点为 `cfb2a8f`；review 结果已纳入第 7 节，所有 P1/P2 修复在相应 focused tests 通过前保持未完成。
 

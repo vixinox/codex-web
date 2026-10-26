@@ -39,12 +39,21 @@ export async function importPublicKey(serialized: string) {
   return subtle().importKey('jwk', JSON.parse(serialized), ecdh, true, [])
 }
 
-export async function deriveSessionKey(privateKey: CryptoKey, peerPublicKey: CryptoKey, context: string) {
+export async function deriveSessionKey(
+  privateKey: CryptoKey,
+  peerPublicKey: CryptoKey,
+  context: string,
+) {
   const shared = await subtle().deriveBits({ ...ecdh, public: peerPublicKey }, privateKey, 256)
   if (new Uint8Array(shared).every((byte) => byte === 0)) throw new Error('Invalid peer public key')
   const material = await subtle().importKey('raw', shared, 'HKDF', false, ['deriveKey'])
   return subtle().deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: encoder.encode('codex-web-remote-session'), info: encoder.encode(context) },
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: encoder.encode('codex-web-remote-session'),
+      info: encoder.encode(context),
+    },
     material,
     aes,
     false,
@@ -52,13 +61,31 @@ export async function deriveSessionKey(privateKey: CryptoKey, peerPublicKey: Cry
   )
 }
 
-export async function encryptPayload(key: CryptoKey, plaintext: string, sequence: number): Promise<EncryptedFrame> {
+export async function encryptPayload(
+  key: CryptoKey,
+  plaintext: string,
+  sequence: number,
+): Promise<EncryptedFrame> {
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const ciphertext = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: aad(sequence) }, key, encoder.encode(plaintext))
-  return { type: 'encrypted', version: RELAY_PROTOCOL_VERSION, sequence, iv: bytesToBase64Url(iv), ciphertext: bytesToBase64Url(new Uint8Array(ciphertext)) }
+  const ciphertext = await subtle().encrypt(
+    { name: 'AES-GCM', iv, additionalData: aad(sequence) },
+    key,
+    encoder.encode(plaintext),
+  )
+  return {
+    type: 'encrypted',
+    version: RELAY_PROTOCOL_VERSION,
+    sequence,
+    iv: bytesToBase64Url(iv),
+    ciphertext: bytesToBase64Url(new Uint8Array(ciphertext)),
+  }
 }
 
 export async function decryptPayload(key: CryptoKey, frame: EncryptedFrame) {
-  const plaintext = await subtle().decrypt({ name: 'AES-GCM', iv: base64UrlToBytes(frame.iv), additionalData: aad(frame.sequence) }, key, base64UrlToBytes(frame.ciphertext))
+  const plaintext = await subtle().decrypt(
+    { name: 'AES-GCM', iv: base64UrlToBytes(frame.iv), additionalData: aad(frame.sequence) },
+    key,
+    base64UrlToBytes(frame.ciphertext),
+  )
   return decoder.decode(plaintext)
 }
