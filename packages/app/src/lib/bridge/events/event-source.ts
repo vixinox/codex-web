@@ -19,7 +19,7 @@ export function subscribeToEvents(subscription: EventSubscription): () => void {
           typeof value.method === 'string'
             ? value.method
             : 'message'
-        subscription.onEvent(new Event(type))
+        subscription.onEvent(new CustomEvent(type, { detail: value }))
       },
       onError: () => subscription.onError?.(),
       onClose: () => undefined,

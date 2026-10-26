@@ -1,10 +1,14 @@
 import type { ThreadClient } from '../interfaces/thread'
-import { getOwnerBridge } from '../owner-runtime'
 import * as threadBridge from '../http/threads'
+import { subscribeToEvents } from '../events/event-source'
 
 export const ownerThreadClient: ThreadClient = {
   listThreads: (projectId) => threadBridge.fetchThreads(projectId),
-  createThread: (...args) => threadBridge.createThread(...args),
+  createThread: (...args) =>
+    (
+      (threadBridge as typeof threadBridge & { startThread?: typeof threadBridge.createThread })
+        .startThread ?? threadBridge.createThread
+    )(...args),
   readThread: (...args) => threadBridge.fetchThread(...args),
   readThreadStatus: (...args) => threadBridge.fetchThreadRuntimeStatus(...args),
   startTurn: (...args) => threadBridge.startTurn(...args),
@@ -12,20 +16,24 @@ export const ownerThreadClient: ThreadClient = {
   compactThread: (...args) => threadBridge.compactThread(...args),
   answerUserInput: (...args) => threadBridge.answerUserInput(...args),
   subscribe(threadId, afterId, onEvent, onError) {
-    const handle = getOwnerBridge().openStream(
-      { method: 'events.subscribe', params: { scope: 'thread', threadId, afterId } },
-      {
-        onEvent: (value) => {
-          if (!value || typeof value !== 'object') return
-          const item = value as { cursor?: unknown; event?: unknown }
-          const id = typeof item.cursor === 'number' ? item.cursor : 0
-          const message = item.event && typeof item.event === 'object' ? item.event : value
-          onEvent({ id, message: message as Record<string, unknown> })
-        },
-        onError,
-        onClose: onError,
+    return subscribeToEvents({
+      url: `/api/events?threadId=${encodeURIComponent(threadId)}&afterId=${afterId}`,
+      events: ['*'],
+      onEvent: (event) => {
+        const messageEvent = event as MessageEvent
+        const value =
+          (event as Event & { detail?: unknown }).detail ??
+          (typeof messageEvent.data === 'string' ? JSON.parse(messageEvent.data) : event)
+        if (!value || typeof value !== 'object') return
+        const item = value as { id?: unknown; message?: unknown }
+        const id =
+          typeof item.id === 'number'
+            ? item.id
+            : Number.parseInt(messageEvent.lastEventId ?? '', 10)
+        if (Number.isFinite(id) && item.message && typeof item.message === 'object')
+          onEvent({ id, message: item.message as Record<string, unknown> })
       },
-    )
-    return () => handle.cancel()
+      onError,
+    })
   },
 }
