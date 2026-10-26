@@ -7,6 +7,8 @@ export type DeviceKeyRecord = {
   deviceId: string | null
   publicKey: string
   privateKey: CryptoKey
+  pairedClientToken: string | null
+  trustEpoch: number | null
 }
 
 type KeyDatabase = IDBDatabase
@@ -30,7 +32,13 @@ export async function createDeviceKey() {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
     tx.objectStore(STORE_NAME).put(
-      { deviceId: null, publicKey, privateKey: pair.privateKey },
+      {
+        deviceId: null,
+        publicKey,
+        privateKey: pair.privateKey,
+        pairedClientToken: null,
+        trustEpoch: null,
+      },
       'current',
     )
     tx.oncomplete = () => resolve()
@@ -54,7 +62,11 @@ export async function loadDeviceKey(): Promise<DeviceKeyRecord | null> {
       await deleteStoredKey()
       return null
     }
-    return value
+    return {
+      ...value,
+      pairedClientToken: (value as Partial<DeviceKeyRecord>).pairedClientToken ?? null,
+      trustEpoch: (value as Partial<DeviceKeyRecord>).trustEpoch ?? null,
+    }
   } catch {
     await deleteStoredKey().catch(() => undefined)
     return null
@@ -74,6 +86,22 @@ export async function setDeviceId(deviceId: string) {
   db.close()
 }
 
+export async function setPairedDevice(input: {
+  deviceId: string
+  pairedClientToken: string
+  trustEpoch: number
+}) {
+  const record = await loadDeviceKey()
+  if (!record) throw new Error('Device key is missing')
+  await putDeviceKey({ ...record, ...input })
+}
+
+export async function clearPairedDevice() {
+  const record = await loadDeviceKey()
+  if (!record) return
+  await putDeviceKey({ ...record, deviceId: null, pairedClientToken: null, trustEpoch: null })
+}
+
 export async function clearDeviceKey() {
   await deleteStoredKey()
 }
@@ -89,6 +117,17 @@ async function deleteStoredKey() {
   db.close()
 }
 
+async function putDeviceKey(record: DeviceKeyRecord) {
+  const db = await openDatabase()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    tx.objectStore(STORE_NAME).put(record, 'current')
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('Unable to persist device key'))
+  })
+  db.close()
+}
+
 function isDeviceKeyRecord(value: unknown): value is DeviceKeyRecord {
   if (!value || typeof value !== 'object') return false
   const record = value as Partial<DeviceKeyRecord>
@@ -98,6 +137,12 @@ function isDeviceKeyRecord(value: unknown): value is DeviceKeyRecord {
     record.publicKey.length > 0 &&
     !!record.privateKey &&
     typeof record.privateKey === 'object' &&
-    (record.privateKey as CryptoKey).extractable === false
+    (record.privateKey as CryptoKey).extractable === false &&
+    (record.pairedClientToken === undefined ||
+      record.pairedClientToken === null ||
+      typeof record.pairedClientToken === 'string') &&
+    (record.trustEpoch === undefined ||
+      record.trustEpoch === null ||
+      (Number.isSafeInteger(record.trustEpoch) && (record.trustEpoch as number) >= 0))
   )
 }

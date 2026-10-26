@@ -8,7 +8,7 @@ import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-run
 import { CodexLogo } from '@/components/shared/codex-logo'
 import { OwnerManageScreen } from '@/app/owner/owner-manage-screen'
 import { createOwnerManagementClient } from '@/app/owner/owner-management-client'
-import { connectOwnerManagementRpc } from '@/lib/owner-ws/owner-management-client'
+import { useOwnerRuntime } from '@/lib/owner-ws/use-owner-runtime'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
@@ -48,6 +48,8 @@ export function CandidateRoute() {
 }
 
 export function AuthenticatedWorkspace({ userId }: { userId: string }) {
+  const { data: session } = useSession()
+  const { status, error } = useOwnerRuntime(session?.session.token)
   const runtime = useCodexRuntimeController()
 
   useEffect(() => {
@@ -59,6 +61,10 @@ export function AuthenticatedWorkspace({ userId }: { userId: string }) {
     })
   }, [runtime.errorEvent])
 
+  if (status === 'connecting' || status === 'idle')
+    return <div className="min-h-svh bg-background" aria-label="Connecting Owner" />
+  if (status === 'failed')
+    return <div className="min-h-svh bg-background p-8 text-destructive">{error}</div>
   if (runtime.bootstrapping)
     return (
       <main className="flex min-h-svh items-center justify-center bg-background text-foreground">
@@ -86,28 +92,21 @@ export function OwnerManageRoute() {
   const { data: session, isPending } = useSession()
   const [client, setClient] = useState<ReturnType<typeof createOwnerManagementClient> | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
+  const ownerRuntime = useOwnerRuntime(session?.session.token)
   useEffect(() => {
-    if (isPending || !session?.session.token) return
-    let active = true
-    let rpc: Awaited<ReturnType<typeof connectOwnerManagementRpc>> | undefined
-    setConnectionError(null)
-    void connectOwnerManagementRpc(session.session.token)
-      .then((connected) => {
-        rpc = connected
-        if (active) setClient(createOwnerManagementClient(connected))
-        else connected.close()
-        return undefined
-      })
-      .catch((cause) => {
-        if (active)
-          setConnectionError(cause instanceof Error ? cause.message : 'Owner connection failed')
-      })
-    return () => {
-      active = false
-      rpc?.close()
+    if (ownerRuntime.status === 'ready') {
+      setConnectionError(null)
+      setClient(
+        createOwnerManagementClient({
+          request: (method, params) => ownerRuntime.runtime.request(method, params),
+          close: () => ownerRuntime.runtime.close('management closed'),
+        }),
+      )
+    } else {
       setClient(null)
+      if (ownerRuntime.status === 'failed') setConnectionError(ownerRuntime.error)
     }
-  }, [isPending, session?.session.token])
+  }, [ownerRuntime.error, ownerRuntime.runtime, ownerRuntime.status])
   if (isPending) return pageFallback
   if (!session) return <Navigate to="/login" replace />
   if (connectionError)

@@ -39,6 +39,14 @@ export type StreamHandle = {
 }
 
 export type OwnerTransportState = 'disconnected' | 'connecting' | 'connected' | 'failed'
+export type OwnerAuthenticationState =
+  | 'unknown'
+  | 'unauthenticated'
+  | 'authenticated'
+  | 'expired'
+  | 'revoked'
+  | 'failed'
+export type OwnerRuntimePhase = 'idle' | 'resuming' | 'ready' | 'blocked' | 'failed'
 
 export type OwnerErrorCode = string
 
@@ -64,6 +72,8 @@ export class OwnerConnectionError extends Error {
 export type OwnerRuntime = {
   readonly state: OwnerTransportState
   readonly authenticated: boolean
+  readonly authentication: OwnerAuthenticationState
+  readonly phase: OwnerRuntimePhase
   readonly connectionId: string | null
   connect(target: OwnerTarget): Promise<void>
   request<T = unknown>(method: string, params?: unknown, options?: RequestOptions): Promise<T>
@@ -94,6 +104,8 @@ export function createOwnerRuntime(
   let socket: WebSocketLike | null = null
   let connectionId: string | null = null
   let authenticated = false
+  let authentication: OwnerAuthenticationState = 'unknown'
+  let phase: OwnerRuntimePhase = 'idle'
   let closed = false
   let nextId = 0
   const pending = new Map<string, PendingRequest>()
@@ -130,6 +142,8 @@ export function createOwnerRuntime(
     socket = null
     connectionId = null
     authenticated = false
+    authentication = 'unknown'
+    phase = 'idle'
     failAll(error)
     current?.close(1000, reason)
     setState('disconnected')
@@ -139,6 +153,8 @@ export function createOwnerRuntime(
     if (frame.type === 'ready') {
       connectionId = frame.connectionId
       authenticated = frame.authenticated
+      authentication = frame.authenticated ? 'authenticated' : 'unauthenticated'
+      phase = frame.authenticated ? 'ready' : 'idle'
       closed = false
       setState('connected')
       return
@@ -222,6 +238,8 @@ export function createOwnerRuntime(
       const error = new OwnerConnectionError('Owner connection failed')
       if (state === 'connecting') reject(error)
       shutdown('CONNECTION_FAILED', error)
+      phase = 'failed'
+      authentication = 'failed'
       setState('failed')
     }
     nextSocket.onclose = () => {
@@ -234,6 +252,8 @@ export function createOwnerRuntime(
   const connect = (next: OwnerTarget) => {
     shutdown('REPLACED')
     closed = false
+    phase = next.sessionToken ? 'resuming' : 'idle'
+    authentication = next.sessionToken ? 'unknown' : 'unauthenticated'
     setState('connecting')
     return new Promise<void>((resolve, reject) => attach(next, resolve, reject))
   }
@@ -303,12 +323,16 @@ export function createOwnerRuntime(
     let streamId: string | null = null
     const timer = setTimeout(() => {
       if (streamId) cancelStream(streamId)
-      else
+      else {
+        streams.delete(requestId)
         try {
           socket?.send(encodeOwnerFrame({ type: 'cancel', requestId }))
         } catch {
           /* closed */
         }
+        placeholder.abortCleanup?.()
+        handlers.onClose?.('REQUEST_TIMEOUT')
+      }
       handlers.onError?.(
         new OwnerRequestError({
           code: 'REQUEST_TIMEOUT',
@@ -370,6 +394,19 @@ export function createOwnerRuntime(
   }
 
   const cancelRequest = (requestId: string) => {
+    const stream = streams.get(requestId)
+    if (stream) {
+      streams.delete(requestId)
+      clearTimeout(stream.timer)
+      stream.abortCleanup?.()
+      try {
+        socket?.send(encodeOwnerFrame({ type: 'cancel', requestId }))
+      } catch {
+        /* closed */
+      }
+      stream.handlers.onClose?.('REQUEST_CANCELLED')
+      return
+    }
     if (!pending.has(requestId)) return
     try {
       socket?.send(encodeOwnerFrame({ type: 'cancel', requestId }))
@@ -397,6 +434,12 @@ export function createOwnerRuntime(
     },
     get authenticated() {
       return authenticated
+    },
+    get authentication() {
+      return authentication
+    },
+    get phase() {
+      return phase
     },
     get connectionId() {
       return connectionId
