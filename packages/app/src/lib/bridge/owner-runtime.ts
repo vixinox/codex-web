@@ -44,7 +44,23 @@ const testBridge: OwnerBridge = {
       init.body = JSON.stringify(params ?? {})
     }
     const response = await window.fetch(path, init)
-    if (!response.ok) throw new Error(`Request failed: ${response.status}`)
+    if (!response.ok) {
+      const text = await response.text()
+      try {
+        const body = JSON.parse(text) as {
+          error?: string | { message?: string }
+          message?: string
+        }
+        const message =
+          typeof body.error === 'string'
+            ? body.error
+            : (body.error?.message ?? body.message ?? text)
+        throw new Error(message)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'Error') throw error
+        throw new Error(text || `Request failed: ${response.status}`)
+      }
+    }
     return response.status === 204 ? null : response.json()
   },
   openStream() {

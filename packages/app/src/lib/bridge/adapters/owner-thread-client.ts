@@ -25,13 +25,30 @@ export const ownerThreadClient: ThreadClient = {
           (event as Event & { detail?: unknown }).detail ??
           (typeof messageEvent.data === 'string' ? JSON.parse(messageEvent.data) : event)
         if (!value || typeof value !== 'object') return
-        const item = value as { id?: unknown; message?: unknown }
+        const item = value as {
+          id?: unknown
+          message?: unknown
+          method?: unknown
+          params?: unknown
+        }
         const id =
           typeof item.id === 'number'
             ? item.id
             : Number.parseInt(messageEvent.lastEventId ?? '', 10)
-        if (Number.isFinite(id) && item.message && typeof item.message === 'object')
-          onEvent({ id, message: item.message as Record<string, unknown> })
+        const message =
+          item.message && typeof item.message === 'object'
+            ? item.message
+            : typeof item.method === 'string'
+              ? {
+                  method: item.method,
+                  ...(typeof item.id === 'number' || typeof item.id === 'string'
+                    ? { id: item.id }
+                    : {}),
+                  params: item.params ?? {},
+                }
+              : null
+        if (Number.isFinite(id) && message)
+          onEvent({ id, message: message as Record<string, unknown> })
       },
       onError,
     })
