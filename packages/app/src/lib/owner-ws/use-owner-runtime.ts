@@ -14,6 +14,7 @@ import { setOwnerBridge } from '@/lib/bridge/owner-runtime'
 import { getRemoteBootstrap } from '@/app/entry/bootstrap'
 import {
   createDeviceKey,
+  clearPairedDevice,
   loadDeviceKey,
   setPairedDevice,
   setRemoteTarget,
@@ -21,6 +22,7 @@ import {
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
 import {
   authenticateRemoteDevice,
+  completeProvisionalTwoFactor,
   openProvisionalSession,
   promoteProvisionalDevice,
   type PairedAdmission,
@@ -36,13 +38,16 @@ export type OwnerRuntimeController = {
   close(reason?: string): void
   authenticateRemoteDevice(input: {
     credentials: ProvisionalLogin
-    factor?: { kind: 'totp' | 'recovery'; code: string } | { kind: 'approval' }
+    factor?:
+      | { kind: 'totp' | 'recovery'; code: string }
+      | { kind: 'approval'; code?: string; codeKind?: 'totp' | 'recovery' }
   }): Promise<
     { ownerId: string; sessionToken: string } | (PairedAdmission & { sessionToken: string })
   >
 }
 
 const runtimes = new Map<string, SessionController>()
+const PAIRING_TIMEOUT_MS = 30 * 60 * 1_000
 
 export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeController {
   const remote = getRemoteBootstrap()
@@ -53,7 +58,25 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
       : 'remote-paired'
   const remoteSocketRef = React.useRef<WebSocket | null>(null)
   const remoteSocketBuilderRef = React.useRef<(() => WebSocket) | null>(null)
-  const pairingCompletedRef = React.useRef<Promise<void> | null>(null)
+  const pairingWaitersRef = React.useRef(
+    new Set<{
+      resolve: (session: { ownerId: string; sessionToken: string }) => void
+      reject: (error: Error) => void
+      session: { ownerId: string; sessionToken: string }
+      settled: boolean
+    }>(),
+  )
+  const pairingNotificationRef = React.useRef(false)
+  const pairedAdmissionsRef = React.useRef(
+    new Map<
+      string,
+      | { status: 'pending' }
+      | { status: 'fulfilled'; session: { ownerId: string; sessionToken: string } }
+      | { status: 'rejected'; error: Error }
+    >(),
+  )
+  const approvalSessionRef = React.useRef<{ ownerId: string; sessionToken: string } | null>(null)
+  const [connectionRevision, setConnectionRevision] = React.useState(0)
   const runtime = React.useMemo(() => {
     const existing = runtimes.get(key)
     if (existing) return existing
@@ -85,24 +108,29 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
   React.useEffect(() => {
     if (!sessionToken && !remote && key !== 'remote-paired') return
     let active = true
-    let resolvePairing: (() => void) | null = null
-    const pairingCompleted = new Promise<void>((resolve) => {
-      resolvePairing = resolve
-    })
-    pairingCompletedRef.current = pairingCompleted
+    const connectionAbort = new AbortController()
     const unsubscribe = runtime.subscribe(() => {
       if (!active) return
       setSnapshot({ ...runtime.state })
-      if (runtime.state.transport === 'connected') setOwnerBridge(runtime.runtime)
+      if (runtime.state.transport === 'connected') setOwnerBridge(runtime)
+      if (runtime.state.transport === 'failed' && runtime.state.reconnectAttempt === 0) {
+        setOwnerBridge(null)
+        setConnectionRevision((revision) => revision + 1)
+      }
     })
-    const unsubscribeNotification = runtime.runtime.subscribeNotification((method, params) => {
+    const unsubscribeNotification = runtime.subscribeNotification((method, params) => {
       if (!active || method !== 'remote.device.paired' || !remote || !isRecord(params)) return
       const deviceId = params.deviceId
       const clientToken = params.clientToken
       if (typeof deviceId !== 'string' || typeof clientToken !== 'string') return
+      const notificationKey = `${deviceId}:${clientToken}`
+      if (pairedAdmissionsRef.current.has(notificationKey)) return
+      if (pairingNotificationRef.current) return
+      pairedAdmissionsRef.current.set(notificationKey, { status: 'pending' })
+      pairingNotificationRef.current = true
       void (async () => {
         const record = await loadDeviceKey()
-        if (!active || !record) return
+        if (!active || !record) throw new Error('Remote device key is unavailable.')
         await setPairedDevice({
           deviceId,
           pairedClientToken: clientToken,
@@ -111,7 +139,8 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
           relayUrl: remote.relayUrl,
         })
         const paired = await loadDeviceKey()
-        if (!active || !paired?.pairedClientToken || !paired.deviceId) return
+        if (!active || !paired?.pairedClientToken || !paired.deviceId)
+          throw new Error('Paired device could not be stored.')
         const socketTarget = {
           nodeId: remote.nodeId,
           trustEpoch: paired.trustEpoch ?? remote.trustEpoch,
@@ -123,13 +152,50 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
         remoteSocketRef.current?.close()
         remoteSocketRef.current = createRelayOwnerSocket(remote.relayUrl, socketTarget)
         remoteSocketBuilderRef.current = () => createRelayOwnerSocket(remote.relayUrl, socketTarget)
+        if (!approvalSessionRef.current) throw new Error('Remote sign-in session is unavailable.')
         await runtime.switchTarget({
           url: remote.relayUrl,
           clientId: 'owner-remote-app',
           capabilities: ['owner', 'remote-administration'],
+          sessionToken: approvalSessionRef.current?.sessionToken,
         })
-        resolvePairing?.()
-      })().catch(() => undefined)
+        await runtime.waitForConnection(connectionAbort.signal)
+        if (runtime.state.authentication !== 'authenticated')
+          throw new Error('Paired Owner admission was rejected.')
+        const session = approvalSessionRef.current
+        if (!session) throw new Error('Remote sign-in session is unavailable.')
+        approvalSessionRef.current = null
+        for (const waiter of pairingWaitersRef.current) {
+          if (waiter.settled) continue
+          waiter.settled = true
+          pairingWaitersRef.current.delete(waiter)
+          waiter.resolve(session)
+        }
+        pairedAdmissionsRef.current.set(notificationKey, { status: 'fulfilled', session })
+        setConnectionRevision((revision) => revision + 1)
+      })()
+        .catch((cause: unknown) => {
+          const pairingError = cause instanceof Error ? cause : new Error('Remote pairing failed.')
+          pairedAdmissionsRef.current.set(notificationKey, {
+            status: 'rejected',
+            error: pairingError,
+          })
+          void (async () => {
+            if (runtime.isAuthenticationRejection())
+              await clearPairedDevice().catch(() => undefined)
+            setSnapshot({ ...runtime.state, error: pairingError.message })
+            setConnectionRevision((revision) => revision + 1)
+            for (const waiter of pairingWaitersRef.current) {
+              if (waiter.settled) continue
+              waiter.settled = true
+              pairingWaitersRef.current.delete(waiter)
+              waiter.reject(pairingError)
+            }
+          })().catch(() => undefined)
+        })
+        .finally(() => {
+          pairingNotificationRef.current = false
+        })
     })
     const connect = async () => {
       if (!remote && sessionToken) {
@@ -180,11 +246,12 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
         clientId: 'owner-remote-app',
         capabilities: ['owner', 'remote-administration'],
       })
+      await runtime.waitForConnection(connectionAbort.signal)
     }
     void connect()
       .then(() => {
         if (!active) return
-        setOwnerBridge(runtime.runtime)
+        setOwnerBridge(runtime)
       })
       .catch((cause: unknown) => {
         if (!active) return
@@ -195,6 +262,13 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
       })
     return () => {
       active = false
+      connectionAbort.abort()
+      for (const waiter of pairingWaitersRef.current) {
+        if (waiter.settled) continue
+        waiter.settled = true
+        waiter.reject(new Error('Remote pairing was cancelled.'))
+      }
+      pairingWaitersRef.current.clear()
       unsubscribe()
       unsubscribeNotification()
       if (runtimes.get(key) === runtime) {
@@ -204,20 +278,24 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
       remoteSocketRef.current?.close()
       remoteSocketRef.current = null
       remoteSocketBuilderRef.current = null
-      pairingCompletedRef.current = null
+      pairingNotificationRef.current = false
+      pairedAdmissionsRef.current.clear()
+      approvalSessionRef.current = null
       setOwnerBridge(null)
     }
-  }, [key, remote, runtime, sessionToken])
+  }, [key, remote, runtime, sessionToken, connectionRevision])
 
   const authenticateRemote = React.useCallback(
     async (input: {
       credentials: ProvisionalLogin
-      factor?: { kind: 'totp' | 'recovery'; code: string } | { kind: 'approval' }
+      factor?:
+        | { kind: 'totp' | 'recovery'; code: string }
+        | { kind: 'approval'; code?: string; codeKind?: 'totp' | 'recovery' }
     }) => {
       if (!remote) {
         if (input.factor?.kind === 'approval') throw new Error('Owner approval is remote-only.')
         return authenticateRemoteDevice({
-          connection: runtime.runtime,
+          connection: runtime,
           credentials: input.credentials,
           factor: input.factor,
         })
@@ -230,23 +308,60 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
             'This device is already paired; enter a verification code only if required.',
           )
         return authenticateRemoteDevice({
-          connection: runtime.runtime,
+          connection: runtime,
           credentials: input.credentials,
           factor: input.factor,
         })
       }
       if (input.factor?.kind === 'approval') {
-        await openProvisionalSession(runtime.runtime, input.credentials)
-        if (!pairingCompletedRef.current) throw new Error('Remote pairing is unavailable.')
-        await pairingCompletedRef.current
-        return authenticateRemoteDevice({
-          connection: runtime.runtime,
-          credentials: input.credentials,
+        if (runtime.state.transport !== 'connected')
+          throw new Error('Owner connection is unavailable.')
+        const provisional = await openProvisionalSession(runtime, input.credentials)
+        const authentication =
+          'sessionToken' in provisional
+            ? provisional
+            : input.factor.code && input.factor.codeKind
+              ? await completeProvisionalTwoFactor(runtime, provisional.pendingTwoFactor, {
+                  kind: input.factor.codeKind,
+                  code: input.factor.code,
+                })
+              : null
+        if (!authentication)
+          throw new Error('Enter your authenticator or recovery code to complete sign-in.')
+        const completed = [...pairedAdmissionsRef.current.values()].at(-1)
+        if (completed?.status === 'fulfilled') return completed.session
+        if (completed?.status === 'rejected') throw completed.error
+        approvalSessionRef.current = authentication
+        if (pairingWaitersRef.current.size > 0) {
+          approvalSessionRef.current = null
+          throw new Error('Another remote pairing is already in progress.')
+        }
+        return new Promise<{ ownerId: string; sessionToken: string }>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            if (waiter.settled) return
+            waiter.settled = true
+            pairingWaitersRef.current.delete(waiter)
+            approvalSessionRef.current = null
+            reject(new Error('Remote device approval expired. Start pairing again.'))
+          }, PAIRING_TIMEOUT_MS)
+          const waiter = {
+            resolve: (session: { ownerId: string; sessionToken: string }) => {
+              window.clearTimeout(timeout)
+              resolve(session)
+            },
+            reject: (reason: Error) => {
+              window.clearTimeout(timeout)
+              reject(reason)
+            },
+            session: authentication,
+            settled: false,
+          }
+          pairingWaitersRef.current.add(waiter)
         })
       }
       if (!input.factor) throw new Error('A verification code is required to pair this device.')
       const result = await promoteProvisionalDevice({
-        connection: runtime.runtime,
+        connection: runtime,
         credentials: input.credentials,
         factor: input.factor,
         publicKey: record.publicKey,
@@ -279,6 +394,9 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
         capabilities: ['owner', 'remote-administration'],
         sessionToken: result.sessionToken,
       })
+      await runtime.waitForConnection()
+      if (runtime.state.authentication !== 'authenticated')
+        throw new Error('Paired Owner admission was rejected.')
       return result
     },
     [remote, runtime],

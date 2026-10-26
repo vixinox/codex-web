@@ -126,6 +126,7 @@ function RemoteLoginRoute() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
+  const [approvalCodeKind, setApprovalCodeKind] = useState<'totp' | 'recovery'>('totp')
   const [factor, setFactor] = useState<'totp' | 'recovery' | 'approval'>('totp')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -142,7 +143,12 @@ function RemoteLoginRoute() {
       const result = await runtime.authenticateRemoteDevice({
         credentials: { email, password },
         ...(factor === 'approval'
-          ? { factor: { kind: 'approval' as const } }
+          ? {
+              factor: {
+                kind: 'approval' as const,
+                ...(code ? { code, codeKind: approvalCodeKind } : {}),
+              },
+            }
           : code
             ? { factor: { kind: factor, code } }
             : {}),
@@ -171,6 +177,19 @@ function RemoteLoginRoute() {
             onChange={(event) => setEmail(event.target.value)}
           />
         </label>
+        {factor === 'approval' && (
+          <label className="grid gap-2 text-sm">
+            Sign-in verification
+            <select
+              className="rounded-md border bg-background px-3 py-2"
+              value={approvalCodeKind}
+              onChange={(event) => setApprovalCodeKind(event.target.value as 'totp' | 'recovery')}
+            >
+              <option value="totp">Authenticator code</option>
+              <option value="recovery">Recovery code</option>
+            </select>
+          </label>
+        )}
         <label className="grid gap-2 text-sm">
           Password
           <input

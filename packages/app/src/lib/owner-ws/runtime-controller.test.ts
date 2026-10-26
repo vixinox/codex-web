@@ -86,4 +86,52 @@ describe('Owner runtime controller', () => {
     controller.close()
     vi.useRealTimers()
   })
+
+  it('waits for an active connection', async () => {
+    const socket = new FakeSocket()
+    const controller = createOwnerRuntimeController(createOwnerRuntime(() => socket))
+    const connected = controller.connect({ url: 'ws://owner', sessionToken: 'token' })
+    const waitForConnection = controller.waitForConnection()
+    socket.open()
+    ready(socket)
+    await connected
+    await expect(waitForConnection).resolves.toBeUndefined()
+    expect('runtime' in controller).toBe(false)
+    controller.close()
+  })
+
+  it('forwards notifications through the controller boundary', async () => {
+    const socket = new FakeSocket()
+    const controller = createOwnerRuntimeController(createOwnerRuntime(() => socket))
+    const listener = vi.fn()
+    controller.subscribeNotification(listener)
+    const connected = controller.connect({ url: 'ws://owner' })
+    socket.open()
+    ready(socket)
+    await connected
+    socket.receive({
+      type: 'notification',
+      method: 'remote.device.paired',
+      params: { deviceId: 'device-1' },
+    })
+    expect(listener).toHaveBeenCalledWith('remote.device.paired', { deviceId: 'device-1' })
+    controller.close()
+  })
+
+  it('recognizes a connected unauthenticated admission as a rejection', async () => {
+    const socket = new FakeSocket()
+    const controller = createOwnerRuntimeController(createOwnerRuntime(() => socket))
+    const connected = controller.connect({ url: 'ws://owner' })
+    socket.open()
+    socket.receive({
+      type: 'ready',
+      version: OWNER_PROTOCOL_VERSION,
+      connectionId: 'unauthenticated',
+      authenticated: false,
+      capabilities: ['owner'],
+    })
+    await connected
+    expect(controller.isAuthenticationRejection()).toBe(true)
+    controller.close()
+  })
 })

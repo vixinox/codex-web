@@ -50,16 +50,19 @@ export function useThreadDetailController(
     let recoveryAttempts = 0
     let recovering = false
     let forceSnapshotRecovery = false
+    let resetRecoveryEpoch: string | null = null
     const lifecycleMethods = new Set(['thread/archived', 'thread/deleted', 'thread/closed'])
     const lifecycleEventIds = new Set<string>()
     const receive = (event: ThreadEvent) => {
       if (!active) return
       const eventCursor = event.cursor
-      if (eventCursor.epoch !== lastEventCursor.epoch) {
-        scheduleRecovery(eventCursor, true)
-        return
-      }
       const eventKey = `${eventCursor.epoch}:${eventCursor.sequence}`
+      if (eventCursor.epoch !== lastEventCursor.epoch) {
+        if (resetRecoveryEpoch !== eventCursor.epoch) {
+          scheduleRecovery(eventCursor, true)
+          return
+        }
+      }
       const parsed = parseNotification(event.message)
       if (
         event.id <= snapshotEventCursor.sequence &&
@@ -138,14 +141,26 @@ export function useThreadDetailController(
         const statusCursor = normalizeCursor(status.eventCursor)
         const mustReadSnapshot = forceSnapshotRecovery
         forceSnapshotRecovery = false
+        const expectedResetEpoch = resetRecoveryEpoch
+        resetRecoveryEpoch = null
+        const statusEpochChanged = statusCursor.epoch !== lastEventCursor.epoch
         if (
           mustReadSnapshot ||
-          statusCursor.epoch !== lastEventCursor.epoch ||
-          statusCursor.sequence > lastEventId
+          (statusEpochChanged && statusCursor.epoch !== expectedResetEpoch) ||
+          (!statusEpochChanged && statusCursor.sequence > lastEventId)
         ) {
           hydrateAndSubscribe(await client.readThread(projectId, threadId, controller.signal))
         } else {
-          subscribe({ ...lastEventCursor, sequence: lastEventId })
+          const cursor =
+            expectedResetEpoch && statusCursor.epoch === expectedResetEpoch
+              ? statusCursor
+              : { ...lastEventCursor, sequence: lastEventId }
+          if (expectedResetEpoch && statusCursor.epoch === expectedResetEpoch) {
+            snapshotEventCursor = { ...statusCursor, sequence: 0 }
+            lastEventCursor = statusCursor
+            lastEventId = statusCursor.sequence
+          }
+          subscribe(cursor)
         }
         recoveryAttempts = 0
       } catch (error) {
@@ -169,8 +184,10 @@ export function useThreadDetailController(
     }
     function scheduleRecovery(resetCursor?: ThreadEventCursor, reset = false) {
       trackProductEvent('sse_reconnected')
-      if (resetCursor) lastEventCursor = resetCursor
-      if (reset) forceSnapshotRecovery = true
+      if (reset) {
+        forceSnapshotRecovery = true
+        resetRecoveryEpoch = resetCursor?.epoch ?? null
+      } else if (resetCursor) lastEventCursor = resetCursor
       if (!active || recoveryTimer !== null || recovering) return
       recoveryTimer = window.setTimeout(() => {
         recoveryTimer = null

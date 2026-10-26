@@ -22,12 +22,14 @@ export type OwnerRuntimeState = {
 
 export type OwnerRuntimeController = {
   readonly state: OwnerRuntimeState
-  readonly runtime: OwnerRuntime
   connect(target: OwnerTarget): Promise<void>
   retry(): Promise<void>
   switchTarget(target: OwnerTarget): Promise<void>
+  isAuthenticationRejection(): boolean
   request<T = unknown>(method: string, params?: unknown, options?: RequestOptions): Promise<T>
   openStream(request: StreamRequest, handlers: StreamHandlers): StreamHandle
+  subscribeNotification(listener: (method: string, params: unknown) => void): () => void
+  waitForConnection(signal?: AbortSignal): Promise<void>
   close(reason?: string): void
   subscribe(listener: () => void): () => void
 }
@@ -58,6 +60,12 @@ export function createOwnerRuntimeController(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let explicitlyClosed = false
   let reconnectAttempt = 0
+  let disposed = false
+  const connectionWaiters = new Set<{
+    resolve: () => void
+    reject: (error: Error) => void
+    cleanup: () => void
+  }>()
   let state: OwnerRuntimeState = {
     transport: 'disconnected',
     authentication: 'unknown',
@@ -67,10 +75,54 @@ export function createOwnerRuntimeController(
   }
 
   const publish = () => listeners.forEach((listener) => listener())
-  const update = (next: Partial<OwnerRuntimeState>) => {
+  const update = (next: Partial<OwnerRuntimeState>, notifyWaiters = true) => {
     state = { ...state, ...next }
+    if (notifyWaiters && state.transport === 'connected') {
+      for (const waiter of [...connectionWaiters]) {
+        connectionWaiters.delete(waiter)
+        waiter.cleanup()
+        waiter.resolve()
+      }
+    } else if (
+      notifyWaiters &&
+      (state.transport === 'failed' || state.transport === 'disconnected')
+    ) {
+      for (const waiter of [...connectionWaiters]) {
+        connectionWaiters.delete(waiter)
+        waiter.cleanup()
+        waiter.reject(new OwnerConnectionError(state.error ?? 'Owner connection closed.'))
+      }
+    }
     publish()
   }
+
+  const waitForConnection = (signal?: AbortSignal) => {
+    if (state.transport === 'connected') return Promise.resolve()
+    if (state.transport === 'disconnected')
+      return Promise.reject(
+        new OwnerConnectionError(state.error ?? 'Owner connection is unavailable.'),
+      )
+    return new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        cleanup: () => signal?.removeEventListener('abort', onAbort),
+      }
+      const onAbort = () => {
+        connectionWaiters.delete(waiter)
+        waiter.cleanup()
+        reject(new OwnerConnectionError('Waiting for Owner connection was cancelled.'))
+      }
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      connectionWaiters.add(waiter)
+    })
+  }
+
+  const isAuthenticationRejection = () => state.transport === 'connected' && !runtime.authenticated
 
   const clearReconnect = () => {
     if (reconnectTimer !== null) options.clearTimeout(reconnectTimer)
@@ -133,6 +185,7 @@ export function createOwnerRuntimeController(
   })
 
   const connectTarget = async (next: OwnerTarget, isReconnect = false) => {
+    if (disposed) throw new OwnerConnectionError('Owner runtime controller is closed.')
     clearReconnect()
     explicitlyClosed = false
     target = next
@@ -167,33 +220,50 @@ export function createOwnerRuntimeController(
     get state() {
       return state
     },
-    runtime,
     connect: (next) => connectTarget(next),
     retry: async () => {
+      if (disposed) throw new OwnerConnectionError('Owner runtime controller is closed.')
       if (!target) throw new OwnerConnectionError('Owner connection target is missing.')
       reconnectAttempt = 0
       await connectTarget(target)
     },
     switchTarget: async (next) => {
+      if (disposed) throw new OwnerConnectionError('Owner runtime controller is closed.')
       clearReconnect()
       runtime.close('switch target')
       await connectTarget(next)
     },
+    isAuthenticationRejection,
     request: (method, params, requestOptions) => runtime.request(method, params, requestOptions),
     openStream: (request, handlers) => runtime.openStream(request, handlers),
+    subscribeNotification: (listener) => {
+      const unsubscribe = runtime.subscribeNotification(listener)
+      return () => unsubscribe()
+    },
+    waitForConnection: (signal) => waitForConnection(signal),
     close: (reason = 'closed') => {
+      disposed = true
       explicitlyClosed = true
       target = null
       clearReconnect()
+      for (const waiter of [...connectionWaiters]) {
+        connectionWaiters.delete(waiter)
+        waiter.cleanup()
+        waiter.reject(new OwnerConnectionError(reason))
+      }
+      connectionWaiters.clear()
       transportUnsubscribe()
       runtime.close(reason)
-      update({
-        transport: 'disconnected',
-        authentication: 'unknown',
-        runtime: 'idle',
-        error: null,
-        reconnectAttempt: 0,
-      })
+      update(
+        {
+          transport: 'disconnected',
+          authentication: 'unknown',
+          runtime: 'idle',
+          error: null,
+          reconnectAttempt: 0,
+        },
+        false,
+      )
       listeners.clear()
     },
     subscribe: (listener) => {

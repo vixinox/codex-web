@@ -103,6 +103,10 @@ describe('Thread detail event synchronization', () => {
       eventCursor: 2,
       activeTurnId: null,
     })
+    bridge.fetchThread.mockImplementationOnce(async () => ({
+      thread: { id: 'thread-1', turns: [{ id: 'turn-2', status: 'inProgress', items: [] }] },
+      eventCursor: { epoch: 'e2', sequence: 1 },
+    }))
     let onError: (() => void) | undefined
     ownerBridge.openStream.mockImplementationOnce((_request, handlers) => {
       handlers.onOpen?.({ subscriptionId: 'sub-1', cursor: { epoch: 'e1', sequence: 2 } })
@@ -125,6 +129,66 @@ describe('Thread detail event synchronization', () => {
     })
     expect(bridge.fetchThreadRuntimeStatus).not.toHaveBeenCalled()
     expect(bridge.fetchThread).toHaveBeenCalledTimes(1)
+    rendered.unmount()
+  })
+
+  it('hydrates a new cursor epoch and accepts its low sequence numbers', async () => {
+    bridge.fetchThread.mockReset()
+    bridge.fetchThreadRuntimeStatus.mockReset()
+    ownerBridge.openStream.mockReset()
+    bridge.fetchThread.mockResolvedValueOnce({
+      thread: { id: 'thread-1', turns: [] },
+      eventCursor: { epoch: 'e1', sequence: 8 },
+    })
+    bridge.fetchThreadRuntimeStatus.mockResolvedValue({
+      threadId: 'thread-1',
+      projectId: 'project-1',
+      status: 'idle',
+      eventCursor: { epoch: 'e2', sequence: 1 },
+      activeTurnId: 'turn-2',
+    })
+    bridge.fetchThread.mockResolvedValueOnce({
+      thread: { id: 'thread-1', turns: [{ id: 'turn-2', status: 'inProgress', items: [] }] },
+      eventCursor: { epoch: 'e2', sequence: 1 },
+    })
+    const subscriptions: Array<(value: unknown) => void> = []
+    ownerBridge.openStream.mockImplementation((_request, handlers) => {
+      subscriptions.push(handlers.onEvent)
+      handlers.onOpen?.({
+        subscriptionId: `sub-${subscriptions.length}`,
+        cursor:
+          subscriptions.length === 1 ? { epoch: 'e1', sequence: 8 } : { epoch: 'e2', sequence: 1 },
+      })
+      return { streamId: `stream-${subscriptions.length}`, cancel: vi.fn() }
+    })
+    const rendered = renderHook(() =>
+      useThreadDetailController(ownerThreadClient, 'project-1', 'thread-1'),
+    )
+    await waitFor(() => expect(subscriptions).toHaveLength(1))
+    act(() => {
+      subscriptions[0]?.({
+        method: 'events.reset',
+        params: { cursor: { epoch: 'e2', sequence: 1 } },
+      })
+    })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    expect(bridge.fetchThreadRuntimeStatus).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(subscriptions).toHaveLength(2))
+    act(() => {
+      subscriptions[1]?.({
+        cursor: { epoch: 'e2', sequence: 2 },
+        event: {
+          method: 'turn/started',
+          params: { threadId: 'thread-1', turn: { id: 'turn-2', status: 'inProgress', items: [] } },
+        },
+      })
+    })
+    await act(async () => undefined)
+    expect(rendered.result.current.model).toMatchObject({ status: 'ready' })
+    expect(ownerBridge.openStream.mock.calls[1]?.[0]).toMatchObject({
+      method: 'events.subscribe',
+      params: { cursor: { epoch: 'e2', sequence: 0 } },
+    })
     rendered.unmount()
   })
 

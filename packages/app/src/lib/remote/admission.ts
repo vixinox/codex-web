@@ -15,6 +15,10 @@ export type PendingTwoFactor = {
   expiresAt: string
 }
 
+export type ProvisionalSession =
+  | { pendingTwoFactor: PendingTwoFactor }
+  | { authenticated: true; sessionToken: string; ownerId: string }
+
 export type PairedAdmission = {
   deviceId: string
   clientToken: string
@@ -32,14 +36,32 @@ export type AdmissionState =
 export async function openProvisionalSession(
   connection: AdmissionConnection,
   credentials: ProvisionalLogin,
-): Promise<PendingTwoFactor | { authenticated: true; sessionToken: string; ownerId: string }> {
+): Promise<ProvisionalSession> {
   const result = await connection.request<
     { pendingTwoFactor: PendingTwoFactor } | { token: string; session: { user?: { id?: unknown } } }
   >('owner.session.open', credentials)
-  if ('pendingTwoFactor' in result) return result.pendingTwoFactor
+  if ('pendingTwoFactor' in result) return result
   if (typeof result.token !== 'string' || typeof result.session?.user?.id !== 'string')
     throw new Error('Owner authentication returned an invalid session.')
   return { authenticated: true, sessionToken: result.token, ownerId: result.session.user.id }
+}
+
+export async function completeProvisionalTwoFactor(
+  connection: AdmissionConnection,
+  challenge: PendingTwoFactor,
+  factor: { kind: 'totp' | 'recovery'; code: string },
+): Promise<{ ownerId: string; sessionToken: string }> {
+  const method =
+    factor.kind === 'totp'
+      ? 'remote.device.binding.verifyTotp'
+      : 'remote.device.binding.verifyRecoveryCode'
+  const verified = await connection.request<{ sessionToken?: unknown; ownerId?: unknown }>(method, {
+    challengeId: challenge.challengeId,
+    code: factor.code,
+  })
+  if (typeof verified.sessionToken !== 'string' || typeof verified.ownerId !== 'string')
+    throw new Error('Owner authentication did not complete.')
+  return { ownerId: verified.ownerId, sessionToken: verified.sessionToken }
 }
 
 export async function authenticateRemoteDevice(input: {
@@ -47,24 +69,18 @@ export async function authenticateRemoteDevice(input: {
   credentials: ProvisionalLogin
   factor?: { kind: 'totp' | 'recovery'; code: string }
 }): Promise<{ ownerId: string; sessionToken: string }> {
-  const pending = await openProvisionalSession(input.connection, input.credentials)
-  let sessionToken = 'sessionToken' in pending ? pending.sessionToken : null
-  let ownerId = 'ownerId' in pending ? pending.ownerId : null
-  if ('challengeId' in pending) {
+  const provisional = await openProvisionalSession(input.connection, input.credentials)
+  let sessionToken = 'sessionToken' in provisional ? provisional.sessionToken : null
+  let ownerId = 'ownerId' in provisional ? provisional.ownerId : null
+  if ('pendingTwoFactor' in provisional) {
     if (!input.factor?.code) throw new Error('A verification code is required.')
-    const method =
-      input.factor.kind === 'totp'
-        ? 'remote.device.binding.verifyTotp'
-        : 'remote.device.binding.verifyRecoveryCode'
-    const verified = await input.connection.request<{ sessionToken?: unknown; ownerId?: unknown }>(
-      method,
-      {
-        challengeId: pending.challengeId,
-        code: input.factor.code,
-      },
+    const verified = await completeProvisionalTwoFactor(
+      input.connection,
+      provisional.pendingTwoFactor,
+      input.factor,
     )
-    sessionToken = typeof verified.sessionToken === 'string' ? verified.sessionToken : null
-    ownerId = typeof verified.ownerId === 'string' ? verified.ownerId : null
+    sessionToken = verified.sessionToken
+    ownerId = verified.ownerId
   }
   if (!ownerId) {
     const status = await input.connection.request<{ authenticated?: boolean; ownerId?: string }>(
