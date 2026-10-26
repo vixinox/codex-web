@@ -14,8 +14,16 @@ export const ownerSettings = {
       getOwnerBridge().request<CredentialSummary>('credentials.create', input, { mutation: true }),
     test: (credentialId: string) =>
       getOwnerBridge().request('credentials.test', { credentialId }, { mutation: true }),
-    select: (credentialId: string) =>
-      getOwnerBridge().request<string>('credentials.select', { credentialId }, { mutation: true }),
+    select: async (credentialId: string) => {
+      const result = await getOwnerBridge().request<unknown>(
+        'credentials.select',
+        { credentialId },
+        { mutation: true },
+      )
+      return typeof result === 'string'
+        ? result
+        : ((result as { currentCredentialId?: string | null }).currentCredentialId ?? credentialId)
+    },
     delete: (credentialId: string) =>
       getOwnerBridge().request('credentials.delete', { credentialId }, { mutation: true }),
   },

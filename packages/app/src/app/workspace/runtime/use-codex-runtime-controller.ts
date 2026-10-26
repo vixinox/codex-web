@@ -132,7 +132,7 @@ export function useCodexRuntimeController(): CodexRuntimeController {
         return applyTerminalStatus(status, failureMode)
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return false
-        const message = error instanceof Error ? error.message : 'Codex could not start.'
+        const message = 'Could not connect to the server. Try again.'
         emitError(message)
         updateModel(
           failureMode === 'stopped'
