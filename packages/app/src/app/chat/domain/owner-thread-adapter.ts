@@ -15,8 +15,12 @@ type EventEnvelope = { cursor?: unknown; event?: unknown; method?: unknown; para
 /** Owner-backed Thread domain adapter. It owns event cursor and subscription recovery. */
 export const ownerThreadDomainAdapter: ThreadClient = {
   async listThreads(projectId) {
-    const value = await getOwnerBridge().request('threads.list', { projectId })
-    return Array.isArray(value) ? value.filter(isThreadSummary) : []
+    const value = await getOwnerBridge().request<unknown>(
+      'threads.list',
+      projectId ? { projectId } : {},
+    )
+    const threads = isRecord(value) && Array.isArray(value.data) ? value.data : value
+    return Array.isArray(threads) ? threads.filter(isThreadSummary) : []
   },
   async createThread(input, signal) {
     return getOwnerBridge().request<StartedThread>('threads.create', input, {

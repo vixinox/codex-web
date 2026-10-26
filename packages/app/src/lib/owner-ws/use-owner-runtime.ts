@@ -47,6 +47,7 @@ export type OwnerRuntimeController = {
 }
 
 const runtimes = new Map<string, SessionController>()
+const runtimeDisposalTimers = new Map<SessionController, number>()
 const PAIRING_TIMEOUT_MS = 30 * 60 * 1_000
 
 export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeController {
@@ -107,6 +108,11 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
 
   React.useEffect(() => {
     if (!sessionToken && !remote && key !== 'remote-paired') return
+    const pendingDisposal = runtimeDisposalTimers.get(runtime)
+    if (pendingDisposal !== undefined) {
+      window.clearTimeout(pendingDisposal)
+      runtimeDisposalTimers.delete(runtime)
+    }
     let active = true
     const connectionAbort = new AbortController()
     const unsubscribe = runtime.subscribe(() => {
@@ -248,40 +254,52 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
       })
       await runtime.waitForConnection(connectionAbort.signal)
     }
-    void connect()
-      .then(() => {
-        if (!active) return
-        setOwnerBridge(runtime)
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        setSnapshot({
-          ...runtime.state,
-          error: cause instanceof Error ? cause.message : 'Owner connection failed',
+    // React StrictMode replays effects in development. Deferring connection start lets the
+    // first setup be cancelled during that replay instead of opening a socket that cleanup
+    // immediately closes before its handshake completes.
+    const connectTimer = window.setTimeout(() => {
+      void connect()
+        .then(() => {
+          if (!active) return
+          setOwnerBridge(runtime)
         })
-      })
+        .catch((cause: unknown) => {
+          if (!active) return
+          setSnapshot({
+            ...runtime.state,
+            error: cause instanceof Error ? cause.message : 'Owner connection failed',
+          })
+        })
+    }, 0)
     return () => {
       active = false
+      window.clearTimeout(connectTimer)
       connectionAbort.abort()
-      for (const waiter of pairingWaitersRef.current) {
-        if (waiter.settled) continue
-        waiter.settled = true
-        waiter.reject(new Error('Remote pairing was cancelled.'))
-      }
-      pairingWaitersRef.current.clear()
       unsubscribe()
       unsubscribeNotification()
-      if (runtimes.get(key) === runtime) {
-        runtime.close('route disposed')
-        runtimes.delete(key)
-      }
-      remoteSocketRef.current?.close()
-      remoteSocketRef.current = null
-      remoteSocketBuilderRef.current = null
-      pairingNotificationRef.current = false
-      pairedAdmissionsRef.current.clear()
-      approvalSessionRef.current = null
       setOwnerBridge(null)
+      // StrictMode's development-only cleanup is followed immediately by another setup.
+      // Defer destruction for one task so the replay can reuse the live controller.
+      const disposalTimer = window.setTimeout(() => {
+        runtimeDisposalTimers.delete(runtime)
+        for (const waiter of pairingWaitersRef.current) {
+          if (waiter.settled) continue
+          waiter.settled = true
+          waiter.reject(new Error('Remote pairing was cancelled.'))
+        }
+        pairingWaitersRef.current.clear()
+        if (runtimes.get(key) === runtime) {
+          runtime.close('route disposed')
+          runtimes.delete(key)
+        }
+        remoteSocketRef.current?.close()
+        remoteSocketRef.current = null
+        remoteSocketBuilderRef.current = null
+        pairingNotificationRef.current = false
+        pairedAdmissionsRef.current.clear()
+        approvalSessionRef.current = null
+      }, 0)
+      runtimeDisposalTimers.set(runtime, disposalTimer)
     }
   }, [key, remote, runtime, sessionToken, connectionRevision])
 

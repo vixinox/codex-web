@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import QRCode from 'qrcode'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -20,6 +21,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
   const [totpCode, setTotpCode] = useState('')
   const [recoveryPassword, setRecoveryPassword] = useState('')
   const [totpUri, setTotpUri] = useState<string | null>(null)
+  const [totpQrCode, setTotpQrCode] = useState<string | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
   const [codesAcknowledged, setCodesAcknowledged] = useState(false)
   const refresh = useCallback(async () => {
@@ -95,6 +97,15 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                 void act('totp-setup', async () => {
                   const result = await client.setupTotp(totpPassword)
                   setTotpUri(result.totpURI ?? null)
+                  setTotpQrCode(
+                    result.totpURI
+                      ? await QRCode.toDataURL(result.totpURI, {
+                          margin: 2,
+                          width: 240,
+                          errorCorrectionLevel: 'M',
+                        })
+                      : null,
+                  )
                   setTotpPassword('')
                 })
               }}
@@ -115,7 +126,36 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
               </Button>
             </form>
             {totpUri ? (
-              <code className="block break-all text-xs text-muted-foreground">{totpUri}</code>
+              <div className="space-y-3 rounded-md border p-4">
+                <div className="flex flex-wrap items-start gap-4">
+                  {totpQrCode ? (
+                    <img
+                      src={totpQrCode}
+                      alt="Scan this QR code with your authenticator app"
+                      className="size-60 rounded bg-white p-2"
+                    />
+                  ) : null}
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <p className="text-sm font-medium">Scan with your authenticator app</p>
+                    <p className="text-xs text-muted-foreground">
+                      If scanning is unavailable, copy the setup URI into your authenticator app.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void navigator.clipboard.writeText(totpUri)}
+                      >
+                        Copy setup URI
+                      </Button>
+                    </div>
+                    <code className="block max-h-20 overflow-auto break-all text-xs text-muted-foreground">
+                      {totpUri}
+                    </code>
+                  </div>
+                </div>
+              </div>
             ) : null}
             {totpUri && !snapshot.totpEnabled ? (
               <form

@@ -25,8 +25,8 @@ Do not expand work into unrelated features, architecture, dependencies, or docum
 - Prefer reusing an already-running Vite, Fastify, database, preview server, or test harness. If no suitable instance is available, the Agent may start the service needed for the task; use only Vite `5173` and Fastify `3000` unless the task requires another documented port. The Agent must stop services it started when the work is complete, while leaving pre-existing user-operated services untouched.
 - Always use `pnpm` as the package manager (`pnpm install`, `pnpm add`, `pnpm run`, etc.). Do not use `npm`, `yarn`, or `bun` for package management.
 - Never invoke a subagent unless explicitly requested by the user.
-- The user authorizes commits for this work. Create commits at meaningful implementation milestones on the current non-`master` branch; never checkout, reset, merge, rebase, push, or otherwise modify `master`.
-- Before each milestone commit, stage only the intended files, run the applicable focused checks and `pnpm lint:staged`, then commit with a concise message describing the completed milestone. Preserve unrelated existing WIP and do not include it in milestone commits.
+- Consider creating commits only when a formal development document or a concrete development plan calls for them. In all other cases, commit only when the user explicitly requests it.
+- Before any authorized commit, stage only the intended files, run the applicable focused checks and `pnpm lint:staged`, then commit with a concise message describing the completed milestone. Preserve unrelated existing WIP and do not include it in milestone commits. Never checkout, reset, merge, rebase, push, or otherwise modify `master`.
 
 ## Verification
 

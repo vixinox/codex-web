@@ -8,8 +8,16 @@ export type ContextWindowConfig = { modelContextWindow: number }
 
 export const ownerSettings = {
   credentials: {
-    list: (signal?: AbortSignal) =>
-      getOwnerBridge().request<CredentialSnapshot>('credentials.list', undefined, { signal }),
+    list: async (signal?: AbortSignal): Promise<CredentialSnapshot> => {
+      const result = await getOwnerBridge().request<
+        | CredentialSnapshot
+        | { credentials: readonly CredentialSummary[]; currentCredentialId: string | null }
+      >('credentials.list', undefined, { signal })
+      if ('items' in result && Array.isArray(result.items)) return result
+      if ('credentials' in result && Array.isArray(result.credentials))
+        return { items: result.credentials, currentCredentialId: result.currentCredentialId }
+      throw new Error('Credential list response is invalid.')
+    },
     create: (input: { provider: string; baseUrl: string; apiKey: string }) =>
       getOwnerBridge().request<CredentialSummary>('credentials.create', input, { mutation: true }),
     test: (credentialId: string) =>

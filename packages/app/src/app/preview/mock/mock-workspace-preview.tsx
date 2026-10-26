@@ -3,6 +3,7 @@ import { ComposerInput } from '@/app/chat/composer/ui/composer-input'
 import { EMPTY_OWNER_COMPOSER_CAPABILITIES } from '@/app/chat/composer/model/composer-capabilities'
 import { ThreadAssets } from '@/app/chat/transcript/thread-assets'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
+import { DEFAULT_WORKSPACE_SIDEBAR_WIDTH } from '@/app/workspace/sidebar/sidebar-storage'
 import { cn } from '@/lib/utils'
 import {
   createMockComposerActions,
@@ -61,6 +62,8 @@ export function MockWorkspacePreview({ className }: { className?: string }) {
             onRenameProject={async () => undefined}
             onDeleteProject={async () => undefined}
             persistUiState={false}
+            sidebarWidth={DEFAULT_WORKSPACE_SIDEBAR_WIDTH}
+            onSidebarWidthChange={() => undefined}
           />
         </div>
         <main className="flex min-w-0 flex-1 flex-col rounded-tl-3xl bg-app-surface">

@@ -1,6 +1,7 @@
 import process from 'node:process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 
 export type ServerConfig = {
@@ -69,7 +70,10 @@ export function loadServerConfig(): ServerConfig {
     .split(',')
     .map((origin) => url('BETTER_AUTH_TRUSTED_ORIGINS', origin.trim()))
 
-  const dataRoot = process.env.CODEX_DATA_ROOT ?? './.data/codex'
+  const configuredDataRoot = process.env.CODEX_DATA_ROOT ?? './.data/codex'
+  const dataRoot = isAbsolute(configuredDataRoot)
+    ? configuredDataRoot
+    : resolve(fileURLToPath(new URL('../../../', import.meta.url)), configuredDataRoot)
   const host = process.env.SERVER_HOST ?? '127.0.0.1'
   if (!['127.0.0.1', '::1', 'localhost'].includes(host))
     throw new Error('SERVER_HOST must remain loopback')

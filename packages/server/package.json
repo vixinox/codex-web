@@ -4,13 +4,13 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "start": "node ../../scripts/run-with-env.mjs tsx src/owner/server.ts",
+    "start": "node scripts/run-with-env.mjs tsx src/owner/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test src/**/*.test.ts",
     "test:integration": "tsx --test src/**/*.integration.ts",
-    "db:push": "node ../../scripts/run-with-env.mjs tsx scripts/migrate-database.ts",
-    "db:reset": "node ../../scripts/run-with-env.mjs tsx scripts/reset-local-database.ts",
-    "account:create": "node ../../scripts/run-with-env.mjs tsx scripts/create-account.ts"
+    "db:push": "drizzle-kit push --config drizzle.config.ts",
+    "db:reset": "node scripts/run-with-env.mjs tsx scripts/reset-local-database.ts",
+    "account:create": "node scripts/run-with-env.mjs tsx scripts/create-account.ts"
   },
   "dependencies": {
     "@codex-web/protocol": "workspace:*",

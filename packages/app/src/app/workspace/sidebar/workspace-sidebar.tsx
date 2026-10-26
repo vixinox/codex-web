@@ -11,6 +11,11 @@ import { useNativeFadeEnter } from '@/lib/platform/browser/use-native-enter'
 import { ProjectNameDialog } from '../project-name-dialog'
 import { LoadError, ProjectItem, ThreadItem } from './sidebar-items'
 import { useStoredBoolean } from './sidebar-storage'
+import {
+  clampWorkspaceSidebarWidth,
+  MAX_WORKSPACE_SIDEBAR_WIDTH,
+  MIN_WORKSPACE_SIDEBAR_WIDTH,
+} from './sidebar-storage'
 import { Spinner } from '@/components/ui/spinner'
 import { FadePresenceList } from './fade-presence-list'
 import {
@@ -42,6 +47,8 @@ export function WorkspaceSidebar({
   runtimeStatusLabel,
   runtimeInteractive = true,
   persistUiState = true,
+  sidebarWidth,
+  onSidebarWidthChange,
 }: {
   model: WorkspaceSidebarModel
   runtimeStatus: WorkspaceRuntimeModel['status']
@@ -68,6 +75,8 @@ export function WorkspaceSidebar({
   runtimeInteractive?: boolean
   /** Fixture workspaces keep collapse state in memory rather than local storage. */
   persistUiState?: boolean
+  sidebarWidth: number
+  onSidebarWidthChange: (width: number) => void
 }) {
   const canHover = useCanHover()
   const closeMobileNavigation = useMobileNavigationClose()
@@ -86,6 +95,48 @@ export function WorkspaceSidebar({
     true,
     persistUiState,
   )
+  const resizeRef = React.useRef<{ startX: number; startWidth: number } | null>(null)
+  const stopResizing = React.useCallback(() => {
+    resizeRef.current = null
+    document.body.style.removeProperty('cursor')
+    document.body.style.removeProperty('user-select')
+  }, [])
+  React.useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!resizeRef.current) return
+      onSidebarWidthChange(
+        clampWorkspaceSidebarWidth(
+          resizeRef.current.startWidth + event.clientX - resizeRef.current.startX,
+        ),
+      )
+    }
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopResizing)
+    window.addEventListener('pointercancel', stopResizing)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopResizing)
+      window.removeEventListener('pointercancel', stopResizing)
+      stopResizing()
+    }
+  }, [onSidebarWidthChange, stopResizing])
+  const startResizing = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || window.matchMedia('(max-width: 1279px)').matches) return
+    event.preventDefault()
+    resizeRef.current = { startX: event.clientX, startWidth: sidebarWidth }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+  const resizeWithKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 32 : 16
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      onSidebarWidthChange(clampWorkspaceSidebarWidth(sidebarWidth - step))
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      onSidebarWidthChange(clampWorkspaceSidebarWidth(sidebarWidth + step))
+    }
+  }
   const runtimeLabel =
     runtimeStatus === 'started'
       ? 'Started'
@@ -117,8 +168,21 @@ export function WorkspaceSidebar({
     <>
       <aside
         ref={sidebarRef}
-        className="flex h-full min-h-0 w-full min-w-0 flex-col bg-sidebar text-sidebar-foreground xl:w-78 xl:shrink-0"
+        className="relative flex h-full min-h-0 w-full min-w-0 flex-col border-r border-border/70 bg-sidebar text-sidebar-foreground xl:w-(--workspace-sidebar-width) xl:shrink-0"
+        style={{ '--workspace-sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}
       >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin={MIN_WORKSPACE_SIDEBAR_WIDTH}
+          aria-valuemax={MAX_WORKSPACE_SIDEBAR_WIDTH}
+          aria-valuenow={sidebarWidth}
+          tabIndex={0}
+          className="group/resize absolute top-0 -right-0.75 z-20 hidden h-full w-1 cursor-col-resize touch-none xl:block focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring before:absolute before:top-0 before:left-1/2 before:h-full before:w-px before:-translate-x-1/2 before:bg-ring/0 before:transition-colors hover:before:bg-ring/70 focus-visible:before:bg-ring/70 [&:active]:before:bg-ring"
+          onPointerDown={startResizing}
+          onKeyDown={resizeWithKeyboard}
+        />
         <div className="flex flex-col pt-3 pb-2">
           <button
             type="button"

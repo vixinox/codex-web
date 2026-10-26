@@ -1,5 +1,44 @@
 import * as React from 'react'
 
+export const WORKSPACE_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-sidebar:width'
+export const DEFAULT_WORKSPACE_SIDEBAR_WIDTH = 312
+export const MIN_WORKSPACE_SIDEBAR_WIDTH = 240
+export const MAX_WORKSPACE_SIDEBAR_WIDTH = 520
+
+export function parseWorkspaceSidebarWidth(value: string | null) {
+  if (value === null) return DEFAULT_WORKSPACE_SIDEBAR_WIDTH
+
+  const width = Number(value)
+  if (!Number.isFinite(width)) return DEFAULT_WORKSPACE_SIDEBAR_WIDTH
+
+  return clampWorkspaceSidebarWidth(width)
+}
+
+export function clampWorkspaceSidebarWidth(width: number) {
+  return Math.min(MAX_WORKSPACE_SIDEBAR_WIDTH, Math.max(MIN_WORKSPACE_SIDEBAR_WIDTH, width))
+}
+
+export function readWorkspaceSidebarWidth() {
+  try {
+    return parseWorkspaceSidebarWidth(
+      window.localStorage.getItem(WORKSPACE_SIDEBAR_WIDTH_STORAGE_KEY),
+    )
+  } catch {
+    return DEFAULT_WORKSPACE_SIDEBAR_WIDTH
+  }
+}
+
+export function storeWorkspaceSidebarWidth(width: number) {
+  try {
+    window.localStorage.setItem(
+      WORKSPACE_SIDEBAR_WIDTH_STORAGE_KEY,
+      String(clampWorkspaceSidebarWidth(width)),
+    )
+  } catch {
+    // Storage can be unavailable; resizing must still work.
+  }
+}
+
 export function useStoredBoolean(key: string, fallback: boolean, persist = true) {
   const [value, setValue] = React.useState(() => {
     if (!persist) return fallback

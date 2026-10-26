@@ -13,8 +13,13 @@ export type WorkspaceSkill = {
 
 export const ownerWorkspace = {
   projects: {
-    list: (signal?: AbortSignal) =>
-      getOwnerBridge().request<readonly ProjectSummary[]>('projects.list', undefined, { signal }),
+    list: async (signal?: AbortSignal): Promise<readonly ProjectSummary[]> => {
+      const result = await getOwnerBridge().request<unknown>('projects.list', undefined, { signal })
+      if (Array.isArray(result)) return result as ProjectSummary[]
+      if (isRecord(result) && Array.isArray(result.projects))
+        return result.projects as ProjectSummary[]
+      throw new Error('Project list response is invalid.')
+    },
     create: (name: string) =>
       getOwnerBridge().request<ProjectSummary>('projects.create', { name }, { mutation: true }),
     rename: (projectId: string, name: string) =>
@@ -28,22 +33,34 @@ export const ownerWorkspace = {
     },
   },
   threads: {
-    list: async (projectId: string | null, signal?: AbortSignal, archived = false) =>
-      await getOwnerBridge().request<readonly ThreadSummary[]>(
+    list: async (projectId: string | null, signal?: AbortSignal, archived = false) => {
+      const result = await getOwnerBridge().request<unknown>(
         'threads.list',
-        { projectId, archived },
+        { ...(projectId ? { projectId } : {}), archived },
         { signal },
-      ),
+      )
+      if (Array.isArray(result)) return result as ThreadSummary[]
+      if (isRecord(result) && Array.isArray(result.data)) return result.data as ThreadSummary[]
+      throw new Error('Thread list response is invalid.')
+    },
     archive: async (projectId: string | null, threadId: string) => {
-      await getOwnerBridge().request('threads.archive', { projectId, threadId }, { mutation: true })
+      await getOwnerBridge().request(
+        'threads.archive',
+        { ...(projectId ? { projectId } : {}), threadId },
+        { mutation: true },
+      )
     },
     delete: async (projectId: string | null, threadId: string) => {
-      await getOwnerBridge().request('threads.delete', { projectId, threadId }, { mutation: true })
+      await getOwnerBridge().request(
+        'threads.delete',
+        { ...(projectId ? { projectId } : {}), threadId },
+        { mutation: true },
+      )
     },
     unarchive: async (projectId: string | null, threadId: string) => {
       await getOwnerBridge().request(
         'threads.unarchive',
-        { projectId, threadId },
+        { ...(projectId ? { projectId } : {}), threadId },
         { mutation: true },
       )
     },
@@ -59,4 +76,8 @@ export const ownerWorkspace = {
       undefined,
       { signal },
     ),
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

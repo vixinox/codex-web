@@ -158,6 +158,17 @@ export const codexEvent = sqliteTable(
   ],
 )
 
+export const schema = {
+  user,
+  twoFactor,
+  session,
+  account,
+  verification,
+  project,
+  credential,
+  codexEvent,
+}
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),

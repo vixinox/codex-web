@@ -32,6 +32,7 @@ pnpm db:push
 ```
 
 编辑 `.env`，确认 `BETTER_AUTH_SECRET`、`BETTER_AUTH_URL` 和 `BETTER_AUTH_TRUSTED_ORIGINS`。数据库文件位于 `CODEX_DATA_ROOT/owner.sqlite`。
+`pnpm db:push` 使用 Drizzle Kit 当前 schema；如果需要删除数据，Drizzle Kit 会在执行 destructive 变更前请求确认。Owner 启动不会自动迁移已有数据库。
 
 远程控制需要单独部署 Relay，并将 `CODEX_REMOTE_RELAY_URL`（`wss://`）与 `CODEX_REMOTE_RELAY_OWNER_TOKEN`（至少 32 字符）配置到 Owner；Relay 服务配置相同取值的 `RELAY_OWNER_TOKEN`。Owner 只作为出站 WSS 客户端连接 Relay，不开放入站端口；TLS 在 Relay 或前置反向代理处终止。Relay 只做连接转发，不保存业务状态：重启会断开全部远程设备，Owner 连接短时中断不影响本地使用，客户端重连后由 Owner 的 snapshot/cursor 恢复 session 和事件状态。健康检查端点 `/healthz` 只返回 `{status, protocolVersion, connections}`，不含 node 或设备标识。Relay 限制均有安全默认值，可通过环境变量覆盖：`RELAY_MAX_CONNECTIONS`（10000）、`RELAY_MAX_CLIENTS_PER_NODE`（8）、`RELAY_MAX_FRAME_BYTES`（2097152）、`RELAY_MESSAGES_PER_SECOND`（250）、`RELAY_MAX_QUEUED_BYTES`（8388608）；监听地址由 `RELAY_HOST`（127.0.0.1）与 `RELAY_PORT`（8787）配置，服务以 `pnpm --filter @codex-web/relay dev` 启动。
 

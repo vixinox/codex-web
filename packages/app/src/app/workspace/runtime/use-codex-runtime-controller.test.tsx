@@ -34,6 +34,25 @@ describe('useCodexRuntimeController', () => {
     vi.unstubAllGlobals()
   })
 
+  it('waits for Owner readiness before requesting Codex status', async () => {
+    const fetch = vi.fn().mockResolvedValue(response(status('stopped', null, null)))
+    vi.stubGlobal('fetch', fetch)
+
+    const { result, rerender } = renderHook(
+      ({ ownerReady }) => useCodexRuntimeController(ownerReady),
+      {
+        initialProps: { ownerReady: false },
+      },
+    )
+
+    expect(result.current.bootstrapping).toBe(true)
+    expect(fetch).not.toHaveBeenCalled()
+
+    rerender({ ownerReady: true })
+    await waitFor(() => expect(result.current.bootstrapping).toBe(false))
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('uses an already-running Codex process without starting it again', async () => {
     const fetch = vi.fn().mockResolvedValue(response(status('ready', 'credential-1')))
     vi.stubGlobal('fetch', fetch)

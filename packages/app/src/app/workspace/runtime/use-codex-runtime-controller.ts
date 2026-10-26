@@ -40,7 +40,7 @@ export type CodexRuntimeController = {
 
 const STATUS_POLL_MS = 1000
 
-export function useCodexRuntimeController(): CodexRuntimeController {
+export function useCodexRuntimeController(ownerReady = true): CodexRuntimeController {
   const [model, setModel] = React.useState<WorkspaceRuntimeModel>({
     status: 'starting',
     activeCredentialId: null,
@@ -182,6 +182,7 @@ export function useCodexRuntimeController(): CodexRuntimeController {
   }, [applyTerminalStatus, emitError, updateModel, waitForTerminalStatus])
 
   React.useEffect(() => {
+    if (!ownerReady) return
     if (bootstrapStartedRef.current) return
     bootstrapStartedRef.current = true
     const controller = new AbortController()
@@ -233,7 +234,7 @@ export function useCodexRuntimeController(): CodexRuntimeController {
       bootstrapStartedRef.current = false
       controller.abort()
     }
-  }, [applyTerminalStatus, emitError, runLifecycle, updateModel, waitForTerminalStatus])
+  }, [applyTerminalStatus, emitError, ownerReady, runLifecycle, updateModel, waitForTerminalStatus])
 
   return {
     model,

@@ -12,12 +12,22 @@ import { SettingsSidebar } from './settings-sidebar'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
 import { MobileNavigationCloseProvider } from './mobile-navigation-context'
+import {
+  readWorkspaceSidebarWidth,
+  storeWorkspaceSidebarWidth,
+} from '@/app/workspace/sidebar/sidebar-storage'
 
 type WorkspaceNavigationActions = WorkspaceOrchestration & {
   startCodex: CodexRuntimeController['start']
 }
 
-export function MobileWorkspaceNavigation({ children }: { children: React.ReactNode }) {
+export function MobileWorkspaceNavigation({
+  children,
+  sidebarWidth,
+}: {
+  children: React.ReactNode
+  sidebarWidth: number
+}) {
   const [open, setOpen] = React.useState(false)
   const location = useLocation()
   const locationRef = React.useRef(`${location.pathname}${location.search}${location.hash}`)
@@ -49,7 +59,9 @@ export function MobileWorkspaceNavigation({ children }: { children: React.ReactN
   }, [open])
   return (
     <>
-      <aside className="hidden w-78 shrink-0 self-stretch xl:block">{children}</aside>
+      <aside className="hidden shrink-0 self-stretch xl:block" style={{ width: sidebarWidth }}>
+        {children}
+      </aside>
       <div className="mobile-nav-trigger fixed top-2 left-3 z-30 xl:hidden">
         <Drawer open={open} onOpenChange={setOpen} swipeDirection="left">
           <DrawerTrigger
@@ -85,6 +97,11 @@ export function WorkspaceNavigation({
   actions: WorkspaceNavigationActions
 }) {
   const navigate = useNavigate()
+  const [sidebarWidth, setSidebarWidth] = React.useState(readWorkspaceSidebarWidth)
+  const handleSidebarWidthChange = React.useCallback((width: number) => {
+    setSidebarWidth(width)
+    storeWorkspaceSidebarWidth(width)
+  }, [])
   const sidebarProps = {
     model: controller.model,
     runtimeStatus: runtime.status,
@@ -109,6 +126,8 @@ export function WorkspaceNavigation({
     onCreateProject: actions.createProject,
     onRenameProject: actions.renameProject,
     onDeleteProject: actions.deleteProject,
+    sidebarWidth,
+    onSidebarWidthChange: handleSidebarWidthChange,
   }
   const content = route.settingsActive ? (
     <SettingsSidebar
@@ -121,5 +140,7 @@ export function WorkspaceNavigation({
     <WorkspaceSidebar {...sidebarProps} />
   )
 
-  return <MobileWorkspaceNavigation>{content}</MobileWorkspaceNavigation>
+  return (
+    <MobileWorkspaceNavigation sidebarWidth={sidebarWidth}>{content}</MobileWorkspaceNavigation>
+  )
 }

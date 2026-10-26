@@ -55,7 +55,7 @@ export function CandidateRoute() {
 export function AuthenticatedWorkspace({ userId }: { userId: string }) {
   const { data: session } = useSession()
   const { status, error } = useOwnerRuntime(session?.session.token)
-  const runtime = useCodexRuntimeController()
+  const runtime = useCodexRuntimeController(status === 'ready')
 
   useEffect(() => {
     if (!runtime.errorEvent) return
@@ -88,11 +88,17 @@ export function AuthenticatedWorkspace({ userId }: { userId: string }) {
 
 export function LoginRoute() {
   const { data: session, isPending } = useSession()
+  const [initialSessionResolved, setInitialSessionResolved] = useState(false)
 
-  if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
-  if (!session && isRemoteEntry()) return <RemoteLoginRoute />
-  if (!session) return <PairedRemoteLoginGate />
-  return session ? <Navigate to="/app" replace /> : <LoginScreen />
+  useEffect(() => {
+    if (!isPending) setInitialSessionResolved(true)
+  }, [isPending])
+
+  if (session) return <Navigate to="/app" replace />
+  if (isPending && !initialSessionResolved)
+    return <div className="min-h-svh bg-background" aria-label="Loading session" />
+  if (isRemoteEntry()) return <RemoteLoginRoute />
+  return <PairedRemoteLoginGate />
 }
 
 function isRemoteEntry() {

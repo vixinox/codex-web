@@ -4,14 +4,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const [command, ...args] = process.argv.slice(2)
 
 if (!command) throw new Error('Usage: run-with-env <command> [...args]')
 
 // Load the project environment before starting tsx or another child process.
 // Existing environment variables win, matching dotenv's default behavior.
-dotenv.config({ path: path.join(root, '.env'), quiet: true })
+dotenv.config({ path: path.join(workspaceRoot, '.env'), quiet: true })
 
 // Node's native fetch only reads proxy variables when this is enabled before
 // the child process starts.
