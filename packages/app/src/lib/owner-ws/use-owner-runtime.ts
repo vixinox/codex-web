@@ -1,5 +1,9 @@
 import * as React from 'react'
 import { createOwnerRuntime, type OwnerRuntime } from './owner-runtime'
+import {
+  createOwnerRuntimeController,
+  type OwnerRuntimeController as SessionController,
+} from './runtime-controller'
 import { setOwnerBridge } from '@/lib/bridge/owner-runtime'
 import { getRemoteBootstrap } from '@/app/entry/bootstrap'
 import { createDeviceKey, loadDeviceKey } from '@/lib/remote/device-key-store'
@@ -11,7 +15,7 @@ export type OwnerRuntimeController = {
   error: string | null
 }
 
-const runtimes = new Map<string, OwnerRuntime>()
+const runtimes = new Map<string, SessionController>()
 
 export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeController {
   const remote = getRemoteBootstrap()
@@ -20,26 +24,32 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
   const runtime = React.useMemo(() => {
     const existing = runtimes.get(key)
     if (existing) return existing
-    const created = createOwnerRuntime((url) => remoteSocketRef.current ?? new WebSocket(url))
+    const created = createOwnerRuntimeController(
+      createOwnerRuntime((url) => remoteSocketRef.current ?? new WebSocket(url)),
+    )
     runtimes.set(key, created)
     return created
   }, [key])
-  const [status, setStatus] = React.useState<OwnerRuntimeController['status']>(
-    remote ? 'remote-unavailable' : 'idle',
-  )
-  const [error, setError] = React.useState<string | null>(null)
+  const [snapshot, setSnapshot] = React.useState(() => ({ ...runtime.state }))
+  const status: OwnerRuntimeController['status'] =
+    snapshot.transport === 'connected'
+      ? 'ready'
+      : snapshot.transport === 'connecting' || snapshot.transport === 'reconnecting'
+        ? 'connecting'
+        : snapshot.transport === 'failed'
+          ? 'failed'
+          : remote
+            ? 'remote-unavailable'
+            : 'idle'
+  const error = snapshot.error
 
   React.useEffect(() => {
     if (!sessionToken && !remote) return
     let active = true
-    setStatus('connecting')
-    setError(null)
     const unsubscribe = runtime.subscribe(() => {
       if (!active) return
-      if (runtime.state === 'connected') {
-        setStatus('ready')
-        setOwnerBridge(runtime)
-      } else if (runtime.state === 'failed') setStatus('failed')
+      setSnapshot({ ...runtime.state })
+      if (runtime.state.transport === 'connected') setOwnerBridge(runtime.runtime)
     })
     const connect = async () => {
       if (!remote) {
@@ -77,13 +87,14 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
     void connect()
       .then(() => {
         if (!active) return
-        setStatus('ready')
-        setOwnerBridge(runtime)
+        setOwnerBridge(runtime.runtime)
       })
       .catch((cause: unknown) => {
         if (!active) return
-        setStatus('failed')
-        setError(cause instanceof Error ? cause.message : 'Owner connection failed')
+        setSnapshot({
+          ...runtime.state,
+          error: cause instanceof Error ? cause.message : 'Owner connection failed',
+        })
       })
     return () => {
       active = false
@@ -98,5 +109,5 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
     }
   }, [key, remote, runtime, sessionToken])
 
-  return { runtime, status, error }
+  return { runtime: runtime.runtime, status, error }
 }
