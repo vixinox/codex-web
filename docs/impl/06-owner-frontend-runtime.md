@@ -2,7 +2,7 @@
 
 ## 1. 状态与启动指引
 
-- 状态：Ready for implementation
+- 状态：In progress；06A-2、06B client foundation、06C、06D 已实现，06B 真实 admission 验收和 06E 全量回归待完成
 - 目标：把 05 的最小 remote client、Owner 管理页和现有业务 bridge 统一到一个 Owner 前端运行时。
 - 前置：05 已提交为 `cfb2a8f`，自动化 focused checks 已通过；真实远程浏览器链路仍未完成验收。
 - 先读：
@@ -293,7 +293,15 @@ pnpm lint:staged
 6. 每个领域迁移完成后删除旧 adapter，再进入下一个领域；
 7. 不把 05 的安全语义作为 06 的重设计对象。
 
-## 12. 未决事项
+## 12. 当前实现记录
+
+- 06A-2 已加入三层 runtime/session controller、有限重连退避、retry、target switch 和连接生命周期测试。
+- 06C 已加入 Owner Thread domain adapter，支持 subscription cursor、events.resume、事件去重和 Chat UI-facing contract。
+- 06D 已将 Workspace/Settings 生产调用迁移到 Owner domain adapters；生产代码不再引用业务 HTTP/SSE bridge。
+- 远程 Relay/E2EE client、设备记录和 provisional admission helper 已具备基础能力，但真实浏览器 promotion、paired reconnect、revoke/trust reset 和 Relay 断线仍需手工验收。
+- 现有 app 测试中仍有旧 HTTP/SSE mock 依赖，需要迁移到 Owner domain mock 后才能完成 06E 全量回归。
+
+## 13. 未决事项
 
 没有阻塞 06 开始的架构决策。实现时只允许在以下边界内做局部选择：
 
