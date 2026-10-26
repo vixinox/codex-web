@@ -2,7 +2,7 @@
 
 ## 1. 状态与启动指引
 
-- 状态：In progress；06A-06D 已实现，06E 正在进行全量回归与手工链路验收
+- 状态：In progress；06A-06E 自动化实现已完成，真实 Owner/Relay 浏览器链路待验收
 - 目标：把 05 的最小 remote client、Owner 管理页和现有业务 bridge 统一到一个 Owner 前端运行时。
 - 前置：05 已提交为 `cfb2a8f`，自动化 focused checks 已通过；真实远程浏览器链路仍未完成验收。
 - 先读：
@@ -213,11 +213,11 @@ Server 的 cursor 是 `{ epoch, sequence }`；Thread interface 和 Owner Thread 
 
 ### 7.5 前端加密依赖违反已记录边界
 
-`packages/app/src/lib/remote/relay-owner-socket.ts` 直接导入 `@codex-web/protocol/relay/crypto`，与 [`../frontend/README.zh-CN.md`](../frontend/README.zh-CN.md) 中“App 不依赖该模块”的边界冲突。实现前先确认 E2EE 的所有权边界：优先将加密细节隐藏在允许的 transport adapter 后；若必须改变 package boundary，应作为明确架构变更同步更新文档和安全审查，不能只忽略现有规则。
+已解决：Relay E2EE 实现位于 `packages/app/src/lib/remote/relay-crypto.ts`，Owner socket 只依赖该本地 adapter 和 `@codex-web/protocol/relay` 的帧类型/parser；App 不直接依赖 `@codex-web/protocol/relay/crypto`。不改变 E2EE 合同。
 
 ### 7.6 runtime controller 存在双重 transport 访问入口
 
-`OwnerRuntimeController` 同时暴露底层 `runtime`，又转发 `request`、`openStream`。这是 review 中的结构性风险，不是阻塞项。后续整理时统一调用入口，避免领域调用绕过 controller 生命周期和状态投影。
+已收敛：业务层通过 controller 的 `request`、`openStream`、`subscribeNotification` 和连接生命周期接口访问 Owner runtime；controller 不再暴露底层 transport 实例。
 
 ## 8. 实施里程碑
 
@@ -243,7 +243,7 @@ Server 的 cursor 是 `{ epoch, sequence }`；Thread interface 和 Owner Thread 
 
 验收：读取可恢复，mutation 不自动重放；连接切换后重新 hydrate；状态变化可被 React controller 订阅。
 
-### 06B：认证与远程状态统一（实现完成，待真实环境验收）
+### 06B：认证与远程状态统一（自动化实现完成，待真实环境验收）
 
 范围：接入 bootstrap、设备密钥、Relay/E2EE、provisional login、TOTP/recovery、trust promotion、paired token 持久化和管理页 adapter。
 
@@ -251,7 +251,7 @@ Server 的 cursor 是 `{ epoch, sequence }`；Thread interface 和 Owner Thread 
 
 验收：真实浏览器完成 bootstrap 清除、密码登录、TOTP 或本机批准、paired 重连、刷新后 paired admission、撤销、trust reset、Relay 断线和 IndexedDB 清除后的重新配对。
 
-### 06C：Chat/Thread/Turn 迁移（实现完成，待真实环境验收）
+### 06C：Chat/Thread/Turn 迁移（自动化实现完成，待真实环境验收）
 
 范围：将 thread list/read/status/create/send/cancel/compact、events、approval、question 迁移到 Owner domain adapters；复用现有 thread session/reducer/presentation。
 
@@ -267,11 +267,11 @@ Server 的 cursor 是 `{ epoch, sequence }`；Thread interface 和 Owner Thread 
 
 验收：页面只通过 Owner methods 工作；保留外围 HTTP；旧领域 bridge 删除。
 
-### 06E：清理与全量回归（自动化回归进行中）
+### 06E：清理与全量回归（自动化回归通过；server 并发 suite 有时序波动）
 
 范围：删除未使用的业务 HTTP/SSE bridge，修复所有缺失 bridge import，统一测试和文档状态。
 
-验收：全量 `pnpm typecheck`、相关 package tests、`oxfmt --check`、`pnpm lint:staged` 和用户启动服务后的手工回归通过。
+验收：`pnpm typecheck`、app/protocol/relay tests、修改文件 `oxfmt --check` 和 `pnpm lint:staged` 通过。server 全套 84 项在并发执行时曾出现临时 runtime 目录 EBUSY 和 startup 子进程超时；单独复跑 startup readiness 测试时 84 项全通过。真实 Owner/Relay 手工回归尚未完成。
 
 ## 9. 明确非目标
 
@@ -327,11 +327,15 @@ pnpm lint:staged
 - 06C 已按 `{ epoch, sequence }` cursor 合同完成 subscribe/resume/reset recovery、事件去重和 snapshot hydrate。
 - 06D 已将 Workspace/Settings 生产调用迁移到 Owner domain adapters；生产代码不再引用业务 HTTP/SSE bridge。
 - 远程 Relay/E2EE socket、设备记录、provisional admission、TOTP/recovery 验证、trust promotion、paired token 写入和刷新后 admission 已形成实际调用闭环。
-- `relay-owner-socket.ts` 对 `@codex-web/protocol/relay/crypto` 的直接依赖违反当前前端边界文档，需先收敛边界再判定 06B 完成。
+- Relay E2EE 由 App 内 `relay-crypto.ts` adapter 实现；Owner socket 不直接依赖 protocol crypto 子路径，符合前端边界文档。
 - 受测试环境限制，少量纯 controller 测试仍通过 Owner bridge mock 模拟事件；生产调用已统一走 Owner domain adapter。
 - 06E 已删除未使用的业务 HTTP/SSE bridge 实现；外围 bootstrap/metadata HTTP 不受影响。
 - 远程端已消费 `remote.device.paired` 通知，支持本机批准后自动保存 paired token、切换 admission 并建立 Owner session。
-- 06 review 基点为 `cfb2a8f`；review 结果已纳入第 7 节，所有 P1/P2 修复在相应 focused tests 通过前保持未完成。
+- 06 review 基点为 `cfb2a8f`；自动化 P1/P2 修复及其 focused tests 已完成。真实 Owner/Relay 浏览器路径未通过前，06 保持 In progress。
+
+### 最终手工验收状态
+
+未执行：当前环境没有运行中的 Vite `5173` 或 Owner `3000` 服务，也没有可用于真实配对的 Owner/Relay 会话。完成 06 前仍需按第 10 节验证本地 session、bootstrap 清除、TOTP/recovery 与本机批准、paired 刷新/重连、撤销/trust reset、设备存储故障恢复、Chat cursor/reset/审批/问答及 Workspace/Settings 读写。
 
 ## 13. 未决事项
 
