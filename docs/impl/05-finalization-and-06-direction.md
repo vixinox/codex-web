@@ -170,6 +170,8 @@ pnpm lint:staged
 
 ## 6. 06 整体方向
 
+06 的可执行 work package、冻结决策、05 review 缺口、里程碑和验收标准见 [`06-owner-frontend-runtime.md`](./06-owner-frontend-runtime.md)。本节保留方向摘要；实现 06 时以该 work package 为启动入口。
+
 06 的主题是：**把 05 为了闭环而建立的最小 remote client 和管理页接入，重构成统一的 Owner 前端运行时。**
 
 ### 6.1 目标架构
