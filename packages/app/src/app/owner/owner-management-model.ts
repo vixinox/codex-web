@@ -21,10 +21,14 @@ export type OwnerManagementSnapshot = {
 
 export type OwnerManagementClient = {
   getSnapshot(): Promise<OwnerManagementSnapshot>
+  setupTotp(password: string): Promise<{ totpURI?: string }>
+  verifyTotp(code: string): Promise<{ recoveryCodes: string[] }>
+  generateRecoveryCodes(password?: string): Promise<{ recoveryCodes: string[] }>
   approveBinding(requestId: string): Promise<void>
-  rejectBinding?(requestId: string): Promise<void>
+  rejectBinding(requestId: string): Promise<void>
   revokeDevice(deviceId: string): Promise<void>
   resetTrust(): Promise<void>
+  close(): void
 }
 
 export function emptyOwnerManagementSnapshot(): OwnerManagementSnapshot {

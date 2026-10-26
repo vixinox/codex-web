@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import {
   decryptPayload,
@@ -19,6 +19,7 @@ import {
   type EncryptedFrame,
   type RelayForwardFrame,
 } from '@codex-web/protocol/relay'
+import { encodeOwnerFrame } from '@codex-web/protocol/owner'
 
 import type { ServerConfig } from '../config.js'
 import {
@@ -58,6 +59,7 @@ type ClientSession = {
   deviceId: string
   transport: VirtualOwnerTransport
   runtime: OwnerSessionRuntime
+  createdAt: number
 }
 
 /** Per-relay-connection handshake state. A connection holds exactly one of these for its lifetime. */
@@ -93,6 +95,7 @@ export class OwnerConnector {
   private readonly connectionId = randomUUID()
   private readonly connections = new Map<string, ConnectionState>()
   private readonly connectedClientIds = new Map<string, string>()
+  private readonly promotingBindings = new Set<string>()
   private runtimeRegistry?: OwnerMethodRegistry
   private resumeSession?: NonNullable<
     ConstructorParameters<typeof OwnerSessionRuntime>[2]['resumeSession']
@@ -258,6 +261,77 @@ export class OwnerConnector {
 
   async listDevices() {
     return this.trust.listPeers()
+  }
+
+  async listPendingBindings() {
+    const pending = []
+    for (const [connectionId, state] of this.connections) {
+      if (state.phase !== 'open' || !state.session.deviceId.startsWith('bootstrap:')) continue
+      const requestId = state.session.deviceId.slice('bootstrap:'.length)
+      if (this.promotingBindings.has(requestId)) continue
+      const capability = await this.bootstrap.capability(requestId)
+      if (!capability) {
+        void this.closeConnection(connectionId, 'binding_expired')
+        continue
+      }
+      pending.push({
+        requestId,
+        source: 'remote browser',
+        createdAt: new Date(state.session.createdAt).toISOString(),
+        publicKeyFingerprint: createHash('sha256')
+          .update(state.session.publicKey)
+          .digest('base64url')
+          .slice(0, 16),
+        expiresAt: new Date(capability.expiresAt).toISOString(),
+      })
+    }
+    return pending
+  }
+
+  async approveBootstrap(requestId: string) {
+    const entry = [...this.connections.entries()].find(
+      ([, state]) => state.phase === 'open' && state.session.deviceId === `bootstrap:${requestId}`,
+    )
+    if (!entry || entry[1].phase !== 'open') return null
+    return this.promoteBootstrap(requestId, entry[1].session.publicKey, true)
+  }
+
+  async promoteBootstrap(requestId: string, clientPublicKey: string, closeImmediately = false) {
+    if (this.promotingBindings.has(requestId)) return null
+    const entry = [...this.connections.entries()].find(
+      ([, state]) => state.phase === 'open' && state.session.deviceId === `bootstrap:${requestId}`,
+    )
+    if (!entry || entry[1].phase !== 'open' || entry[1].session.publicKey !== clientPublicKey)
+      return null
+    this.promotingBindings.add(requestId)
+    try {
+      const deviceId = await this.trust.trustPeer(clientPublicKey)
+      const clientToken = await this.createPairedClientToken(deviceId)
+      if (closeImmediately) {
+        await this.sendEncrypted(
+          entry[0],
+          encodeOwnerFrame({
+            type: 'notification',
+            method: 'remote.device.paired',
+            params: { deviceId, clientToken },
+          }),
+        )
+      }
+      entry[1].session.transport.promote?.(deviceId, clientToken)
+      if (closeImmediately) await this.closeConnection(entry[0], 'paired')
+      return { deviceId, clientToken }
+    } finally {
+      this.promotingBindings.delete(requestId)
+    }
+  }
+
+  async rejectBootstrap(requestId: string) {
+    const entry = [...this.connections.entries()].find(
+      ([, state]) => state.phase === 'open' && state.session.deviceId === `bootstrap:${requestId}`,
+    )
+    if (!entry) return false
+    await this.closeConnection(entry[0], 'binding_rejected')
+    return true
   }
 
   async revokeDevice(deviceId: string) {
@@ -556,6 +630,7 @@ export class OwnerConnector {
       transport.clientPublicKey = frame.clientPublicKey
       transport.promote = (promotedDeviceId) => {
         transport.pairedDeviceId = promotedDeviceId
+        transport.promoted = true
       }
     }
     const runtime = new OwnerSessionRuntime(transport, this.runtimeRegistry, {
@@ -579,6 +654,7 @@ export class OwnerConnector {
       deviceId: deviceId ?? `bootstrap:${bootstrapId}`,
       transport,
       runtime,
+      createdAt: Date.now(),
     }
     this.connections.set(connectionId, { phase: 'open', session })
     // Key confirmation: the client only trusts the channel once it decrypts this record under the
@@ -661,6 +737,12 @@ export class OwnerConnector {
       // relay to drop the routing slot before releasing the encrypted channel below.
       this.sendClose(connectionId, reason ?? 'connection_closed')
       state.session.transport.close(closeCode, reason)
+      if (state.session.deviceId.startsWith('bootstrap:')) {
+        void this.bootstrap.invalidateBinding(
+          state.session.deviceId.slice('bootstrap:'.length),
+          state.session.publicKey,
+        )
+      }
       return
     }
     // A connection that never completed its handshake has no encrypted channel, so the peer can

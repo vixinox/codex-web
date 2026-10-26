@@ -44,8 +44,10 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'public' as const,
         handle: async (params, context) => {
-          const result = await services.sessionOpen(asRecord(params))
-          await context.authenticate(result.admission satisfies OwnerAdmission)
+          const result = await services.sessionOpen(asRecord(params), context)
+          if ('admission' in result)
+            await context.authenticate(result.admission satisfies OwnerAdmission)
+          if ('pendingTwoFactor' in result) return result
           return { token: result.token, session: result.session }
         },
       },
@@ -318,6 +320,92 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (params, context) => services.remoteDeviceTrust(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.security.status',
+      {
+        access: 'local' as const,
+        handle: (_params, context) => services.ownerSecurityStatus(context),
+      },
+    ],
+    [
+      'owner.security.totp.enable',
+      {
+        access: 'local' as const,
+        handle: (params, context) => services.ownerTotpEnable(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.security.totp.setup',
+      {
+        access: 'local' as const,
+        handle: (params, context) => services.ownerTotpEnable(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.security.totp.verify',
+      {
+        access: 'authenticated' as const,
+        handle: (params, context) => services.ownerTotpVerify(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.security.recovery.generate',
+      {
+        access: 'local' as const,
+        handle: (params, context) => services.ownerRecoveryGenerate(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.security.recovery.rotate',
+      {
+        access: 'local' as const,
+        handle: (params, context) => services.ownerRecoveryGenerate(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.security.recovery.verify',
+      {
+        access: 'authenticated' as const,
+        handle: (params, context) => services.ownerRecoveryVerify(context, asRecord(params)),
+      },
+    ],
+    [
+      'remote.device.binding.status',
+      {
+        access: 'public' as const,
+        handle: (_params, context) => services.remoteDeviceBindingStatus(context),
+      },
+    ],
+    [
+      'remote.device.binding.verifyTotp',
+      {
+        access: 'public' as const,
+        handle: (params, context) =>
+          services.remoteDeviceBindingVerifyTotp(context, asRecord(params)),
+      },
+    ],
+    [
+      'remote.device.binding.verifyRecoveryCode',
+      {
+        access: 'public' as const,
+        handle: (params, context) =>
+          services.remoteDeviceBindingVerifyRecoveryCode(context, asRecord(params)),
+      },
+    ],
+    [
+      'remote.device.binding.approve',
+      {
+        access: 'local' as const,
+        handle: (params, context) => services.remoteDeviceBindingApprove(context, asRecord(params)),
+      },
+    ],
+    [
+      'remote.device.binding.reject',
+      {
+        access: 'local' as const,
+        handle: (params, context) => services.remoteDeviceBindingReject(context, asRecord(params)),
       },
     ],
   ])

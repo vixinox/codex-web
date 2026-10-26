@@ -71,12 +71,20 @@ export async function generateKeyPair(): Promise<CryptoKeyPair> {
   return (await subtle().generateKey(ECDH_ALGORITHM, true, ['deriveBits'])) as CryptoKeyPair
 }
 
+export async function generatePersistentDeviceKeyPair(): Promise<CryptoKeyPair> {
+  return (await subtle().generateKey(ECDH_ALGORITHM, false, ['deriveBits'])) as CryptoKeyPair
+}
+
 export async function serializeKeyPair(keyPair: CryptoKeyPair): Promise<SerializedKeyPair> {
   const [publicKey, privateKey] = await Promise.all([
     subtle().exportKey('jwk', keyPair.publicKey),
     subtle().exportKey('jwk', keyPair.privateKey),
   ])
   return { publicKey: JSON.stringify(publicKey), privateKey: JSON.stringify(privateKey) }
+}
+
+export async function serializePublicKey(key: CryptoKey): Promise<string> {
+  return JSON.stringify(await subtle().exportKey('jwk', key))
 }
 
 export async function importPublicKey(serialized: string) {

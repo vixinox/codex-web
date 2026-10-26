@@ -4,12 +4,18 @@ import assert from 'node:assert/strict'
 import {
   decryptPayload,
   deriveSessionKey,
+  generatePersistentDeviceKeyPair,
   encryptPayload,
   generateKeyPair,
   serializeKeyPair,
   importPrivateKey,
   importPublicKey,
 } from './crypto.js'
+
+test('persistent device keys are non-exportable', async () => {
+  const pair = await generatePersistentDeviceKeyPair()
+  assert.equal((pair.privateKey as CryptoKey).extractable, false)
+})
 
 const ECDH_ALGORITHM = { name: 'ECDH', namedCurve: 'P-256' } as const
 

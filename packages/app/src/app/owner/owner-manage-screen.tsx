@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import {
   emptyOwnerManagementSnapshot,
   formatDeviceDate,
@@ -12,12 +13,31 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
   const [snapshot, setSnapshot] = useState(emptyOwnerManagementSnapshot)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<
+    'loading' | 'ready' | 'offline' | 'session_expired' | 'failed'
+  >('loading')
+  const [totpPassword, setTotpPassword] = useState('')
+  const [totpCode, setTotpCode] = useState('')
+  const [recoveryPassword, setRecoveryPassword] = useState('')
+  const [totpUri, setTotpUri] = useState<string | null>(null)
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
+  const [codesAcknowledged, setCodesAcknowledged] = useState(false)
   const refresh = useCallback(async () => {
     setError(null)
+    setStatus('loading')
     try {
       setSnapshot(await client.getSnapshot())
+      setStatus('ready')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to load security state')
+      const message = cause instanceof Error ? cause.message : 'Unable to load security state'
+      setError(message)
+      setStatus(
+        message.includes('UNAUTHORIZED')
+          ? 'session_expired'
+          : message.includes('closed') || message.includes('failed')
+            ? 'offline'
+            : 'failed',
+      )
     }
   }, [client])
   useEffect(() => {
@@ -31,6 +51,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
       await refresh()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Operation failed')
+      setStatus('failed')
     } finally {
       setBusy(null)
     }
@@ -42,6 +63,15 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
           <p className="text-sm text-muted-foreground">Owner security</p>
           <h1 className="text-2xl font-semibold">Manage trusted browsers</h1>
         </header>
+        {status === 'loading' ? (
+          <p className="text-sm text-muted-foreground">Loading security state...</p>
+        ) : null}
+        {status === 'offline' ? (
+          <p className="text-sm text-muted-foreground">Owner connection is offline.</p>
+        ) : null}
+        {status === 'session_expired' ? (
+          <p className="text-sm text-destructive">Owner session expired. Sign in again.</p>
+        ) : null}
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -56,6 +86,113 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
             <Badge variant={snapshot.totpEnabled ? 'default' : 'secondary'}>
               {snapshot.totpEnabled ? 'Enabled' : 'Setup required'}
             </Badge>
+          </CardContent>
+          <CardContent className="space-y-3 border-t pt-4">
+            <form
+              className="flex flex-wrap gap-2"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void act('totp-setup', async () => {
+                  const result = await client.setupTotp(totpPassword)
+                  setTotpUri(result.totpURI ?? null)
+                  setTotpPassword('')
+                })
+              }}
+            >
+              <Input
+                type="password"
+                value={totpPassword}
+                onChange={(event) => setTotpPassword(event.target.value)}
+                placeholder="Owner password"
+                aria-label="Owner password"
+                disabled={snapshot.totpEnabled || busy === 'totp-setup'}
+              />
+              <Button
+                type="submit"
+                disabled={snapshot.totpEnabled || !totpPassword || busy === 'totp-setup'}
+              >
+                Set up TOTP
+              </Button>
+            </form>
+            {totpUri ? (
+              <code className="block break-all text-xs text-muted-foreground">{totpUri}</code>
+            ) : null}
+            {totpUri && !snapshot.totpEnabled ? (
+              <form
+                className="flex flex-wrap gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void act('totp-verify', async () => {
+                    const result = await client.verifyTotp(totpCode)
+                    setRecoveryCodes(result.recoveryCodes)
+                    setCodesAcknowledged(false)
+                    setTotpCode('')
+                  })
+                }}
+              >
+                <Input
+                  inputMode="numeric"
+                  value={totpCode}
+                  onChange={(event) => setTotpCode(event.target.value)}
+                  placeholder="Authenticator code"
+                  aria-label="Authenticator code"
+                  disabled={busy === 'totp-verify'}
+                />
+                <Button type="submit" disabled={!totpCode || busy === 'totp-verify'}>
+                  Verify TOTP
+                </Button>
+              </form>
+            ) : null}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Recovery codes</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <form
+              className="flex flex-wrap gap-2"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void act('recovery-rotate', async () => {
+                  const result = await client.generateRecoveryCodes(recoveryPassword || undefined)
+                  setRecoveryCodes(result.recoveryCodes)
+                  setCodesAcknowledged(false)
+                  setRecoveryPassword('')
+                })
+              }}
+            >
+              <Input
+                type="password"
+                value={recoveryPassword}
+                onChange={(event) => setRecoveryPassword(event.target.value)}
+                placeholder="Owner password"
+                aria-label="Owner password"
+                disabled={!snapshot.totpEnabled || busy === 'recovery-rotate'}
+              />
+              <Button type="submit" disabled={!snapshot.totpEnabled || busy === 'recovery-rotate'}>
+                Generate or rotate
+              </Button>
+            </form>
+            {snapshot.recoveryCodesAvailable ? (
+              <p className="text-sm text-muted-foreground">Recovery codes are configured.</p>
+            ) : null}
+            {recoveryCodes ? (
+              <div className="space-y-3 rounded-md border p-3">
+                <pre className="grid grid-cols-2 gap-1 text-sm">{recoveryCodes.join('\n')}</pre>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={codesAcknowledged}
+                    onChange={(event) => setCodesAcknowledged(event.target.checked)}
+                  />
+                  I saved these codes
+                </label>
+                {codesAcknowledged ? (
+                  <p className="text-xs text-muted-foreground">Codes will not be shown again.</p>
+                ) : null}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
         <Card>
@@ -86,6 +223,18 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                   >
                     Approve
                   </Button>
+                  {client.rejectBinding ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy === request.requestId}
+                      onClick={() =>
+                        void act(request.requestId, () => client.rejectBinding(request.requestId))
+                      }
+                    >
+                      Reject
+                    </Button>
+                  ) : null}
                 </div>
               ))
             )}

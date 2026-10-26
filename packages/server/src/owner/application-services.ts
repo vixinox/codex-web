@@ -1,5 +1,5 @@
 import type { Auth } from '../auth.js'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { CodexBridge } from '../http/types.js'
 import { projectNativeThread } from '../codex/native-protocol.js'
 import { parseRequestId } from '../codex/request-id.js'
@@ -79,6 +79,7 @@ type SessionSnapshot = {
     id: string
     email: string
     name: string
+    twoFactorEnabled?: boolean
   }
   session: {
     id: string
@@ -110,6 +111,19 @@ export type OwnerSessionResult = {
 
 type ResolvedOwnerSession = { snapshot: SessionSnapshot; token: string }
 
+type OwnerSessionOpenResult =
+  | OwnerSessionResult
+  | {
+      pendingTwoFactor: { challengeId: string; expiresAt: string }
+    }
+
+type PendingTwoFactor = {
+  cookie: string
+  expiresAt: number
+  bootstrapId?: string
+  clientPublicKey?: string
+}
+
 export type OwnerApplicationServices = ReturnType<typeof createOwnerApplicationServices>
 
 export function createOwnerApplicationServices(
@@ -132,6 +146,7 @@ export function createOwnerApplicationServices(
       expiresAt: number
     }
   >()
+  const pendingTwoFactor = new Map<string, PendingTwoFactor>()
 
   return {
     async ownerStatus(context: OwnerMethodContext) {
@@ -185,7 +200,10 @@ export function createOwnerApplicationServices(
       return dependencies.remote.consumeBootstrapCapability(input.token)
     },
 
-    async sessionOpen(input: { email?: unknown; password?: unknown }): Promise<OwnerSessionResult> {
+    async sessionOpen(
+      input: { email?: unknown; password?: unknown },
+      context?: OwnerMethodContext,
+    ): Promise<OwnerSessionOpenResult> {
       if (typeof input.email !== 'string' || typeof input.password !== 'string')
         throw new OwnerMethodError('INVALID_PARAMS')
       try {
@@ -193,7 +211,37 @@ export function createOwnerApplicationServices(
           body: { email: input.email, password: input.password },
           asResponse: true,
         })
-        return await sessionResult(dependencies.auth, response)
+        if (response.ok) {
+          const token = response.headers.get('set-auth-token')
+          if (token) return await sessionResult(dependencies.auth, response)
+          const body = await response
+            .clone()
+            .json()
+            .catch(() => null)
+          const cookie = authCookie(response.headers)
+          if (
+            isRecord(body) &&
+            body.twoFactorRedirect === true &&
+            cookie &&
+            context?.transport.kind === 'relay'
+          ) {
+            const challengeId = randomUUID()
+            const expiresAt = Date.now() + 10 * 60 * 1_000
+            pendingTwoFactor.set(challengeId, {
+              cookie,
+              expiresAt,
+              bootstrapId: context.transport.bootstrapId,
+              clientPublicKey: context.transport.clientPublicKey,
+            })
+            return {
+              pendingTwoFactor: {
+                challengeId,
+                expiresAt: new Date(expiresAt).toISOString(),
+              },
+            }
+          }
+        }
+        throw new OwnerMethodError('AUTH_FAILURE')
       } catch (error) {
         if (error instanceof OwnerMethodError) throw error
         throw new OwnerMethodError('AUTH_FAILURE')
@@ -239,10 +287,16 @@ export function createOwnerApplicationServices(
         )
       )
         throw new OwnerMethodError('UNAUTHORIZED')
-      const deviceId = await dependencies.remote.trust.trustPeer(input.publicKey)
-      const token = await dependencies.remote.createPairedClientToken(deviceId)
-      provisional.promote(deviceId, token)
-      return { deviceId, clientToken: token, ownerId: owner.ownerId }
+      const promoted = await dependencies.remote.promoteBootstrap(
+        provisional.bootstrapId,
+        input.publicKey,
+      )
+      if (!promoted) throw new OwnerMethodError('RESOURCE_NOT_FOUND')
+      return {
+        deviceId: promoted.deviceId,
+        clientToken: promoted.clientToken,
+        ownerId: owner.ownerId,
+      }
     },
 
     async resumeSession(token: string, transport: OwnerTransport) {
@@ -1127,6 +1181,231 @@ export function createOwnerApplicationServices(
       if (!revoked) throw new OwnerMethodError('DEVICE_NOT_FOUND')
       return { revoked: true }
     },
+
+    async ownerSecurityStatus(context: OwnerMethodContext) {
+      requireLocalOwner(context)
+      const owner = requireOwner(context)
+      const devices = dependencies.remote ? await dependencies.remote.listDevices() : []
+      let totpEnabled = false
+      if (owner.sessionToken) {
+        const session = await sessionFromToken(dependencies.auth, owner.sessionToken)
+        totpEnabled = Boolean(session?.snapshot.user.twoFactorEnabled)
+      }
+      const bindingRequests = dependencies.remote
+        ? await dependencies.remote.listPendingBindings()
+        : []
+      let recoveryCodesAvailable = false
+      if (owner.sessionToken && typeof dependencies.auth.api.viewBackupCodes === 'function') {
+        try {
+          const codes = await dependencies.auth.api.viewBackupCodes({
+            body: { userId: owner.ownerId },
+          })
+          recoveryCodesAvailable =
+            isRecord(codes) && Array.isArray(codes.backupCodes) && codes.backupCodes.length > 0
+        } catch {
+          recoveryCodesAvailable = false
+        }
+      }
+      return {
+        totpEnabled,
+        recoveryCodesAvailable,
+        bindingRequests,
+        devices,
+      }
+    },
+
+    async ownerTotpEnable(context: OwnerMethodContext, input: Record<string, unknown>) {
+      requireLocalOwner(context)
+      const owner = requireOwner(context)
+      if (typeof input.password !== 'string') throw new OwnerMethodError('INVALID_PARAMS')
+      try {
+        const enable = (
+          dependencies.auth.api as unknown as {
+            enableTwoFactor: (args: unknown) => Promise<unknown>
+          }
+        ).enableTwoFactor
+        const result = await enable({
+          body: { password: input.password, method: 'totp', issuer: 'Codex Web' },
+          headers: bearerHeaders(owner.sessionToken!),
+        })
+        if (!isRecord(result)) throw new OwnerMethodError('AUTH_FAILURE')
+        return {
+          ...(typeof result.totpURI === 'string' ? { totpURI: result.totpURI } : {}),
+          requiresVerification: true,
+        }
+      } catch {
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+    },
+
+    async ownerTotpVerify(context: OwnerMethodContext, input: Record<string, unknown>) {
+      const owner = requireOwner(context)
+      if (typeof input.code !== 'string' || context.transport.kind !== 'local')
+        throw new OwnerMethodError('INVALID_PARAMS')
+      try {
+        const verify = (
+          dependencies.auth.api as unknown as {
+            verifyTOTP: (args: unknown) => Promise<unknown>
+          }
+        ).verifyTOTP
+        const result = await verify({
+          body: { code: input.code },
+          headers: bearerHeaders(owner.sessionToken!),
+        })
+        if (!isRecord(result)) throw new OwnerMethodError('AUTH_FAILURE')
+        return {
+          verified: true,
+          recoveryCodes: await generateRecoveryCodes(dependencies.auth, owner),
+        }
+      } catch {
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+    },
+
+    async ownerRecoveryGenerate(context: OwnerMethodContext, input: Record<string, unknown>) {
+      requireLocalOwner(context)
+      const owner = requireOwner(context)
+      return generateRecoveryCodes(dependencies.auth, owner, input.password)
+    },
+
+    async ownerRecoveryVerify(context: OwnerMethodContext, input: Record<string, unknown>) {
+      const owner = requireOwner(context)
+      if (context.transport.kind !== 'local' || typeof input.code !== 'string')
+        throw new OwnerMethodError('INVALID_PARAMS')
+      try {
+        const verify = (
+          dependencies.auth.api as unknown as {
+            verifyBackupCode: (args: unknown) => Promise<unknown>
+          }
+        ).verifyBackupCode
+        await verify({
+          body: { code: input.code },
+          headers: bearerHeaders(owner.sessionToken!),
+        })
+        return { verified: true }
+      } catch {
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+    },
+
+    async remoteDeviceBindingStatus(context: OwnerMethodContext) {
+      if (context.transport.kind !== 'relay' || !context.transport.bootstrapId)
+        throw new OwnerMethodError('UNAUTHORIZED')
+      return {
+        status: 'pending',
+        requestId: context.transport.bootstrapId,
+        expiresAt: new Date(
+          (await dependencies.remote?.bootstrap.capability(context.transport.bootstrapId))
+            ?.expiresAt ?? 0,
+        ).toISOString(),
+      }
+    },
+
+    async remoteDeviceBindingVerifyTotp(
+      context: OwnerMethodContext,
+      input: Record<string, unknown>,
+    ) {
+      if (context.transport.kind !== 'relay' || typeof input.code !== 'string')
+        throw new OwnerMethodError('INVALID_PARAMS')
+      const challengeId = typeof input.challengeId === 'string' ? input.challengeId : null
+      const pending = challengeId ? pendingTwoFactor.get(challengeId) : undefined
+      if (
+        !pending ||
+        pending.expiresAt <= Date.now() ||
+        pending.bootstrapId !== context.transport.bootstrapId ||
+        pending.clientPublicKey !== context.transport.clientPublicKey
+      ) {
+        if (challengeId) pendingTwoFactor.delete(challengeId)
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+      try {
+        const verify = (
+          dependencies.auth.api as unknown as {
+            verifyTOTP: (args: unknown) => Promise<unknown>
+          }
+        ).verifyTOTP
+        const verified = await verify({
+          body: { code: input.code },
+          headers: new Headers({ cookie: pending.cookie }),
+        })
+        const token =
+          isRecord(verified) && typeof verified.token === 'string' ? verified.token : null
+        if (!token) throw new Error('Missing verified session')
+        const resolved = await sessionFromToken(dependencies.auth, token)
+        if (!resolved) throw new Error('Missing verified session')
+        await context.authenticate({
+          ownerId: resolved.snapshot.user.id,
+          sessionId: resolved.snapshot.session.id,
+          sessionToken: resolved.token,
+        })
+        if (challengeId) pendingTwoFactor.delete(challengeId)
+        return { verified: true, requestId: context.transport.bootstrapId }
+      } catch {
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+    },
+
+    async remoteDeviceBindingVerifyRecoveryCode(
+      context: OwnerMethodContext,
+      input: Record<string, unknown>,
+    ) {
+      if (context.transport.kind !== 'relay' || typeof input.code !== 'string')
+        throw new OwnerMethodError('INVALID_PARAMS')
+      const challengeId = typeof input.challengeId === 'string' ? input.challengeId : null
+      const pending = challengeId ? pendingTwoFactor.get(challengeId) : undefined
+      if (
+        !pending ||
+        pending.expiresAt <= Date.now() ||
+        pending.bootstrapId !== context.transport.bootstrapId ||
+        pending.clientPublicKey !== context.transport.clientPublicKey
+      ) {
+        if (challengeId) pendingTwoFactor.delete(challengeId)
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+      try {
+        const verify = (
+          dependencies.auth.api as unknown as {
+            verifyBackupCode: (args: unknown) => Promise<unknown>
+          }
+        ).verifyBackupCode
+        const verified = await verify({
+          body: { code: input.code },
+          headers: new Headers({ cookie: pending.cookie }),
+        })
+        const token =
+          isRecord(verified) && typeof verified.token === 'string' ? verified.token : null
+        if (!token) throw new Error('Missing verified session')
+        const resolved = await sessionFromToken(dependencies.auth, token)
+        if (!resolved) throw new Error('Missing verified session')
+        await context.authenticate({
+          ownerId: resolved.snapshot.user.id,
+          sessionId: resolved.snapshot.session.id,
+          sessionToken: resolved.token,
+        })
+        if (challengeId) pendingTwoFactor.delete(challengeId)
+        return { verified: true, requestId: context.transport.bootstrapId }
+      } catch {
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+    },
+
+    async remoteDeviceBindingApprove(context: OwnerMethodContext, input: Record<string, unknown>) {
+      requireLocalOwner(context)
+      if (!dependencies.remote || !safeId(input.requestId))
+        throw new OwnerMethodError('INVALID_PARAMS')
+      const result = await dependencies.remote.approveBootstrap(input.requestId)
+      if (!result) throw new OwnerMethodError('RESOURCE_NOT_FOUND')
+      return { approved: true, deviceId: result.deviceId }
+    },
+
+    async remoteDeviceBindingReject(context: OwnerMethodContext, input: Record<string, unknown>) {
+      requireLocalOwner(context)
+      if (!dependencies.remote || !safeId(input.requestId))
+        throw new OwnerMethodError('INVALID_PARAMS')
+      if (!(await dependencies.remote.rejectBootstrap(input.requestId)))
+        throw new OwnerMethodError('RESOURCE_NOT_FOUND')
+      return { rejected: true }
+    },
   }
 
   async function threadMutation(
@@ -1255,6 +1534,9 @@ async function sessionFromToken(auth: Auth, token: string): Promise<ResolvedOwne
         id: value.user.id,
         email: value.user.email,
         name: value.user.name,
+        ...(value.user.twoFactorEnabled === undefined
+          ? {}
+          : { twoFactorEnabled: Boolean(value.user.twoFactorEnabled) }),
       },
       session: {
         id: value.session.id,
@@ -1267,4 +1549,39 @@ async function sessionFromToken(auth: Auth, token: string): Promise<ResolvedOwne
 
 function bearerHeaders(token: string): Headers {
   return new Headers({ authorization: `Bearer ${token}` })
+}
+
+function authCookie(headers: Headers): string | null {
+  const value =
+    typeof headers.getSetCookie === 'function'
+      ? headers.getSetCookie()[0]
+      : headers.get('set-cookie')?.split(',')[0]
+  if (!value) return null
+  const separator = value.indexOf(';')
+  return separator === -1 ? value : value.slice(0, separator)
+}
+
+async function generateRecoveryCodes(auth: Auth, owner: OwnerContext, password?: unknown) {
+  if (password !== undefined && typeof password !== 'string')
+    throw new OwnerMethodError('INVALID_PARAMS')
+  try {
+    const generate = (
+      auth.api as unknown as {
+        generateBackupCodes: (args: unknown) => Promise<unknown>
+      }
+    ).generateBackupCodes
+    const result = await generate({
+      body: password === undefined ? {} : { password },
+      headers: bearerHeaders(owner.sessionToken!),
+    })
+    if (
+      !isRecord(result) ||
+      !Array.isArray(result.backupCodes) ||
+      !result.backupCodes.every((code) => typeof code === 'string')
+    )
+      throw new Error('Invalid recovery code response')
+    return { recoveryCodes: result.backupCodes }
+  } catch {
+    throw new OwnerMethodError('AUTH_FAILURE')
+  }
 }

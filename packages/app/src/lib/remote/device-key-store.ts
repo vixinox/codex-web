@@ -1,7 +1,6 @@
 import {
-  generateKeyPair,
-  serializeKeyPair,
-  type SerializedKeyPair,
+  generatePersistentDeviceKeyPair,
+  serializePublicKey,
 } from '@codex-web/protocol/relay/crypto'
 
 export type DeviceKeyRecord = {
@@ -25,31 +24,41 @@ function openDatabase(): Promise<KeyDatabase> {
 }
 
 export async function createDeviceKey() {
-  const pair = await generateKeyPair()
-  const serialized = await serializeKeyPair(pair)
+  const pair = await generatePersistentDeviceKeyPair()
+  const publicKey = await serializePublicKey(pair.publicKey)
   const db = await openDatabase()
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
     tx.objectStore(STORE_NAME).put(
-      { deviceId: null, publicKey: serialized.publicKey, privateKey: pair.privateKey },
+      { deviceId: null, publicKey, privateKey: pair.privateKey },
       'current',
     )
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error ?? new Error('Unable to persist device key'))
   })
   db.close()
-  return { publicKey: serialized.publicKey }
+  return { publicKey }
 }
 
 export async function loadDeviceKey(): Promise<DeviceKeyRecord | null> {
-  const db = await openDatabase()
-  const value = await new Promise<DeviceKeyRecord | undefined>((resolve, reject) => {
-    const request = db.transaction(STORE_NAME).objectStore(STORE_NAME).get('current')
-    request.onsuccess = () => resolve(request.result as DeviceKeyRecord | undefined)
-    request.onerror = () => reject(request.error)
-  })
-  db.close()
-  return value ?? null
+  try {
+    const db = await openDatabase()
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const request = db.transaction(STORE_NAME).objectStore(STORE_NAME).get('current')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    db.close()
+    if (value === undefined) return null
+    if (!isDeviceKeyRecord(value)) {
+      await deleteStoredKey()
+      return null
+    }
+    return value
+  } catch {
+    await deleteStoredKey().catch(() => undefined)
+    return null
+  }
 }
 
 export async function setDeviceId(deviceId: string) {
@@ -66,6 +75,10 @@ export async function setDeviceId(deviceId: string) {
 }
 
 export async function clearDeviceKey() {
+  await deleteStoredKey()
+}
+
+async function deleteStoredKey() {
   const db = await openDatabase()
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
@@ -76,6 +89,15 @@ export async function clearDeviceKey() {
   db.close()
 }
 
-export function publicKeyFromSerialized(value: SerializedKeyPair) {
-  return value.publicKey
+function isDeviceKeyRecord(value: unknown): value is DeviceKeyRecord {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Partial<DeviceKeyRecord>
+  return (
+    (record.deviceId === null || typeof record.deviceId === 'string') &&
+    typeof record.publicKey === 'string' &&
+    record.publicKey.length > 0 &&
+    !!record.privateKey &&
+    typeof record.privateKey === 'object' &&
+    (record.privateKey as CryptoKey).extractable === false
+  )
 }

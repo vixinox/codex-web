@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate } from 'react-router'
 import { toast } from '@/components/ui/toast'
 import { useSession } from '@/lib/auth/auth-client'
@@ -8,6 +8,7 @@ import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-run
 import { CodexLogo } from '@/components/shared/codex-logo'
 import { OwnerManageScreen } from '@/app/owner/owner-manage-screen'
 import { createOwnerManagementClient } from '@/app/owner/owner-management-client'
+import { connectOwnerManagementRpc } from '@/lib/owner-ws/owner-management-client'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
@@ -83,17 +84,40 @@ export function LoginRoute() {
 
 export function OwnerManageRoute() {
   const { data: session, isPending } = useSession()
+  const [client, setClient] = useState<ReturnType<typeof createOwnerManagementClient> | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+  useEffect(() => {
+    if (isPending || !session?.session.token) return
+    let active = true
+    let rpc: Awaited<ReturnType<typeof connectOwnerManagementRpc>> | undefined
+    setConnectionError(null)
+    void connectOwnerManagementRpc(session.session.token)
+      .then((connected) => {
+        rpc = connected
+        if (active) setClient(createOwnerManagementClient(connected))
+        else connected.close()
+        return undefined
+      })
+      .catch((cause) => {
+        if (active)
+          setConnectionError(cause instanceof Error ? cause.message : 'Owner connection failed')
+      })
+    return () => {
+      active = false
+      rpc?.close()
+      setClient(null)
+    }
+  }, [isPending, session?.session.token])
   if (isPending) return pageFallback
   if (!session) return <Navigate to="/login" replace />
-  const rpc = async (method: string, params?: Record<string, unknown>) => {
-    const response = await fetch('/api/owner/method', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ method, params: params ?? {} }),
-    })
-    if (!response.ok) throw new Error(`Owner method failed (${response.status})`)
-    return response.json() as Promise<unknown>
-  }
-  return <OwnerManageScreen client={createOwnerManagementClient(rpc)} />
+  if (connectionError)
+    return (
+      <main className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground">
+        <p role="alert" className="text-sm text-destructive">
+          {connectionError}
+        </p>
+      </main>
+    )
+  if (!client) return pageFallback
+  return <OwnerManageScreen client={client} />
 }

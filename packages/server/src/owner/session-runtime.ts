@@ -14,6 +14,7 @@ export type OwnerTransport = {
   bootstrapId?: string
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
+  promoted?: boolean
   send(frame: string | Uint8Array): Promise<void> | void
   close(code?: number, reason?: string): void
   onMessage(listener: (frame: string | Uint8Array) => void): () => void
@@ -27,6 +28,7 @@ export class VirtualOwnerTransport implements OwnerTransport {
   bootstrapId?: string
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
+  promoted = false
   private readonly sendFrame: (frame: string | Uint8Array) => void
   private readonly closeTransport: (code?: number, reason?: string) => void
   private readonly messageListeners = new Set<(frame: string | Uint8Array) => void>()
@@ -237,6 +239,7 @@ export class OwnerSessionRuntime {
       return
     }
     this.expireProvisionalSessionIfNeeded()
+    if (this.closed) return
 
     const frame = parsed.frame
     if (!this.clientId) {
@@ -345,18 +348,7 @@ export class OwnerSessionRuntime {
         'remote.device.trust',
         'remote.device.binding.status',
         'remote.device.binding.verifyTotp',
-      ].includes(methodName)
-    ) {
-      await this.respondError(requestId, AUTH_FAILURE)
-      return
-    }
-    if (
-      this.options.provisional &&
-      ![
-        'owner.status',
-        'owner.session.open',
-        'remote.bootstrap.consume',
-        'remote.device.trust',
+        'remote.device.binding.verifyRecoveryCode',
       ].includes(methodName)
     ) {
       await this.respondError(requestId, AUTH_FAILURE)
@@ -411,7 +403,8 @@ export class OwnerSessionRuntime {
         this.startStream(streamId, output.stream, streamController)
       } else {
         await this.send({ type: 'response', requestId, result: output ?? null })
-        if (method.closeAfterResponse) this.shutdown(1000, 'session closed')
+        if (method.closeAfterResponse || this.transport.promoted)
+          this.shutdown(1000, this.transport.promoted ? 'paired' : 'session closed')
       }
     } catch (error) {
       const safeError = projectError(error, state.abortCode)
@@ -574,6 +567,7 @@ export class OwnerSessionRuntime {
         this.provisionalExpiryTimer = undefined
         this.session = null
         this.provisionalExpiresAt = undefined
+        this.shutdown(1008, 'SESSION_EXPIRED')
       },
       Math.max(0, this.provisionalExpiresAt - Date.now()),
     )
@@ -585,6 +579,7 @@ export class OwnerSessionRuntime {
     this.provisionalExpiryTimer = undefined
     this.session = null
     this.provisionalExpiresAt = undefined
+    this.shutdown(1008, 'SESSION_EXPIRED')
   }
 }
 

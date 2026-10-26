@@ -155,6 +155,21 @@ export class RemoteBootstrapStore {
     return entry.sessionExpiresAt
   }
 
+  async invalidateBinding(bootstrapId: string, clientPublicKey?: string) {
+    return this.withLock(async () => {
+      const state = await this.readState()
+      const index = state.entries.findIndex(
+        (entry) =>
+          entry.bootstrapId === bootstrapId &&
+          (clientPublicKey === undefined || entry.clientPublicKey === clientPublicKey),
+      )
+      if (index === -1) return false
+      state.entries.splice(index, 1)
+      await this.writeState(state)
+      return true
+    })
+  }
+
   private async readState(): Promise<BootstrapState> {
     try {
       const raw = await readFile(this.path(), 'utf8')
@@ -194,6 +209,7 @@ export class RemoteBootstrapStore {
           if ((statError as NodeJS.ErrnoException).code !== 'ENOENT') throw statError
         }
         if (Date.now() >= deadline) throw new Error('Bootstrap store is busy')
+        // oxlint-disable-next-line no-await-in-loop
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
     }
