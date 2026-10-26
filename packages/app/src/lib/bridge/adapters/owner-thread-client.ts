@@ -1,25 +1,16 @@
 import type { ThreadClient } from '../interfaces/thread'
 import { getOwnerBridge } from '../owner-runtime'
-import {
-  answerUserInput,
-  cancelTurn,
-  compactThread,
-  createThread,
-  fetchThread,
-  fetchThreadRuntimeStatus,
-  fetchThreads,
-  startTurn,
-} from '../http/threads'
+import * as threadBridge from '../http/threads'
 
 export const ownerThreadClient: ThreadClient = {
-  listThreads: (projectId) => fetchThreads(projectId),
-  createThread,
-  readThread: fetchThread,
-  readThreadStatus: fetchThreadRuntimeStatus,
-  startTurn,
-  cancelTurn,
-  compactThread,
-  answerUserInput,
+  listThreads: (projectId) => threadBridge.fetchThreads(projectId),
+  createThread: (...args) => threadBridge.createThread(...args),
+  readThread: (...args) => threadBridge.fetchThread(...args),
+  readThreadStatus: (...args) => threadBridge.fetchThreadRuntimeStatus(...args),
+  startTurn: (...args) => threadBridge.startTurn(...args),
+  cancelTurn: (...args) => threadBridge.cancelTurn(...args),
+  compactThread: (...args) => threadBridge.compactThread(...args),
+  answerUserInput: (...args) => threadBridge.answerUserInput(...args),
   subscribe(threadId, afterId, onEvent, onError) {
     const handle = getOwnerBridge().openStream(
       { method: 'events.subscribe', params: { scope: 'thread', threadId, afterId } },
