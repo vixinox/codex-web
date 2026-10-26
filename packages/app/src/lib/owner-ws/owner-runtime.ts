@@ -80,6 +80,7 @@ export type OwnerRuntime = {
   openStream(request: StreamRequest, handlers: StreamHandlers): StreamHandle
   cancelRequest(requestId: string): void
   cancelStream(streamId: string): void
+  subscribeNotification(listener: (method: string, params: unknown) => void): () => void
   close(reason?: string): void
   subscribe(listener: () => void): () => void
 }
@@ -111,6 +112,7 @@ export function createOwnerRuntime(
   const pending = new Map<string, PendingRequest>()
   const streams = new Map<string, ActiveStream>()
   const listeners = new Set<() => void>()
+  const notificationListeners = new Set<(method: string, params: unknown) => void>()
 
   const publish = () => listeners.forEach((listener) => listener())
   const setState = (next: OwnerTransportState) => {
@@ -180,6 +182,10 @@ export function createOwnerRuntime(
       else request.resolve(frame.result)
       return
     }
+    if (frame.type === 'notification') {
+      notificationListeners.forEach((listener) => listener(frame.method, frame.params))
+      return
+    }
     if (frame.type === 'stream.open') {
       const stream = streams.get(frame.requestId)
       if (stream) {
@@ -247,6 +253,7 @@ export function createOwnerRuntime(
       if (state === 'connecting') reject(error)
       shutdown('CONNECTION_CLOSED', error)
     }
+    if (nextSocket.readyState === OPEN) nextSocket.onopen(new Event('open'))
   }
 
   const connect = (next: OwnerTarget) => {
@@ -449,6 +456,10 @@ export function createOwnerRuntime(
     openStream,
     cancelRequest,
     cancelStream,
+    subscribeNotification: (listener) => {
+      notificationListeners.add(listener)
+      return () => notificationListeners.delete(listener)
+    },
     close: (reason = 'CLOSED') => shutdown(reason),
     subscribe: (listener) => {
       listeners.add(listener)

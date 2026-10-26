@@ -36,9 +36,11 @@ export type ThreadHistoryEvent = {
   message: { method: string; params?: Record<string, unknown>; id?: number | string }
 }
 
+export type ThreadEventCursor = { epoch: string; sequence: number }
+
 export type ThreadSnapshot = {
   thread: CodexThread
-  eventCursor: number
+  eventCursor: ThreadEventCursor
   historyEvents?: ThreadHistoryEvent[]
 }
 
@@ -46,11 +48,15 @@ export type ThreadRuntimeStatus = {
   threadId: string
   projectId: string | null
   status: 'idle' | 'inProgress' | 'completed' | 'failed'
-  eventCursor: number
+  eventCursor: ThreadEventCursor
   activeTurnId: string | null
 }
 
-export type ThreadEvent = { id: number; message: Record<string, unknown> }
+export type ThreadEvent = {
+  id: number
+  cursor: ThreadEventCursor
+  message: Record<string, unknown>
+}
 
 export type ThreadClient = {
   listThreads: (projectId: string | null) => Promise<readonly ThreadSummary[]>
@@ -79,8 +85,8 @@ export type ThreadClient = {
   ) => Promise<void>
   subscribe: (
     threadId: string,
-    afterId: number,
+    cursor: ThreadEventCursor,
     onEvent: (event: ThreadEvent) => void,
-    onError?: () => void,
+    onError?: (cursor?: ThreadEventCursor, reset?: boolean) => void,
   ) => () => void
 }

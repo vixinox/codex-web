@@ -44,7 +44,13 @@ export function useWorkspaceSidebarController(
         (() => {
           const stream = getOwnerBridge().openStream(
             { method: 'events.subscribe', params: { scope: 'workspace' } },
-            { onEvent: () => onEvent(new Event('workspace')) },
+            {
+              onEvent: (value) => {
+                if (!value || typeof value !== 'object') return
+                const method = (value as { method?: unknown }).method
+                if (typeof method === 'string') onEvent(new Event(method))
+              },
+            },
           )
           return () => stream.cancel()
         })(),

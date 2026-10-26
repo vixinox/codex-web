@@ -8,7 +8,12 @@ import {
   useThreadSessionSnapshot,
 } from '../state/thread-session-store'
 import { waitForThreadAvailability } from '@/lib/bridge/thread-availability'
-import type { ThreadClient, ThreadEvent, ThreadSnapshot } from '@/lib/bridge/interfaces/thread'
+import type {
+  ThreadClient,
+  ThreadEvent,
+  ThreadSnapshot,
+  ThreadEventCursor,
+} from '@/lib/bridge/interfaces/thread'
 import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 import { trackProductEvent } from '@/lib/connection/telemetry'
 
@@ -37,25 +42,34 @@ export function useThreadDetailController(
     registry.retain(projectId ?? null, threadId)
     let active = true
     let lastEventId = 0
-    let snapshotEventCursor = 0
+    let snapshotEventCursor: ThreadEventCursor = { epoch: '', sequence: 0 }
+    let lastEventCursor: ThreadEventCursor = snapshotEventCursor
     let sparseTurnIds = new Set<string>()
     let unsubscribe: () => void = () => undefined
     let recoveryTimer: number | null = null
     let recoveryAttempts = 0
     let recovering = false
+    let forceSnapshotRecovery = false
     const lifecycleMethods = new Set(['thread/archived', 'thread/deleted', 'thread/closed'])
-    const lifecycleEventIds = new Set<number>()
+    const lifecycleEventIds = new Set<string>()
     const receive = (event: ThreadEvent) => {
       if (!active) return
+      const eventCursor = event.cursor
+      if (eventCursor.epoch !== lastEventCursor.epoch) {
+        scheduleRecovery(eventCursor, true)
+        return
+      }
+      const eventKey = `${eventCursor.epoch}:${eventCursor.sequence}`
       const parsed = parseNotification(event.message)
       if (
-        event.id <= snapshotEventCursor &&
+        event.id <= snapshotEventCursor.sequence &&
         sparseTurnIds.size > 0 &&
         (!parsed.ok || !notificationReferencesTurn(parsed.value, sparseTurnIds))
       )
         return
       if (event.id <= lastEventId) return
       lastEventId = event.id
+      lastEventCursor = eventCursor
       transcriptDebug({
         phase: 'event',
         threadId,
@@ -65,24 +79,24 @@ export function useThreadDetailController(
       if (!parsed.ok) {
         session.applyEvent(
           { method: 'webcodex/protocol-error', params: { code: parsed.error } },
-          event.id,
+          eventKey,
         )
         return
       }
       if (lifecycleMethods.has(parsed.value.method)) {
-        if (lifecycleEventIds.has(event.id)) return
-        lifecycleEventIds.add(event.id)
+        if (lifecycleEventIds.has(eventKey)) return
+        lifecycleEventIds.add(eventKey)
         onThreadLifecycle?.(
           parsed.value.method as 'thread/archived' | 'thread/deleted' | 'thread/closed',
         )
         return
       }
-      session.applyEvent(parsed.value, event.id)
+      session.applyEvent(parsed.value, eventKey)
       transcriptDebug({ phase: 'turn', threadId, eventId: event.id, method: parsed.value.method })
     }
-    const subscribe = (afterId: number) => {
+    const subscribe = (cursor: ThreadEventCursor) => {
       unsubscribe()
-      unsubscribe = client.subscribe(threadId, afterId, receive, scheduleRecovery)
+      unsubscribe = client.subscribe(threadId, cursor, receive, scheduleRecovery)
     }
     const hydrateAndSubscribe = (response: ThreadSnapshot) => {
       trackProductEvent('thread_opened')
@@ -91,11 +105,13 @@ export function useThreadDetailController(
         id: event.id,
         message: { ...event.message, params: event.message.params ?? {} },
       }))
-      const hydration = session.hydrate(response.thread, response.eventCursor, historyEvents)
-      snapshotEventCursor = response.eventCursor
+      const eventCursor = normalizeCursor(response.eventCursor)
+      const hydration = session.hydrate(response.thread, eventCursor.sequence, historyEvents)
+      snapshotEventCursor = eventCursor
+      lastEventCursor = { ...eventCursor, sequence: hydration.replayAfterId }
       sparseTurnIds = hydration.sparseTurnIds
       lastEventId = hydration.replayAfterId
-      subscribe(hydration.replayAfterId)
+      subscribe({ ...response.eventCursor, sequence: hydration.replayAfterId })
     }
     const reconcileTimer = window.setInterval(() => {
       if (!active || document.visibilityState !== 'visible' || !session.state.isBusy || recovering)
@@ -103,8 +119,13 @@ export function useThreadDetailController(
       void client
         .readThreadStatus(projectId, threadId, controller.signal)
         .then((status) => {
-          if (!active || status.eventCursor <= lastEventId) return
-          return client.readThread(projectId, threadId, controller.signal).then(hydrateAndSubscribe)
+          if (!active) return undefined
+          const statusCursor = normalizeCursor(status.eventCursor)
+          if (statusCursor.epoch !== lastEventCursor.epoch || statusCursor.sequence > lastEventId)
+            return client
+              .readThread(projectId, threadId, controller.signal)
+              .then(hydrateAndSubscribe)
+          return undefined
         })
         .catch(() => undefined)
     }, STATUS_RECONCILE_INTERVAL_MS)
@@ -114,10 +135,17 @@ export function useThreadDetailController(
       try {
         const status = await client.readThreadStatus(projectId, threadId, controller.signal)
         if (!active) return
-        if (status.eventCursor > lastEventId) {
+        const statusCursor = normalizeCursor(status.eventCursor)
+        const mustReadSnapshot = forceSnapshotRecovery
+        forceSnapshotRecovery = false
+        if (
+          mustReadSnapshot ||
+          statusCursor.epoch !== lastEventCursor.epoch ||
+          statusCursor.sequence > lastEventId
+        ) {
           hydrateAndSubscribe(await client.readThread(projectId, threadId, controller.signal))
         } else {
-          subscribe(lastEventId)
+          subscribe({ ...lastEventCursor, sequence: lastEventId })
         }
         recoveryAttempts = 0
       } catch (error) {
@@ -139,8 +167,10 @@ export function useThreadDetailController(
         recovering = false
       }
     }
-    function scheduleRecovery() {
+    function scheduleRecovery(resetCursor?: ThreadEventCursor, reset = false) {
       trackProductEvent('sse_reconnected')
+      if (resetCursor) lastEventCursor = resetCursor
+      if (reset) forceSnapshotRecovery = true
       if (!active || recoveryTimer !== null || recovering) return
       recoveryTimer = window.setTimeout(() => {
         recoveryTimer = null
@@ -229,6 +259,10 @@ export function useThreadDetailController(
     cancelUserInput,
     inputErrors: snapshot.inputErrors,
   }
+}
+
+function normalizeCursor(value: ThreadEventCursor): ThreadEventCursor {
+  return value
 }
 
 function parseNotification(

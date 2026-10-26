@@ -12,17 +12,10 @@ const bridge = vi.hoisted(() => ({
   answerUserInput: vi.fn(),
 }))
 
-vi.mock('@/lib/bridge/http/skills', () => ({ fetchSkills: bridge.fetchSkills }))
-vi.mock('@/lib/bridge/events/event-source', () => ({
-  subscribeToEvents: bridge.subscribeToEvents,
-}))
-vi.mock('@/lib/bridge/http/threads', () => ({
-  startThread: bridge.startThread,
-  startTurn: bridge.startTurn,
-  fetchThread: bridge.fetchThread,
-  cancelTurn: bridge.cancelTurn,
-  compactThread: bridge.compactThread,
-  answerUserInput: bridge.answerUserInput,
+const ownerBridge = vi.hoisted(() => ({ request: vi.fn(), openStream: vi.fn() }))
+
+vi.mock('@/lib/bridge/owner-runtime', () => ({
+  getOwnerBridge: () => ownerBridge,
 }))
 vi.mock('./state/chat-selection-storage', () => ({
   readNewChatSelection: () => ({ model: 'gpt-5.6-sol', effort: 'medium' }),
@@ -55,7 +48,40 @@ describe('thread composer skills controller', () => {
     })
     bridge.fetchThread.mockResolvedValue({
       thread: { id: 'thread-1', turns: [] },
-      eventCursor: 0,
+      eventCursor: { epoch: 'e1', sequence: 0 },
+    })
+    ownerBridge.request.mockImplementation((method, params, options) => {
+      switch (method) {
+        case 'skills.list':
+          return bridge.fetchSkills(params?.projectId, options?.signal)
+        case 'threads.create':
+          return bridge.startThread(params, options?.signal)
+        case 'threads.send': {
+          const { threadId, ...input } = params
+          return bridge.startTurn(threadId, input, options?.signal)
+        }
+        case 'threads.read':
+          return bridge.fetchThread(params?.projectId, params?.threadId, options?.signal)
+        case 'threads.cancel':
+          return bridge.cancelTurn(params?.threadId, params?.turnId)
+        case 'threads.compact':
+          return bridge.compactThread(params?.threadId)
+        case 'userInput.respond':
+          return bridge.answerUserInput(params?.threadId, params?.requestId, params?.answers)
+        default:
+          throw new Error(`Unexpected Owner method: ${method}`)
+      }
+    })
+    ownerBridge.openStream.mockImplementation((_request, handlers) => {
+      const cancel = bridge.subscribeToEvents({
+        onEvent: handlers.onEvent,
+        onError: handlers.onError,
+      })
+      handlers.onOpen?.({
+        subscriptionId: 'test-subscription',
+        cursor: { epoch: 'e1', sequence: 0 },
+      })
+      return { streamId: 'test-stream', cancel: cancel ?? (() => undefined) }
     })
   })
 

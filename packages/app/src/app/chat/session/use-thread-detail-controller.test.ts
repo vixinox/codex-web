@@ -9,10 +9,65 @@ const bridge = vi.hoisted(() => ({
   subscribeToEvents: vi.fn(),
 }))
 
-vi.mock('@/lib/bridge/http/threads', () => bridge)
-vi.mock('@/lib/bridge/events/event-source', () => ({
-  subscribeToEvents: bridge.subscribeToEvents,
+const ownerBridge = vi.hoisted(() => ({ request: vi.fn(), openStream: vi.fn() }))
+
+vi.mock('@/lib/bridge/owner-runtime', () => ({
+  getOwnerBridge: () => ownerBridge,
 }))
+
+function cursor(value: unknown) {
+  return typeof value === 'number' ? { epoch: 'e1', sequence: value } : value
+}
+
+function snapshot(value: any) {
+  return { ...value, eventCursor: cursor(value.eventCursor) }
+}
+
+function status(value: any) {
+  return { ...value, eventCursor: cursor(value.eventCursor) }
+}
+
+function installOwnerBridge() {
+  ownerBridge.request.mockImplementation((method, params, options) => {
+    switch (method) {
+      case 'threads.read':
+        return bridge
+          .fetchThread(params?.projectId, params?.threadId, options?.signal)
+          .then(snapshot)
+      case 'threads.status':
+        return bridge
+          .fetchThreadRuntimeStatus(params?.projectId, params?.threadId, options?.signal)
+          .then(status)
+      case 'threads.cancel':
+        return bridge.cancelTurn(params?.threadId, params?.turnId)
+      case 'userInput.respond':
+        return bridge.answerUserInput(params?.threadId, params?.requestId, params?.answers)
+      default:
+        throw new Error(`Unexpected Owner method: ${method}`)
+    }
+  })
+  ownerBridge.openStream.mockImplementation((request, handlers) => {
+    const params = request.params as { threadId?: string; cursor?: { sequence?: number } }
+    const threadId = params.threadId ?? 'thread-1'
+    const afterId = params.cursor?.sequence ?? 0
+    handlers.onOpen?.({
+      subscriptionId: 'subscription-1',
+      cursor: { epoch: 'e1', sequence: afterId },
+    })
+    const cancel = bridge.subscribeToEvents({
+      url: `/api/events?threadId=${threadId}&afterId=${afterId}`,
+      onEvent: (event: MessageEvent) => {
+        const sequence = Number(event.lastEventId)
+        handlers.onEvent({
+          cursor: { epoch: 'e1', sequence },
+          event: JSON.parse(String(event.data)),
+        })
+      },
+      onError: handlers.onError,
+    })
+    return { streamId: 'stream-1', cancel: cancel ?? (() => undefined) }
+  })
+}
 
 import {
   applyCodexNotification,
@@ -31,9 +86,12 @@ const historyEvent = (id: number, method: string, params: Record<string, unknown
 })
 
 describe('Thread detail event synchronization', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    installOwnerBridge()
+  })
 
-  it('recovers an SSE connection through status before hydrating only when needed', async () => {
+  it('resumes a disconnected Owner event stream with the last acknowledged cursor', async () => {
     bridge.fetchThread.mockResolvedValue({
       thread: { id: 'thread-1', turns: [] },
       eventCursor: 2,
@@ -46,18 +104,26 @@ describe('Thread detail event synchronization', () => {
       activeTurnId: null,
     })
     let onError: (() => void) | undefined
-    bridge.subscribeToEvents.mockImplementation(({ onError: error }) => {
-      onError = error
-      return () => undefined
+    ownerBridge.openStream.mockImplementationOnce((_request, handlers) => {
+      handlers.onOpen?.({ subscriptionId: 'sub-1', cursor: { epoch: 'e1', sequence: 2 } })
+      onError = () => handlers.onError?.(new Error('stream closed'))
+      return { streamId: 'stream-1', cancel: vi.fn() }
+    })
+    ownerBridge.openStream.mockImplementation((_request, handlers) => {
+      handlers.onOpen?.({ subscriptionId: 'sub-1', cursor: { epoch: 'e1', sequence: 2 } })
+      return { streamId: 'stream-2', cancel: vi.fn() }
     })
     const rendered = renderHook(() =>
       useThreadDetailController(ownerThreadClient, 'project-1', 'thread-1'),
     )
-    await waitFor(() => expect(bridge.subscribeToEvents).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(ownerBridge.openStream).toHaveBeenCalledTimes(1))
     act(() => onError?.())
-    await waitFor(() => expect(bridge.fetchThreadRuntimeStatus).toHaveBeenCalledTimes(1), {
-      timeout: 3_000,
+    await waitFor(() => expect(ownerBridge.openStream).toHaveBeenCalledTimes(2))
+    expect(ownerBridge.openStream.mock.calls[1]?.[0]).toEqual({
+      method: 'events.resume',
+      params: { subscriptionId: 'sub-1', cursor: { epoch: 'e1', sequence: 2 } },
     })
+    expect(bridge.fetchThreadRuntimeStatus).not.toHaveBeenCalled()
     expect(bridge.fetchThread).toHaveBeenCalledTimes(1)
     rendered.unmount()
   })

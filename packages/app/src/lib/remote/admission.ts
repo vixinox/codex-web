@@ -32,12 +32,49 @@ export type AdmissionState =
 export async function openProvisionalSession(
   connection: AdmissionConnection,
   credentials: ProvisionalLogin,
-): Promise<PendingTwoFactor | { authenticated: true }> {
+): Promise<PendingTwoFactor | { authenticated: true; sessionToken: string; ownerId: string }> {
   const result = await connection.request<
-    { pendingTwoFactor: PendingTwoFactor } | { token: string; session: unknown }
+    { pendingTwoFactor: PendingTwoFactor } | { token: string; session: { user?: { id?: unknown } } }
   >('owner.session.open', credentials)
   if ('pendingTwoFactor' in result) return result.pendingTwoFactor
-  return { authenticated: true }
+  if (typeof result.token !== 'string' || typeof result.session?.user?.id !== 'string')
+    throw new Error('Owner authentication returned an invalid session.')
+  return { authenticated: true, sessionToken: result.token, ownerId: result.session.user.id }
+}
+
+export async function authenticateRemoteDevice(input: {
+  connection: AdmissionConnection
+  credentials: ProvisionalLogin
+  factor?: { kind: 'totp' | 'recovery'; code: string }
+}): Promise<{ ownerId: string; sessionToken: string }> {
+  const pending = await openProvisionalSession(input.connection, input.credentials)
+  let sessionToken = 'sessionToken' in pending ? pending.sessionToken : null
+  let ownerId = 'ownerId' in pending ? pending.ownerId : null
+  if ('challengeId' in pending) {
+    if (!input.factor?.code) throw new Error('A verification code is required.')
+    const method =
+      input.factor.kind === 'totp'
+        ? 'remote.device.binding.verifyTotp'
+        : 'remote.device.binding.verifyRecoveryCode'
+    const verified = await input.connection.request<{ sessionToken?: unknown; ownerId?: unknown }>(
+      method,
+      {
+        challengeId: pending.challengeId,
+        code: input.factor.code,
+      },
+    )
+    sessionToken = typeof verified.sessionToken === 'string' ? verified.sessionToken : null
+    ownerId = typeof verified.ownerId === 'string' ? verified.ownerId : null
+  }
+  if (!ownerId) {
+    const status = await input.connection.request<{ authenticated?: boolean; ownerId?: string }>(
+      'owner.status',
+    )
+    if (status.authenticated === true && typeof status.ownerId === 'string')
+      ownerId = status.ownerId
+  }
+  if (!sessionToken || !ownerId) throw new Error('Owner authentication did not complete.')
+  return { ownerId, sessionToken }
 }
 
 export async function promoteProvisionalDevice(input: {
@@ -46,18 +83,13 @@ export async function promoteProvisionalDevice(input: {
   factor: { kind: 'totp' | 'recovery'; code: string }
   publicKey: string
   trustEpoch: number
-}): Promise<PairedAdmission> {
-  const pending = await openProvisionalSession(input.connection, input.credentials)
-  if (!('challengeId' in pending)) {
-    throw new Error('Owner authentication did not require a binding challenge.')
-  }
-  const method =
-    input.factor.kind === 'totp'
-      ? 'remote.device.binding.verifyTotp'
-      : 'remote.device.binding.verifyRecoveryCode'
-  await input.connection.request(method, {
-    challengeId: pending.challengeId,
-    code: input.factor.code,
+  nodeId?: string
+  relayUrl?: string
+}): Promise<PairedAdmission & { sessionToken: string }> {
+  const authentication = await authenticateRemoteDevice({
+    connection: input.connection,
+    credentials: input.credentials,
+    factor: input.factor,
   })
   const challenge = await input.connection.request<{ challenge: string }>('remote.device.trust', {
     publicKey: input.publicKey,
@@ -70,14 +102,16 @@ export async function promoteProvisionalDevice(input: {
     !result ||
     typeof result.deviceId !== 'string' ||
     typeof result.clientToken !== 'string' ||
-    !Number.isSafeInteger(result.trustEpoch) ||
     typeof result.ownerId !== 'string'
   )
     throw new Error('Owner trust promotion returned an invalid result.')
+  const trustEpoch = Number.isSafeInteger(result.trustEpoch) ? result.trustEpoch : input.trustEpoch
   await setPairedDevice({
     deviceId: result.deviceId,
     pairedClientToken: result.clientToken,
-    trustEpoch: result.trustEpoch,
+    trustEpoch,
+    ...(input.nodeId ? { nodeId: input.nodeId } : {}),
+    ...(input.relayUrl ? { relayUrl: input.relayUrl } : {}),
   })
-  return result
+  return { ...result, trustEpoch, sessionToken: authentication.sessionToken }
 }

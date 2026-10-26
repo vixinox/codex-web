@@ -1339,7 +1339,12 @@ export function createOwnerApplicationServices(
           sessionToken: resolved.token,
         })
         if (challengeId) pendingTwoFactor.delete(challengeId)
-        return { verified: true, requestId: context.transport.bootstrapId }
+        return {
+          verified: true,
+          requestId: context.transport.bootstrapId,
+          ownerId: resolved.snapshot.user.id,
+          sessionToken: resolved.token,
+        }
       } catch {
         throw new OwnerMethodError('AUTH_FAILURE')
       }
@@ -1383,7 +1388,12 @@ export function createOwnerApplicationServices(
           sessionToken: resolved.token,
         })
         if (challengeId) pendingTwoFactor.delete(challengeId)
-        return { verified: true, requestId: context.transport.bootstrapId }
+        return {
+          verified: true,
+          requestId: context.transport.bootstrapId,
+          ownerId: resolved.snapshot.user.id,
+          sessionToken: resolved.token,
+        }
       } catch {
         throw new OwnerMethodError('AUTH_FAILURE')
       }

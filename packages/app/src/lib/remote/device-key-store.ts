@@ -1,7 +1,4 @@
-import {
-  generatePersistentDeviceKeyPair,
-  serializePublicKey,
-} from '@codex-web/protocol/relay/crypto'
+import { generatePersistentDeviceKeyPair, serializePublicKey } from './relay-crypto'
 
 export type DeviceKeyRecord = {
   deviceId: string | null
@@ -9,6 +6,8 @@ export type DeviceKeyRecord = {
   privateKey: CryptoKey
   pairedClientToken: string | null
   trustEpoch: number | null
+  nodeId: string | null
+  relayUrl: string | null
 }
 
 type KeyDatabase = IDBDatabase
@@ -38,6 +37,8 @@ export async function createDeviceKey() {
         privateKey: pair.privateKey,
         pairedClientToken: null,
         trustEpoch: null,
+        nodeId: null,
+        relayUrl: null,
       },
       'current',
     )
@@ -66,6 +67,8 @@ export async function loadDeviceKey(): Promise<DeviceKeyRecord | null> {
       ...value,
       pairedClientToken: (value as Partial<DeviceKeyRecord>).pairedClientToken ?? null,
       trustEpoch: (value as Partial<DeviceKeyRecord>).trustEpoch ?? null,
+      nodeId: (value as Partial<DeviceKeyRecord>).nodeId ?? null,
+      relayUrl: (value as Partial<DeviceKeyRecord>).relayUrl ?? null,
     }
   } catch {
     await deleteStoredKey().catch(() => undefined)
@@ -90,7 +93,15 @@ export async function setPairedDevice(input: {
   deviceId: string
   pairedClientToken: string
   trustEpoch: number
+  nodeId?: string
+  relayUrl?: string
 }) {
+  const record = await loadDeviceKey()
+  if (!record) throw new Error('Device key is missing')
+  await putDeviceKey({ ...record, ...input })
+}
+
+export async function setRemoteTarget(input: { nodeId: string; relayUrl: string }) {
   const record = await loadDeviceKey()
   if (!record) throw new Error('Device key is missing')
   await putDeviceKey({ ...record, ...input })
@@ -143,6 +154,10 @@ function isDeviceKeyRecord(value: unknown): value is DeviceKeyRecord {
       typeof record.pairedClientToken === 'string') &&
     (record.trustEpoch === undefined ||
       record.trustEpoch === null ||
-      (Number.isSafeInteger(record.trustEpoch) && (record.trustEpoch as number) >= 0))
+      (Number.isSafeInteger(record.trustEpoch) && (record.trustEpoch as number) >= 0)) &&
+    (record.nodeId === undefined || record.nodeId === null || typeof record.nodeId === 'string') &&
+    (record.relayUrl === undefined ||
+      record.relayUrl === null ||
+      typeof record.relayUrl === 'string')
   )
 }

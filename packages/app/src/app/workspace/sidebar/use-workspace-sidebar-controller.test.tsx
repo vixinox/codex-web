@@ -16,15 +16,10 @@ const eventSource = vi.hoisted(() => ({
   current: null as { onEvent: (event: Event) => void } | null,
 }))
 
-vi.mock('@/lib/bridge/http/projects', () => bridge)
-vi.mock('@/lib/bridge/http/threads', () => bridge)
-vi.mock('@/lib/bridge/events/event-source', () => ({
-  subscribeToEvents: vi.fn((subscription: { onEvent: (event: Event) => void }) => {
-    eventSource.current = subscription
-    return () => {
-      if (eventSource.current === subscription) eventSource.current = null
-    }
-  }),
+const ownerBridge = vi.hoisted(() => ({ request: vi.fn(), openStream: vi.fn() }))
+
+vi.mock('@/lib/bridge/owner-runtime', () => ({
+  getOwnerBridge: () => ownerBridge,
 }))
 
 const runtime = {
@@ -54,6 +49,38 @@ describe('useWorkspaceSidebarController optimistic mutations', () => {
           : [{ id: 't1', projectId: 'p1', title: 'Chat', status: 'idle', updatedAt: 1 }],
       ),
     )
+    ownerBridge.request.mockImplementation((method, params, options) => {
+      switch (method) {
+        case 'projects.list':
+          return bridge.fetchProjects(options?.signal)
+        case 'projects.create':
+          return bridge.createProject(params?.name)
+        case 'projects.rename':
+          return bridge.renameProject(params?.projectId, params?.name)
+        case 'projects.delete':
+          return bridge.deleteProject(params?.projectId)
+        case 'threads.list':
+          return bridge.fetchThreads(params?.projectId, options?.signal, params?.archived)
+        case 'threads.archive':
+          return bridge.archiveThread(params?.projectId, params?.threadId)
+        case 'threads.delete':
+          return bridge.deleteThread(params?.projectId, params?.threadId)
+        default:
+          throw new Error(`Unexpected Owner method: ${method}`)
+      }
+    })
+    ownerBridge.openStream.mockImplementation((_request, handlers) => {
+      const subscription = {
+        onEvent: (event: Event) => handlers.onEvent({ method: event.type, params: {} }),
+      }
+      eventSource.current = subscription
+      return {
+        streamId: 'workspace-stream',
+        cancel: () => {
+          if (eventSource.current === subscription) eventSource.current = null
+        },
+      }
+    })
   })
 
   it('shows a project immediately and reconciles it with the server response', async () => {

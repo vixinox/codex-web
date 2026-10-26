@@ -1,9 +1,4 @@
-import {
-  deriveSessionKey,
-  decryptPayload,
-  encryptPayload,
-  importPublicKey,
-} from '@codex-web/protocol/relay/crypto'
+import { deriveSessionKey, decryptPayload, encryptPayload, importPublicKey } from './relay-crypto'
 import {
   encodeFrame,
   isEncryptedFrame,

@@ -87,4 +87,27 @@ describe('Owner runtime transport', () => {
     expect(socket.sent.some((value) => value.includes('"type":"cancel"'))).toBe(true)
     vi.useRealTimers()
   })
+
+  it('forwards owner notifications to lifecycle listeners', async () => {
+    const socket = new FakeSocket()
+    const runtime = createOwnerRuntime(() => socket)
+    const connection = runtime.connect({ url: 'ws://owner.test' })
+    socket.open()
+    ready(socket)
+    await connection
+    const onNotification = vi.fn()
+    const unsubscribe = runtime.subscribeNotification(onNotification)
+
+    socket.receive({
+      type: 'notification',
+      method: 'remote.device.paired',
+      params: { deviceId: 'device-1', clientToken: 'token-1' },
+    })
+
+    expect(onNotification).toHaveBeenCalledWith('remote.device.paired', {
+      deviceId: 'device-1',
+      clientToken: 'token-1',
+    })
+    unsubscribe()
+  })
 })

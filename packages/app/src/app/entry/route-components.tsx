@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
-import { Navigate } from 'react-router'
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
+import { Navigate, useLocation, useNavigate } from 'react-router'
 import { toast } from '@/components/ui/toast'
 import { useSession } from '@/lib/auth/auth-client'
 import { LoginScreen } from '@/app/composition/screens/login-screen'
@@ -9,6 +9,9 @@ import { CodexLogo } from '@/components/shared/codex-logo'
 import { OwnerManageScreen } from '@/app/owner/owner-manage-screen'
 import { createOwnerManagementClient } from '@/app/owner/owner-management-client'
 import { useOwnerRuntime } from '@/lib/owner-ws/use-owner-runtime'
+import { getRemoteBootstrap } from './bootstrap'
+import { Button } from '@/components/ui/button'
+import { loadDeviceKey } from '@/lib/remote/device-key-store'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
@@ -40,11 +43,13 @@ export function RootRoute() {
 
 export function CandidateRoute() {
   const { data: session, isPending } = useSession()
+  const location = useLocation()
 
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
-  if (!session) return <Navigate to="/login" replace />
+  const remoteOwnerId = (location.state as { remoteOwnerId?: unknown } | null)?.remoteOwnerId
+  if (!session && typeof remoteOwnerId !== 'string') return <Navigate to="/login" replace />
 
-  return <AuthenticatedWorkspace userId={session.user.id} />
+  return <AuthenticatedWorkspace userId={session?.user.id ?? (remoteOwnerId as string)} />
 }
 
 export function AuthenticatedWorkspace({ userId }: { userId: string }) {
@@ -85,7 +90,130 @@ export function LoginRoute() {
   const { data: session, isPending } = useSession()
 
   if (isPending) return <div className="min-h-svh bg-background" aria-label="Loading session" />
+  if (!session && isRemoteEntry()) return <RemoteLoginRoute />
+  if (!session) return <PairedRemoteLoginGate />
   return session ? <Navigate to="/app" replace /> : <LoginScreen />
+}
+
+function isRemoteEntry() {
+  return Boolean(getRemoteBootstrap())
+}
+
+function PairedRemoteLoginGate() {
+  const [checked, setChecked] = useState(false)
+  const [paired, setPaired] = useState(false)
+  useEffect(() => {
+    let active = true
+    void loadDeviceKey().then((record) => {
+      if (!active) return
+      setPaired(
+        Boolean(record?.pairedClientToken && record.deviceId && record.nodeId && record.relayUrl),
+      )
+      setChecked(true)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+  if (!checked) return pageFallback
+  return paired ? <RemoteLoginRoute /> : <LoginScreen />
+}
+
+function RemoteLoginRoute() {
+  const navigate = useNavigate()
+  const runtime = useOwnerRuntime(undefined)
+  const remoteBootstrap = getRemoteBootstrap()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [factor, setFactor] = useState<'totp' | 'recovery' | 'approval'>('totp')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const requiresPairingFactor = Boolean(remoteBootstrap) && factor !== 'approval'
+  if (runtime.status === 'connecting' || runtime.status === 'idle') return pageFallback
+  if (runtime.status === 'failed')
+    return <main className="p-8 text-destructive">{runtime.error}</main>
+  if (!runtime.isRemote) return <LoginScreen />
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await runtime.authenticateRemoteDevice({
+        credentials: { email, password },
+        ...(factor === 'approval'
+          ? { factor: { kind: 'approval' as const } }
+          : code
+            ? { factor: { kind: factor, code } }
+            : {}),
+      })
+      await navigate('/app', { replace: true, state: { remoteOwnerId: result.ownerId } })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Remote authentication failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <main className="flex min-h-svh items-center justify-center bg-background p-6">
+      <form
+        onSubmit={submit}
+        className="flex w-full max-w-sm flex-col gap-4 rounded-xl border bg-card p-6"
+      >
+        <h1 className="text-lg font-semibold">Connect to your Owner</h1>
+        <label className="grid gap-2 text-sm">
+          Email
+          <input
+            className="rounded-md border bg-background px-3 py-2"
+            type="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </label>
+        <label className="grid gap-2 text-sm">
+          Password
+          <input
+            className="rounded-md border bg-background px-3 py-2"
+            type="password"
+            required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </label>
+        <label className="grid gap-2 text-sm">
+          Verification code
+          <input
+            className="rounded-md border bg-background px-3 py-2"
+            autoComplete="one-time-code"
+            required={requiresPairingFactor}
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+          />
+        </label>
+        <label className="grid gap-2 text-sm">
+          Verification method
+          <select
+            className="rounded-md border bg-background px-3 py-2"
+            value={factor}
+            onChange={(event) => setFactor(event.target.value as 'totp' | 'recovery' | 'approval')}
+          >
+            <option value="totp">Authenticator code</option>
+            <option value="recovery">Recovery code</option>
+            {remoteBootstrap && <option value="approval">Approve on Owner machine</option>}
+          </select>
+        </label>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        <Button type="submit" disabled={busy || runtime.status !== 'ready'}>
+          {busy ? 'Connecting…' : requiresPairingFactor ? 'Verify and pair device' : 'Connect'}
+        </Button>
+      </form>
+    </main>
+  )
 }
 
 export function OwnerManageRoute() {
@@ -98,15 +226,15 @@ export function OwnerManageRoute() {
       setConnectionError(null)
       setClient(
         createOwnerManagementClient({
-          request: (method, params) => ownerRuntime.runtime.request(method, params),
-          close: () => ownerRuntime.runtime.close('management closed'),
+          request: (method, params) => ownerRuntime.request(method, params),
+          close: () => ownerRuntime.close('management closed'),
         }),
       )
     } else {
       setClient(null)
       if (ownerRuntime.status === 'failed') setConnectionError(ownerRuntime.error)
     }
-  }, [ownerRuntime.error, ownerRuntime.runtime, ownerRuntime.status])
+  }, [ownerRuntime.close, ownerRuntime.error, ownerRuntime.request, ownerRuntime.status])
   if (isPending) return pageFallback
   if (!session) return <Navigate to="/login" replace />
   if (connectionError)

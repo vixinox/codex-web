@@ -7,9 +7,10 @@ import type {
   ThreadRuntimeStatus,
   ThreadSnapshot,
   ThreadSummary,
+  ThreadEventCursor,
 } from '@/lib/bridge/interfaces/thread'
 
-type EventEnvelope = { cursor?: unknown; event?: unknown }
+type EventEnvelope = { cursor?: unknown; event?: unknown; method?: unknown; params?: unknown }
 
 /** Owner-backed Thread domain adapter. It owns event cursor and subscription recovery. */
 export const ownerThreadDomainAdapter: ThreadClient = {
@@ -60,28 +61,38 @@ export const ownerThreadDomainAdapter: ThreadClient = {
       { mutation: true },
     )
   },
-  subscribe(threadId, afterId, onEvent, onError) {
-    let cursor = afterId
+  subscribe(threadId, initialCursor, onEvent, onError) {
+    let cursor = initialCursor
     let subscriptionId: string | null = null
     let current: StreamHandle | null = null
     let cancelled = false
     let recovering = false
-    const seen = new Set<number>()
+    const seen = new Set<string>()
 
     const receive = (value: unknown) => {
       const envelope = isRecord(value) ? (value as EventEnvelope) : {}
-      const nextCursor = typeof envelope.cursor === 'number' ? envelope.cursor : undefined
+      const resetParams =
+        envelope.method === 'events.reset' && isRecord(envelope.params) ? envelope.params : null
+      const nextCursor =
+        parseCursor(envelope.cursor) ?? (resetParams ? parseCursor(resetParams.cursor) : null)
+      if (envelope.method === 'events.reset') {
+        if (nextCursor) cursor = nextCursor
+        onError?.(nextCursor ?? undefined, true)
+        return
+      }
       const message = envelope.event ?? value
-      if (nextCursor === undefined || !isRecord(message)) return
+      if (!nextCursor || !isRecord(message)) return
       cursor = nextCursor
-      if (seen.has(nextCursor)) return
-      seen.add(nextCursor)
-      if (seen.size > 2048) seen.delete(seen.values().next().value as number)
+      const eventKey = `${nextCursor.epoch}:${nextCursor.sequence}`
+      if (seen.has(eventKey)) return
+      seen.add(eventKey)
+      if (seen.size > 2048) seen.delete(seen.values().next().value as string)
       const method = message.method
       const params = message.params
       if (typeof method !== 'string' || !isRecord(params)) return
       onEvent({
-        id: nextCursor,
+        id: nextCursor.sequence,
+        cursor: nextCursor,
         message: {
           method,
           params,
@@ -102,7 +113,7 @@ export const ownerThreadDomainAdapter: ThreadClient = {
           onOpen: (meta) => {
             if (!isRecord(meta)) return
             if (typeof meta.subscriptionId === 'string') subscriptionId = meta.subscriptionId
-            if (typeof meta.cursor === 'number') cursor = meta.cursor
+            cursor = parseCursor(meta.cursor) ?? cursor
           },
           onEvent: receive,
           onError: () => {
@@ -112,19 +123,13 @@ export const ownerThreadDomainAdapter: ThreadClient = {
             }
             recovering = true
             current = null
-            void getOwnerBridge()
-              .request<{ subscriptionId: string }>('events.resume', {
-                subscriptionId,
-                cursor,
-              })
-              .then(() => {
-                if (cancelled) return
-                open('events.resume', { subscriptionId, cursor })
-              })
-              .catch(() => onError?.())
-              .finally(() => {
-                recovering = false
-              })
+            if (!subscriptionId) {
+              recovering = false
+              onError?.()
+              return
+            }
+            open('events.resume', { subscriptionId, cursor })
+            recovering = false
           },
           onClose: (reason) => {
             if (cancelled || reason === 'REQUEST_CANCELLED') return
@@ -134,13 +139,25 @@ export const ownerThreadDomainAdapter: ThreadClient = {
       )
     }
 
-    open('events.subscribe', { scope: 'thread', threadId, afterId })
+    open('events.subscribe', { scope: 'thread', threadId, cursor: initialCursor })
     return () => {
       cancelled = true
       current?.cancel()
       current = null
     }
   },
+}
+
+function parseCursor(value: unknown): ThreadEventCursor | null {
+  if (
+    !isRecord(value) ||
+    typeof value.epoch !== 'string' ||
+    !value.epoch ||
+    !Number.isSafeInteger(value.sequence) ||
+    (value.sequence as number) < 0
+  )
+    return null
+  return { epoch: value.epoch, sequence: value.sequence as number }
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
