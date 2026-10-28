@@ -10,7 +10,8 @@
     "test:integration": "tsx --test src/**/*.integration.ts",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:reset": "node scripts/run-with-env.mjs tsx scripts/reset-local-database.ts",
-    "account:create": "node scripts/run-with-env.mjs tsx scripts/create-account.ts"
+    "account:create": "node scripts/run-with-env.mjs tsx scripts/create-account.ts",
+    "owner:manage": "node scripts/run-with-env.mjs tsx scripts/owner-cli.ts"
   },
   "dependencies": {
     "@codex-web/protocol": "workspace:*",

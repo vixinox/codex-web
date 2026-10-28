@@ -1,13 +1,11 @@
 import 'dotenv/config'
 import process from 'node:process'
-import { createHmac, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import readline from 'node:readline/promises'
 
 import { createAuth } from '../src/auth.js'
 import { loadServerConfig } from '../src/config.js'
 import { createDatabase } from '../src/database.js'
-import { RemoteTrustStore } from '../src/remote/trust-store.js'
-import { RemoteBootstrapStore } from '../src/remote/bootstrap-store.js'
 
 function parseArgs(args: string[]) {
   const options: Record<string, string> = {}
@@ -147,42 +145,10 @@ async function main() {
       console.log(`Password: ${password}`)
       console.log('WARNING: This generated password will only be displayed once!')
     }
-    if (config.remoteRelayUrl && config.remoteRelayOwnerToken) {
-      const identity = await new RemoteTrustStore(config.dataRoot).identity()
-      const capability = await new RemoteBootstrapStore(config.dataRoot).issue(
-        identity.nodeId,
-        identity.trustEpoch,
-      )
-      if (!config.remoteAppUrl) throw new Error('REMOTE_APP_REQUIRED')
-      if (!config.remoteAppUrl.startsWith('https://')) throw new Error('INVALID_REMOTE_APP_URL')
-      const bootstrapUrl = new URL(config.remoteAppUrl)
-      bootstrapUrl.hash = new URLSearchParams({
-        bootstrapId: capability.bootstrapId,
-        nodeId: identity.nodeId,
-        trustEpoch: String(identity.trustEpoch),
-        relayUrl: config.remoteRelayUrl,
-        clientToken: signBootstrapToken(config.remoteRelayOwnerToken, {
-          nodeId: identity.nodeId,
-          trustEpoch: identity.trustEpoch,
-          role: 'client',
-          admission: 'bootstrap',
-          purpose: 'bootstrap-attach',
-          bootstrapId: capability.bootstrapId,
-          expiresAt: capability.expiresAt,
-        }),
-      }).toString()
-      console.log(`Bootstrap URL (one-time): ${bootstrapUrl.toString()}`)
-    }
     console.log('=========================================\n')
   } finally {
     database.driver.close()
   }
-}
-
-function signBootstrapToken(secret: string, claims: Record<string, string | number>) {
-  const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url')
-  const signature = createHmac('sha256', secret).update(encoded).digest('base64url')
-  return `${encoded}.${signature}`
 }
 
 main().catch((error: unknown) => {

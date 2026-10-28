@@ -11,7 +11,7 @@ export type OwnerTransport = {
   origin?: string
   pairedDeviceId?: string
   e2eeVerified?: boolean
-  bootstrapId?: string
+  loginCandidate?: boolean
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
   promoted?: boolean
@@ -25,10 +25,10 @@ export class VirtualOwnerTransport implements OwnerTransport {
   readonly kind = 'relay' as const
   pairedDeviceId: string
   readonly e2eeVerified = true
-  bootstrapId?: string
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
   promoted = false
+  loginCandidate = false
   private readonly sendFrame: (frame: string | Uint8Array) => void
   private readonly closeTransport: (code?: number, reason?: string) => void
   private readonly messageListeners = new Set<(frame: string | Uint8Array) => void>()
@@ -93,6 +93,7 @@ export type OwnerAdmission = {
   ownerId: string
   sessionId: string
   sessionToken?: string
+  setupOnly?: boolean
 }
 
 export type OwnerStream = {
@@ -107,9 +108,11 @@ export type OwnerStreamResult = {
 
 export type OwnerMethodContext = {
   readonly owner: OwnerContext | null
+  readonly connectionId: string
   readonly transport: OwnerTransport
   readonly signal: AbortSignal
   authenticate(admission: OwnerAdmission): Promise<void> | void
+  unauthenticate(): void
 }
 
 export type OwnerMethodDefinition = {
@@ -128,26 +131,6 @@ export type OwnerSessionRuntimeOptions = {
   maxQueuedBytes?: number
   defaultRequestTimeoutMs?: number
   resumeSession?: (token: string, transport: OwnerTransport) => Promise<OwnerAdmission | null>
-  provisional?: {
-    bootstrapId: string
-    nodeId: string
-    trustEpoch: number
-    clientPublicKey: string
-    store: {
-      bindLogin: (
-        bootstrapId: string,
-        nodeId: string,
-        trustEpoch: number,
-        clientPublicKey: string,
-      ) => Promise<number | null>
-      sessionExpiry: (
-        bootstrapId: string,
-        nodeId: string,
-        trustEpoch: number,
-        clientPublicKey: string,
-      ) => Promise<number | null>
-    }
-  }
 }
 
 type RequestState = {
@@ -197,8 +180,6 @@ export class OwnerSessionRuntime {
   private clientId: string | undefined
   private started = false
   private closed = false
-  private provisionalExpiresAt?: number
-  private provisionalExpiryTimer?: ReturnType<typeof setTimeout>
 
   constructor(
     transport: OwnerTransport,
@@ -220,7 +201,8 @@ export class OwnerSessionRuntime {
 
     if (
       this.transport.kind === 'relay' &&
-      (!this.transport.pairedDeviceId || this.transport.e2eeVerified !== true)
+      ((!this.transport.pairedDeviceId && !this.transport.loginCandidate) ||
+        this.transport.e2eeVerified !== true)
     ) {
       void this.rejectConnection('UNAUTHORIZED', 'Remote admission is not valid.', 1008)
     }
@@ -238,9 +220,6 @@ export class OwnerSessionRuntime {
       await this.rejectConnection(parsed.error.code, parsed.error.message, closeCode)
       return
     }
-    this.expireProvisionalSessionIfNeeded()
-    if (this.closed) return
-
     const frame = parsed.frame
     if (!this.clientId) {
       if (frame.type !== 'hello') {
@@ -282,18 +261,6 @@ export class OwnerSessionRuntime {
         this.session = null
       }
       if (this.closed) return
-      if (this.options.provisional && this.session) {
-        this.provisionalExpiresAt =
-          (await this.options.provisional.store.sessionExpiry(
-            this.options.provisional.bootstrapId,
-            this.options.provisional.nodeId,
-            this.options.provisional.trustEpoch,
-            this.options.provisional.clientPublicKey,
-          )) ?? undefined
-        if (!this.provisionalExpiresAt || this.provisionalExpiresAt <= Date.now())
-          this.session = null
-        else this.scheduleProvisionalExpiry()
-      }
     }
     await this.send({
       type: 'ready',
@@ -341,14 +308,29 @@ export class OwnerSessionRuntime {
       return
     }
     if (
-      this.options.provisional &&
+      this.session?.setupOnly &&
+      ![
+        'owner.status',
+        'owner.security.status',
+        'owner.security.totp.setup',
+        'owner.security.totp.verify',
+        'owner.security.recovery.rotate',
+        'owner.security.recovery.acknowledge',
+      ].includes(methodName)
+    ) {
+      await this.respondError(requestId, AUTH_FAILURE)
+      return
+    }
+    if (
+      this.transport.kind === 'relay' &&
+      this.transport.loginCandidate &&
+      !this.transport.promoted &&
       ![
         'owner.status',
         'owner.session.open',
-        'remote.device.trust',
-        'remote.device.binding.status',
-        'remote.device.binding.verifyTotp',
-        'remote.device.binding.verifyRecoveryCode',
+        'owner.login.verifyTotp',
+        'owner.login.verifyRecoveryCode',
+        'owner.loginQr.redeem',
       ].includes(methodName)
     ) {
       await this.respondError(requestId, AUTH_FAILURE)
@@ -422,27 +404,21 @@ export class OwnerSessionRuntime {
         return owner()
       },
       transport: this.transport,
+      connectionId: this.options.connectionId,
       signal,
       authenticate: async (admission) => {
         if (
           this.transport.kind === 'relay' &&
-          (!this.transport.pairedDeviceId || this.transport.e2eeVerified !== true)
+          ((!this.transport.pairedDeviceId && !this.transport.loginCandidate) ||
+            this.transport.e2eeVerified !== true)
         ) {
           throw new OwnerMethodError('UNAUTHORIZED')
         }
         if (!admission.ownerId || !admission.sessionId) throw new OwnerMethodError('UNAUTHORIZED')
-        if (this.options.provisional) {
-          const expiresAt = await this.options.provisional.store.bindLogin(
-            this.options.provisional.bootstrapId,
-            this.options.provisional.nodeId,
-            this.options.provisional.trustEpoch,
-            this.options.provisional.clientPublicKey,
-          )
-          if (!expiresAt || expiresAt <= Date.now()) throw new OwnerMethodError('UNAUTHORIZED')
-          this.provisionalExpiresAt = expiresAt
-          this.scheduleProvisionalExpiry()
-        }
         this.session = admission
+      },
+      unauthenticate: () => {
+        this.session = null
       },
     }
   }
@@ -543,8 +519,6 @@ export class OwnerSessionRuntime {
   private shutdown(code?: number, reason?: string): void {
     if (this.closed) return
     this.closed = true
-    if (this.provisionalExpiryTimer) clearTimeout(this.provisionalExpiryTimer)
-    this.provisionalExpiryTimer = undefined
     this.removeMessageListener?.()
     this.removeCloseListener?.()
     for (const request of this.activeRequests.values()) {
@@ -557,29 +531,6 @@ export class OwnerSessionRuntime {
     this.activeRequests.clear()
     this.activeStreams.clear()
     this.transport.close(code, reason)
-  }
-
-  private scheduleProvisionalExpiry() {
-    if (this.provisionalExpiryTimer) clearTimeout(this.provisionalExpiryTimer)
-    if (!this.provisionalExpiresAt) return
-    this.provisionalExpiryTimer = setTimeout(
-      () => {
-        this.provisionalExpiryTimer = undefined
-        this.session = null
-        this.provisionalExpiresAt = undefined
-        this.shutdown(1008, 'SESSION_EXPIRED')
-      },
-      Math.max(0, this.provisionalExpiresAt - Date.now()),
-    )
-  }
-
-  private expireProvisionalSessionIfNeeded() {
-    if (!this.provisionalExpiresAt || this.provisionalExpiresAt > Date.now()) return
-    if (this.provisionalExpiryTimer) clearTimeout(this.provisionalExpiryTimer)
-    this.provisionalExpiryTimer = undefined
-    this.session = null
-    this.provisionalExpiresAt = undefined
-    this.shutdown(1008, 'SESSION_EXPIRED')
   }
 }
 

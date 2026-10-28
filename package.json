@@ -11,6 +11,7 @@
     "db:push": "pnpm --filter @codex-web/server db:push",
     "db:reset": "pnpm --filter @codex-web/server db:reset",
     "account:create": "pnpm --filter @codex-web/server account:create",
+    "owner:manage": "pnpm --filter @codex-web/server owner:manage",
     "build": "pnpm --recursive --if-present build",
     "preview": "pnpm --filter @codex-web/app preview",
     "typecheck": "pnpm --recursive --if-present typecheck",

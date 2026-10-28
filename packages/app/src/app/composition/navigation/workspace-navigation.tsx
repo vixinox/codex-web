@@ -3,6 +3,7 @@ import * as React from 'react'
 import { PanelLeft } from 'lucide-react'
 
 import { signOut } from '@/lib/auth/auth-client'
+import { clearRemoteOwnerSession } from '@/lib/remote/device-key-store'
 import type { WorkspaceRouteController } from '@/app/composition/routes/use-workspace-route-controller'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
 import type { WorkspaceSidebarController } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
@@ -112,6 +113,7 @@ export function WorkspaceNavigation({
     onOpenSettings: route.openSettings,
     onOpenNewChat: () => route.openNewChat(),
     onSignOut: async () => {
+      await clearRemoteOwnerSession().catch(() => undefined)
       await signOut()
       void navigate('/login', { replace: true })
     },

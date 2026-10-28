@@ -4,35 +4,45 @@ export type OwnerDevice = {
   lastSeenAt: string | null
 }
 
-export type BindingRequest = {
-  requestId: string
-  source: string
-  createdAt: string
-  publicKeyFingerprint: string
-  expiresAt: string
-}
-
 export type OwnerManagementSnapshot = {
   totpEnabled: boolean
   recoveryCodesAvailable: boolean
-  bindingRequests: BindingRequest[]
+  initialized: boolean
   devices: OwnerDevice[]
 }
+
+export type LoginQrPayload = {
+  version: 1
+  relayUrl: string
+  ownerCode: string
+  nodeId: string
+  trustEpoch: number
+  ownerPublicKey: string
+  ownerPublicKeyFingerprint: string
+  capability: string
+}
+
+export type IssuedLoginQr = { payload: LoginQrPayload; expiresAt: string }
 
 export type OwnerManagementClient = {
   getSnapshot(): Promise<OwnerManagementSnapshot>
   setupTotp(password: string): Promise<{ totpURI?: string }>
   verifyTotp(code: string): Promise<{ recoveryCodes: string[] }>
   generateRecoveryCodes(password?: string): Promise<{ recoveryCodes: string[] }>
-  approveBinding(requestId: string): Promise<void>
-  rejectBinding(requestId: string): Promise<void>
+  acknowledgeRecoveryCodes(): Promise<void>
   revokeDevice(deviceId: string): Promise<void>
   resetTrust(): Promise<void>
+  issueLoginQr(): Promise<IssuedLoginQr>
+  cancelLoginQr(): Promise<{ cancelled: boolean }>
+  loginQrStatus(): Promise<{
+    state: 'active' | 'none' | 'consumed' | 'expired' | 'cancelled' | 'restarted'
+    expiresAt?: string
+  }>
   close(): void
 }
 
 export function emptyOwnerManagementSnapshot(): OwnerManagementSnapshot {
-  return { totpEnabled: false, recoveryCodesAvailable: false, bindingRequests: [], devices: [] }
+  return { totpEnabled: false, recoveryCodesAvailable: false, initialized: false, devices: [] }
 }
 
 export function formatDeviceDate(value: string | null) {

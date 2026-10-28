@@ -11,12 +11,17 @@ import { createWorkspaceService } from '../workspace.js'
 import { OwnerConnector } from '../remote/connector.js'
 import { RemoteTrustStore } from '../remote/trust-store.js'
 import { buildOwnerServer } from './app.js'
+import { acquireOwnerInstanceLock } from './instance-lock.js'
 
 const config = loadServerConfig()
-const { db, driver } = createDatabase(config)
+let db: ReturnType<typeof createDatabase>['db']
+let driver: ReturnType<typeof createDatabase>['driver'] | undefined
 let remote: OwnerConnector | undefined
+let instanceLock: Awaited<ReturnType<typeof acquireOwnerInstanceLock>> | undefined
 
 try {
+  instanceLock = await acquireOwnerInstanceLock(config.dataRoot)
+  ;({ db, driver } = createDatabase(config))
   driver.prepare('SELECT 1').get()
   const workspace = createWorkspaceService(config, db)
   const runtime = new CodexRuntimeManager(config)
@@ -35,10 +40,23 @@ try {
     remote: connector,
   })
   app.addHook('onClose', async () => {
-    await connector.stop()
-    await codex.events.flush()
-    await codex.shutdown()
-    driver.close()
+    try {
+      await connector.stop()
+    } finally {
+      try {
+        await codex.events.flush()
+      } finally {
+        try {
+          await codex.shutdown()
+        } finally {
+          try {
+            driver?.close()
+          } finally {
+            await instanceLock?.release()
+          }
+        }
+      }
+    }
   })
   await connector.start()
   await app.listen({ host: config.host, port: config.port })
@@ -51,9 +69,10 @@ try {
     // Relay cleanup must not mask the startup failure.
   }
   try {
-    driver.close()
+    driver?.close()
   } catch {
     // Database may have failed before opening completely.
   }
+  await instanceLock?.release().catch(() => undefined)
   process.exit(1)
 }

@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  MAX_BOOTSTRAP_ID_BYTES,
   MAX_ROUTE_ID_BYTES,
   RELAY_PROTOCOL_VERSION,
   encodeFrame,
@@ -24,6 +23,7 @@ function ownerAttachment(overrides: Record<string, unknown> = {}) {
     connectionId: 'connection-1',
     ownerToken,
     ownerPublicKey: '{"kty":"EC"}',
+    ownerCode: '123456789',
     trustEpoch: 0,
     ...overrides,
   }
@@ -50,6 +50,16 @@ test('round trips a relay attachment frame', () => {
   assert.deepEqual(parsed, frame)
 })
 
+test('requires an owner code with exactly nine ASCII digits', () => {
+  for (const ownerCode of ['', '12345678', '1234567890', '１２３４５６７８９', '12345x789']) {
+    assert.equal(
+      isRelayAttachFrame(parseFrame(encodeFrame(ownerAttachment({ ownerCode })))),
+      false,
+      ownerCode,
+    )
+  }
+})
+
 test('requires a device binding on client attachments', () => {
   assert.equal(isRelayAttachFrame(parseFrame(encodeFrame(clientAttachment()))), true)
   assert.equal(
@@ -68,51 +78,31 @@ test('requires a device binding on client attachments', () => {
   )
 })
 
-test('accepts bootstrap client attachments without a device binding', () => {
-  const frame = {
+test('accepts login candidate attachments by owner code without an owner node or admission token', () => {
+  const login = {
     type: 'relay.attach' as const,
     version: RELAY_PROTOCOL_VERSION,
-    nodeId: 'node-1',
     role: 'client' as const,
-    connectionId: 'connection-1',
-    admission: 'bootstrap' as const,
-    bootstrapId: 'bootstrap-1',
-    clientToken: 'short-lived-owner-signed-token',
-    trustEpoch: 2,
+    admission: 'login' as const,
+    connectionId: 'login-1',
+    ownerCode: '123456789',
   }
-  const parsed = parseFrame(encodeFrame(frame))
-  assert.equal(isRelayAttachFrame(parsed), true)
-  assert.deepEqual(parsed, frame)
+  assert.deepEqual(parseFrame(encodeFrame(login)), login)
+  assert.equal(isRelayAttachFrame(parseFrame(encodeFrame(login))), true)
+  for (const ownerCode of ['', '12345678', '1234567890', '１２３４５６７８９']) {
+    assert.equal(
+      isRelayAttachFrame(parseFrame(encodeFrame({ ...login, ownerCode }))),
+      false,
+      ownerCode,
+    )
+  }
+  assert.equal(
+    isRelayAttachFrame(parseFrame(encodeFrame({ ...login, nodeId: 'node-1' } as never))),
+    false,
+  )
 })
 
-test('rejects mixed, missing, empty, or oversized bootstrap attachment bindings', () => {
-  const frame = {
-    type: 'relay.attach' as const,
-    version: RELAY_PROTOCOL_VERSION,
-    nodeId: 'node-1',
-    role: 'client' as const,
-    connectionId: 'connection-1',
-    admission: 'bootstrap' as const,
-    bootstrapId: 'bootstrap-1',
-    clientToken: 'short-lived-owner-signed-token',
-    trustEpoch: 2,
-  }
-  const malformed: unknown[] = [
-    { ...frame, admission: 'paired' },
-    { ...frame, bootstrapId: undefined },
-    { ...frame, bootstrapId: '' },
-    { ...frame, bootstrapId: 'b'.repeat(MAX_BOOTSTRAP_ID_BYTES + 1) },
-    { ...frame, deviceId: 'device-1' },
-    { ...frame, clientToken: '' },
-    { ...frame, trustEpoch: -1 },
-  ]
-
-  for (const candidate of malformed) {
-    assert.equal(isRelayAttachFrame(parseFrame(JSON.stringify(candidate))), false)
-  }
-})
-
-test('validates bootstrap and paired relay client-connected notifications', () => {
+test('validates paired and login candidate relay client-connected notifications', () => {
   const paired = {
     type: 'relay.client.connected' as const,
     version: RELAY_PROTOCOL_VERSION,
@@ -120,26 +110,32 @@ test('validates bootstrap and paired relay client-connected notifications', () =
     connectionId: 'connection-1',
     deviceId: 'device-1',
   }
-  const bootstrap = {
-    type: 'relay.client.connected' as const,
-    version: RELAY_PROTOCOL_VERSION,
-    nodeId: 'node-1',
-    connectionId: 'connection-2',
-    admission: 'bootstrap' as const,
-    bootstrapId: 'bootstrap-1',
-  }
   assert.equal(isRelayClientConnectedFrame(parseFrame(encodeFrame(paired))), true)
-  assert.equal(isRelayClientConnectedFrame(parseFrame(encodeFrame(bootstrap))), true)
   assert.equal(
     isRelayClientConnectedFrame(
-      parseFrame(encodeFrame({ ...bootstrap, deviceId: 'device-1' } as never)),
+      parseFrame(
+        encodeFrame({
+          type: 'relay.client.connected',
+          version: RELAY_PROTOCOL_VERSION,
+          nodeId: 'node-1',
+          connectionId: 'login-1',
+          admission: 'login',
+          ownerCode: '123456789',
+        }),
+      ),
     ),
-    false,
+    true,
   )
   assert.equal(
     isRelayClientConnectedFrame(
       parseFrame(
-        encodeFrame({ ...bootstrap, bootstrapId: 'b'.repeat(MAX_BOOTSTRAP_ID_BYTES + 1) }),
+        JSON.stringify({
+          type: 'relay.client.connected',
+          version: RELAY_PROTOCOL_VERSION,
+          nodeId: 'node-1',
+          connectionId: 'legacy-1',
+          admission: 'provisional',
+        }),
       ),
     ),
     false,

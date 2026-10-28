@@ -36,6 +36,7 @@ test('creates the current SQLite schema and rejects legacy version tracking', ()
       CREATE TABLE project (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE, name TEXT NOT NULL, path TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE credential (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE, provider TEXT NOT NULL, base_url TEXT NOT NULL, encrypted_api_key TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE codex_event (id INTEGER PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE, thread_id TEXT, message TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE owner_security_state (owner_id TEXT PRIMARY KEY NOT NULL REFERENCES user(id) ON DELETE CASCADE, recovery_codes_acknowledged_at INTEGER);
     `)
     initial.close()
     const first = createDatabase(config(dataRoot))
@@ -71,6 +72,15 @@ test('creates the current SQLite schema and rejects legacy version tracking', ()
         .pluck()
         .get(),
       'twoFactor',
+    )
+    assert.equal(
+      first.driver
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'owner_security_state'",
+        )
+        .pluck()
+        .get(),
+      'owner_security_state',
     )
     first.driver
       .prepare(

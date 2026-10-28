@@ -1,4 +1,8 @@
-import type { OwnerManagementClient, OwnerManagementSnapshot } from './owner-management-model'
+import type {
+  IssuedLoginQr,
+  OwnerManagementClient,
+  OwnerManagementSnapshot,
+} from './owner-management-model'
 
 type OwnerRpc = {
   request(method: string, params?: Record<string, unknown>): Promise<unknown>
@@ -8,29 +12,6 @@ type OwnerRpc = {
 function snapshot(value: unknown): OwnerManagementSnapshot {
   if (!value || typeof value !== 'object') throw new Error('Invalid owner management response')
   const body = value as Record<string, unknown>
-  const bindingRequests = Array.isArray(body.bindingRequests)
-    ? body.bindingRequests.flatMap((entryValue) => {
-        if (!entryValue || typeof entryValue !== 'object') return []
-        const request = entryValue as Record<string, unknown>
-        if (
-          typeof request.requestId !== 'string' ||
-          typeof request.source !== 'string' ||
-          typeof request.createdAt !== 'string' ||
-          typeof request.publicKeyFingerprint !== 'string' ||
-          typeof request.expiresAt !== 'string'
-        )
-          return []
-        return [
-          {
-            requestId: request.requestId,
-            source: request.source,
-            createdAt: request.createdAt,
-            publicKeyFingerprint: request.publicKeyFingerprint,
-            expiresAt: request.expiresAt,
-          },
-        ]
-      })
-    : []
   const devices = Array.isArray(body.devices)
     ? body.devices.flatMap((deviceValue) => {
         if (!deviceValue || typeof deviceValue !== 'object') return []
@@ -47,7 +28,7 @@ function snapshot(value: unknown): OwnerManagementSnapshot {
   return {
     totpEnabled: body.totpEnabled === true,
     recoveryCodesAvailable: body.recoveryCodesAvailable === true,
-    bindingRequests,
+    initialized: body.initialized === true,
     devices,
   }
 }
@@ -72,17 +53,54 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
       )
       return result as { recoveryCodes: string[] }
     },
-    async approveBinding(requestId) {
-      await rpc.request('remote.device.binding.approve', { requestId })
-    },
-    async rejectBinding(requestId) {
-      await rpc.request('remote.device.binding.reject', { requestId })
+    async acknowledgeRecoveryCodes() {
+      await rpc.request('owner.security.recovery.acknowledge')
     },
     async revokeDevice(deviceId) {
       await rpc.request('remote.devices.revoke', { deviceId })
     },
     async resetTrust() {
       await rpc.request('remote.trust.reset')
+    },
+    async issueLoginQr() {
+      const result = await rpc.request('owner.loginQr.issue')
+      if (!result || typeof result !== 'object') throw new Error('Invalid login QR response')
+      const value = result as Partial<IssuedLoginQr>
+      const payload = value.payload
+      if (
+        !payload ||
+        payload.version !== 1 ||
+        typeof payload.relayUrl !== 'string' ||
+        !/^\d{9}$/u.test(payload.ownerCode) ||
+        typeof payload.nodeId !== 'string' ||
+        !Number.isSafeInteger(payload.trustEpoch) ||
+        typeof payload.ownerPublicKey !== 'string' ||
+        typeof payload.ownerPublicKeyFingerprint !== 'string' ||
+        typeof payload.capability !== 'string' ||
+        typeof value.expiresAt !== 'string'
+      )
+        throw new Error('Invalid login QR response')
+      return value as IssuedLoginQr
+    },
+    async cancelLoginQr() {
+      const result = await rpc.request('owner.loginQr.cancel')
+      return result as { cancelled: boolean }
+    },
+    async loginQrStatus() {
+      const result = await rpc.request('owner.loginQr.status')
+      if (!result || typeof result !== 'object') throw new Error('Invalid login QR status')
+      const value = result as { state?: unknown; expiresAt?: unknown }
+      if (
+        value.state === 'none' ||
+        value.state === 'consumed' ||
+        value.state === 'expired' ||
+        value.state === 'cancelled' ||
+        value.state === 'restarted'
+      )
+        return { state: value.state }
+      if (value.state === 'active' && typeof value.expiresAt === 'string')
+        return { state: 'active', expiresAt: value.expiresAt }
+      throw new Error('Invalid login QR status')
     },
     close() {
       rpc.close()

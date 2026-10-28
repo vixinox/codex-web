@@ -1,12 +1,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
-export type AdmissionPurpose = 'bootstrap-attach' | 'device-invite' | 'paired-attach'
+export type AdmissionPurpose = 'paired-attach'
 export type AdmissionClaims = {
   nodeId: string
   trustEpoch: number
   role: 'client' | 'owner'
   purpose: AdmissionPurpose
-  bootstrapId?: string
   deviceId?: string
   expiresAt: number
 }
@@ -33,14 +32,13 @@ export function verifyAdmissionToken(
       typeof value.nodeId !== 'string' ||
       !Number.isSafeInteger(value.trustEpoch) ||
       (value.role !== 'client' && value.role !== 'owner') ||
-      !['bootstrap-attach', 'device-invite', 'paired-attach'].includes(String(value.purpose)) ||
+      value.purpose !== 'paired-attach' ||
       typeof value.expiresAt !== 'number' ||
       !Number.isFinite(value.expiresAt) ||
       value.expiresAt <= Date.now() ||
       (expectedPurpose && value.purpose !== expectedPurpose)
     )
       return null
-    if (value.purpose === 'bootstrap-attach' && typeof value.bootstrapId !== 'string') return null
     if (value.purpose === 'paired-attach' && typeof value.deviceId !== 'string') return null
     return value as AdmissionClaims
   } catch {

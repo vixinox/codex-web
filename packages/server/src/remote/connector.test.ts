@@ -120,9 +120,48 @@ async function decryptOwnerFrames(clientKey: SessionKey, payloads: RelayFrame[])
   return frames
 }
 
-function methodRegistry() {
+function methodRegistry(connector: OwnerConnector, submittedFactors: string[]) {
   const methods: [string, OwnerMethodDefinition][] = [
     ['owner.status', { access: 'authenticated', handle: () => ({ status: 'ready' }) }],
+    [
+      'owner.session.open',
+      {
+        access: 'public',
+        handle: (params, context) => {
+          if (context.transport.kind !== 'relay' || context.transport.loginCandidate !== true)
+            throw new Error('Login candidate required')
+          submittedFactors.push(String((params as { password?: unknown }).password))
+          return { pendingTwoFactor: { challengeId: 'candidate-challenge', expiresAt: 'later' } }
+        },
+      },
+    ],
+    [
+      'owner.login.verifyTotp',
+      {
+        access: 'public',
+        handle: async (params, context) => {
+          if (
+            context.transport.kind !== 'relay' ||
+            context.transport.loginCandidate !== true ||
+            (params as { challengeId?: unknown }).challengeId !== 'candidate-challenge'
+          )
+            throw new Error('Candidate challenge mismatch')
+          submittedFactors.push(String((params as { code?: unknown }).code))
+          const publicKey = context.transport.clientPublicKey
+          if (!publicKey || !context.transport.promote) throw new Error('Candidate key missing')
+          const { deviceId } = await connector.trust.trustPeerWithStatus(publicKey)
+          const clientToken = await connector.createPairedClientToken(deviceId)
+          await context.authenticate({
+            ownerId: 'owner-1',
+            sessionId: 'session-1',
+            sessionToken: SESSION_TOKEN,
+          })
+          context.transport.promote(deviceId, clientToken)
+          return { ownerId: 'owner-1', sessionToken: SESSION_TOKEN, deviceId, clientToken }
+        },
+      },
+    ],
+    ['owner.workspace.read', { access: 'authenticated', handle: () => ({ secret: 'business' }) }],
   ]
   return new Map(methods)
 }
@@ -149,14 +188,17 @@ type Harness = {
   clientKey: SessionKey
   deviceId: string
   trustEpoch: number
+  submittedFactors: string[]
 }
 
-/**
- * Brings a connector through relay attach, device pairing and the first E2EE handshake, so tests
- * start from exactly one open remote connection on `client-connection`.
- */
-async function createHarness(connector: OwnerConnector, sockets: FakeSocket[]): Promise<Harness> {
-  connector.configureRemoteSessions(methodRegistry(), async (token) =>
+/** Brings a registered device through relay attach and its first E2EE handshake. */
+async function createHarness(
+  connector: OwnerConnector,
+  sockets: FakeSocket[],
+  loginCandidate = false,
+  submittedFactors: string[] = [],
+): Promise<Harness> {
+  connector.configureRemoteSessions(methodRegistry(connector, submittedFactors), async (token) =>
     token === SESSION_TOKEN ? { ownerId: 'owner-1', sessionId: 'session-1' } : null,
   )
   await connector.start()
@@ -166,7 +208,8 @@ async function createHarness(connector: OwnerConnector, sockets: FakeSocket[]): 
   socket.onopen?.()
   await waitFor(() => socket.sent.length === 1, 'the relay attach frame')
   const attach = parseRelayFrame(socket.sent[0]!)
-  if (attach?.type !== 'relay.attach') throw new Error('Expected relay attach.')
+  if (attach?.type !== 'relay.attach' || attach.role !== 'owner')
+    throw new Error('Expected relay owner attach.')
   socket.deliver(
     encodeRelayFrame({
       type: 'relay.ready',
@@ -179,57 +222,21 @@ async function createHarness(connector: OwnerConnector, sockets: FakeSocket[]): 
   await waitFor(() => connector.isConnected(), 'the relay to become ready')
 
   const clientKeys = await serializeKeyPair(await generateKeyPair())
-  const offer = await connector.createPairingOffer()
-  socket.deliver(
-    encodeRelayFrame({
-      type: 'relay.client.connected',
-      version: RELAY_PROTOCOL_VERSION,
-      nodeId: attach.nodeId,
-      connectionId: 'client-pairing',
-      deviceId: 'pairing-bootstrap',
-    }),
-  )
-  socket.deliver(
-    forward(
-      'client-pairing',
-      encodeRelayFrame({
-        type: 'pairing.accept',
-        version: RELAY_PROTOCOL_VERSION,
-        nodeId: offer.nodeId,
-        challenge: offer.challenge,
-        clientPublicKey: clientKeys.publicKey,
-      }),
-    ),
-  )
-  await waitFor(
-    () => sentPayloads(socket, 'client-pairing').some((frame) => frame.type === 'pairing.result'),
-    'the pairing result',
-  )
-  const pairingResult = sentPayloads(socket, 'client-pairing').find(
-    (frame) => frame.type === 'pairing.result',
-  )
-  if (pairingResult?.type !== 'pairing.result' || !pairingResult.accepted)
-    throw new Error('Pairing was not accepted.')
-  const deviceId = pairingResult.deviceId
-  if (!deviceId) throw new Error('Pairing result did not carry a device id.')
+  const deviceId = loginCandidate
+    ? 'login'
+    : (await connector.trust.trustPeerWithStatus(clientKeys.publicKey)).deviceId
 
   const identity = await connector.trust.identity()
   const clientKey = await deriveClientKey(identity, clientKeys)
-  socket.deliver(
-    encodeRelayFrame({
-      type: 'relay.client.disconnected',
-      version: RELAY_PROTOCOL_VERSION,
-      nodeId: attach.nodeId,
-      connectionId: 'client-pairing',
-    }),
-  )
   socket.deliver(
     encodeRelayFrame({
       type: 'relay.client.connected',
       version: RELAY_PROTOCOL_VERSION,
       nodeId: attach.nodeId,
       connectionId: 'client-connection',
-      deviceId,
+      ...(loginCandidate
+        ? { admission: 'login' as const, ownerCode: attach.ownerCode }
+        : { deviceId }),
     }),
   )
   socket.deliver(
@@ -259,6 +266,7 @@ async function createHarness(connector: OwnerConnector, sockets: FakeSocket[]): 
     clientKey,
     deviceId,
     trustEpoch: identity.trustEpoch,
+    submittedFactors,
   }
 }
 
@@ -292,7 +300,7 @@ function helloFrame(sessionToken = SESSION_TOKEN): OwnerFrame {
  * are always released: `stop()` clears the heartbeat/ready timers and closes the socket, which is
  * what lets the trust store's write chain settle before the directory is removed.
  */
-async function withHarness(fn: (harness: Harness) => Promise<void>) {
+async function withHarness(fn: (harness: Harness) => Promise<void>, loginCandidate = false) {
   const dataRoot = await mkdtemp(join(tmpdir(), 'codex-web-connector-'))
   // Every dial gets its own socket, like the real relay client: a closed socket is never reused.
   const sockets: FakeSocket[] = []
@@ -310,14 +318,15 @@ async function withHarness(fn: (harness: Harness) => Promise<void>) {
     },
   )
   try {
-    await fn(await createHarness(connector, sockets))
+    const submittedFactors: string[] = []
+    await fn(await createHarness(connector, sockets, loginCandidate, submittedFactors))
   } finally {
     await connector.stop()
     await rm(dataRoot, { recursive: true, force: true })
   }
 }
 
-test('pairs a device, confirms the session key, and carries Owner frames both ways', async () => {
+test('admits a registered device, confirms the session key, and carries Owner frames both ways', async () => {
   await withHarness(async (harness) => {
     const { socket, connector, clientKeys, clientKey } = harness
 
@@ -368,6 +377,157 @@ test('pairs a device, confirms the session key, and carries Owner frames both wa
       throw new Error('Expected an encrypted connection.close.')
     assert.equal(closeFrame.code, 'device_revoked')
   })
+})
+
+test('authenticates a login candidate over E2EE, blocks pre-auth business access, and resumes paired', async () => {
+  await withHarness(async (harness) => {
+    const { socket, connector, clientKeys, clientKey, submittedFactors } = harness
+    const confirmation = (
+      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
+    )[0]?.relay
+    if (!isHandshakeOkFrame(confirmation ?? null))
+      throw new Error('Expected an encrypted login-candidate confirmation.')
+    assert.equal(confirmation.clientPublicKey, clientKeys.publicKey)
+    assert.equal(confirmation.ownerPublicKey, (await connector.trust.identity()).ownerPublicKey)
+
+    await sendClientFrame(
+      harness,
+      {
+        type: 'hello',
+        version: OWNER_PROTOCOL_VERSION,
+        clientId: 'login-candidate',
+        capabilities: ['owner'],
+      },
+      1,
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 2,
+      'the unauthenticated login-candidate ready frame',
+    )
+    await sendClientFrame(
+      harness,
+      {
+        type: 'request',
+        requestId: 'login-open',
+        method: 'owner.session.open',
+        params: { email: 'owner@example.com', password: 'owner-password' },
+      },
+      2,
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 3,
+      'the encrypted login challenge',
+    )
+    const challenge = (
+      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
+    ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'login-open')
+    if (challenge?.owner?.type !== 'response')
+      throw new Error('Expected a login challenge response.')
+    assert.deepEqual(challenge.owner.result, {
+      pendingTwoFactor: { challengeId: 'candidate-challenge', expiresAt: 'later' },
+    })
+
+    await sendClientFrame(
+      harness,
+      { type: 'request', requestId: 'business-before-factor', method: 'owner.workspace.read' },
+      3,
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 4,
+      'the pre-auth business denial',
+    )
+    const denied = (
+      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
+    ).find(
+      (frame) =>
+        frame.owner?.type === 'response' && frame.owner.requestId === 'business-before-factor',
+    )
+    if (denied?.owner?.type !== 'response') throw new Error('Expected a business denial response.')
+    assert.equal(denied.owner.error?.code, 'UNAUTHORIZED')
+
+    await sendClientFrame(
+      harness,
+      {
+        type: 'request',
+        requestId: 'login-factor',
+        method: 'owner.login.verifyTotp',
+        params: { challengeId: 'candidate-challenge', code: '123456' },
+      },
+      4,
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 5,
+      'the paired credentials response',
+    )
+    const pairedResult = (
+      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
+    ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'login-factor')
+    if (pairedResult?.owner?.type !== 'response')
+      throw new Error('Expected a paired credentials response.')
+    const credentials = pairedResult.owner.result as {
+      deviceId: string
+      clientToken: string
+      sessionToken: string
+    }
+    assert.deepEqual(submittedFactors, ['owner-password', '123456'])
+    assert.equal(credentials.sessionToken, SESSION_TOKEN)
+    assert.equal((await connector.listDevices())[0]?.id, credentials.deviceId)
+
+    socket.deliver(
+      encodeRelayFrame({
+        type: 'relay.client.disconnected',
+        version: RELAY_PROTOCOL_VERSION,
+        nodeId: harness.nodeId,
+        connectionId: 'client-connection',
+      }),
+    )
+    socket.deliver(
+      encodeRelayFrame({
+        type: 'relay.client.connected',
+        version: RELAY_PROTOCOL_VERSION,
+        nodeId: harness.nodeId,
+        connectionId: 'paired-reconnect',
+        deviceId: credentials.deviceId,
+      }),
+    )
+    socket.deliver(
+      forward(
+        'paired-reconnect',
+        encodeRelayFrame({
+          type: 'handshake',
+          version: RELAY_PROTOCOL_VERSION,
+          nodeId: harness.nodeId,
+          clientPublicKey: clientKeys.publicKey,
+          trustEpoch: harness.trustEpoch,
+        }),
+      ),
+    )
+    await waitFor(
+      () => sentPayloads(socket, 'paired-reconnect').some((frame) => frame.type === 'encrypted'),
+      'the paired reconnect key confirmation',
+    )
+    socket.deliver(
+      forward(
+        'paired-reconnect',
+        encodeRelayFrame(
+          await encryptPayload(
+            clientKey,
+            encodeOwnerFrame(helloFrame(credentials.sessionToken)),
+            1,
+          ),
+        ),
+      ),
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'paired-reconnect').length === 2,
+      'the resumed paired Owner session',
+    )
+    const ready = (
+      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'paired-reconnect'))
+    ).find((frame) => frame.owner?.type === 'ready')
+    if (ready?.owner?.type !== 'ready') throw new Error('Expected paired Owner ready.')
+    assert.equal(ready.owner.authenticated, true)
+  }, true)
 })
 
 test('rejects a second handshake on an established connection', async () => {

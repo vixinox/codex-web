@@ -5,15 +5,18 @@ import {
   parseFrame,
   RELAY_PROTOCOL_VERSION,
 } from '@codex-web/protocol/relay'
+import type { RelayAttachFrame } from '@codex-web/protocol/relay'
 
-type RelayTarget = {
+export type RelayTarget = {
   nodeId: string
   trustEpoch: number
   clientToken: string
-  bootstrapId?: string
   deviceId?: string
   publicKey: string
   privateKey: CryptoKey
+  loginOwnerCode?: string
+  expectedOwnerFingerprint?: string
+  onOwnerFingerprint?: (fingerprint: string) => void
 }
 
 export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSocket {
@@ -51,12 +54,14 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
       nodeId: target.nodeId,
       role: 'client' as const,
       connectionId: crypto.randomUUID(),
-      clientToken: target.clientToken,
-      trustEpoch: target.trustEpoch,
-      ...(target.bootstrapId
-        ? { admission: 'bootstrap' as const, bootstrapId: target.bootstrapId }
-        : { deviceId: target.deviceId! }),
-    }
+      ...(target.loginOwnerCode
+        ? { admission: 'login' as const, ownerCode: target.loginOwnerCode }
+        : {
+            clientToken: target.clientToken,
+            trustEpoch: target.trustEpoch,
+            deviceId: target.deviceId!,
+          }),
+    } as RelayAttachFrame
     originalSend(encodeFrame(frame))
   })
   socket.addEventListener('message', (event) => {
@@ -84,7 +89,24 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
     const payload = parseFrame(frame.payload)
     if (!payload) return
     if (payload.type === 'handshake.ok') {
-      void importPublicKey(payload.ownerPublicKey)
+      if (
+        payload.nodeId !== target.nodeId ||
+        payload.trustEpoch !== target.trustEpoch ||
+        payload.clientPublicKey !== target.publicKey
+      ) {
+        pendingError?.(new Error('Owner identity does not match the selected target.'))
+        socket.close(1008, 'owner_identity_mismatch')
+        return
+      }
+      void fingerprint(payload.ownerPublicKey)
+        .then((actual) => {
+          target.onOwnerFingerprint?.(actual)
+          if (target.loginOwnerCode && !target.expectedOwnerFingerprint)
+            throw new Error('Verify the Owner fingerprint before signing in.')
+          if (target.expectedOwnerFingerprint && actual !== target.expectedOwnerFingerprint)
+            throw new Error('Owner fingerprint mismatch. Verify the Owner before signing in.')
+        })
+        .then(() => importPublicKey(payload.ownerPublicKey))
         .then((ownerKey) =>
           deriveSessionKey(
             target.privateKey,
@@ -98,9 +120,11 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
           pendingOpen = null
           for (const value of queued.splice(0)) socket.send(value)
         })
-        .catch((error: unknown) =>
-          pendingError?.(error instanceof Error ? error : new Error('Relay handshake failed')),
-        )
+        .catch((error: unknown) => {
+          const failure = error instanceof Error ? error : new Error('Relay handshake failed')
+          pendingError?.(failure)
+          socket.close(1008, 'owner_handshake_failed')
+        })
       return
     }
     if (!key || !isEncryptedFrame(payload) || payload.sequence !== receiveSequence + 1) return
@@ -116,4 +140,16 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
       pendingError = reject
     })
   return socket
+}
+
+async function fingerprint(serializedPublicKey: string) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(serializedPublicKey),
+  )
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/u, '')
+    .slice(0, 16)
 }

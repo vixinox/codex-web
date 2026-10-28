@@ -29,7 +29,11 @@ function dependencies(ownerExists: () => boolean) {
     },
     api: {},
   }
-  const workspace = { hasOwner: async () => ownerExists() }
+  const workspace = {
+    hasOwner: async () => ownerExists(),
+    isOwnerSecurityInitialized: async () => true,
+    acknowledgeOwnerRecoveryCodes: async () => true,
+  }
   const codex = { events: { latestEventId: () => 0, subscribe: () => () => undefined } }
   return { dependencies: { auth, workspace, codex } as unknown as AppDependencies, calls }
 }
@@ -70,6 +74,131 @@ test('forwards Better Auth session requests and allows only first local signup',
     })
     assert.equal(remote.statusCode, 403)
     assert.equal(calls.length, 2)
+  } finally {
+    await app.close()
+  }
+})
+
+test('owner security setup routes require a local authenticated session', async () => {
+  const calls: string[] = []
+  const setupBodies: unknown[] = []
+  const auth = {
+    handler: async () => new Response('{}'),
+    api: {
+      getSession: async () => ({ user: { id: 'owner-1' }, session: { id: 'session-1' } }),
+      enableTwoFactor: async (input: { body: unknown }) => {
+        calls.push('setup')
+        setupBodies.push(input.body)
+        return { totpURI: 'otpauth://totp/example', backupCodes: ['one', 'two'] }
+      },
+      verifyTOTP: async () => {
+        calls.push('verify')
+        return Response.json(
+          { token: 'fresh-token', user: { id: 'owner-1', twoFactorEnabled: true } },
+          { headers: { 'set-cookie': 'session=new-session; Path=/; HttpOnly' } },
+        )
+      },
+    },
+  }
+  const deps = {
+    auth,
+    workspace: {
+      hasOwner: async () => true,
+      isOwnerSecurityInitialized: async () => false,
+      acknowledgeOwnerRecoveryCodes: async () => true,
+    },
+    codex: { events: { latestEventId: () => 0, subscribe: () => () => undefined } },
+  } as unknown as AppDependencies
+  const app = await buildOwnerServer(config, deps)
+  try {
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/auth/owner-security/setup',
+      headers: { origin: 'http://localhost:5173' },
+      payload: { password: 'owner-password' },
+    })
+    assert.equal(setup.statusCode, 200)
+    assert.deepEqual(setup.json(), {
+      totpURI: 'otpauth://totp/example',
+      backupCodes: ['one', 'two'],
+    })
+    assert.deepEqual(setupBodies, [
+      { password: 'owner-password', method: 'totp', issuer: 'Codex Web' },
+    ])
+
+    const missingPassword = await app.inject({
+      method: 'POST',
+      url: '/api/auth/owner-security/setup',
+      headers: { origin: 'http://localhost:5173' },
+      payload: {},
+    })
+    assert.equal(missingPassword.statusCode, 400)
+    assert.deepEqual(calls, ['setup'])
+
+    const remote = await app.inject({
+      method: 'POST',
+      url: '/api/auth/owner-security/setup',
+      headers: { origin: 'http://localhost:5173', 'x-codex-web-remote': '1' },
+      payload: {},
+    })
+    assert.equal(remote.statusCode, 403)
+
+    const verify = await app.inject({
+      method: 'POST',
+      url: '/api/auth/owner-security/verify',
+      headers: { origin: 'http://localhost:5173' },
+      payload: { code: '123456' },
+    })
+    assert.equal(verify.statusCode, 200)
+    assert.deepEqual(verify.json(), {
+      token: 'fresh-token',
+      user: { id: 'owner-1', twoFactorEnabled: true },
+    })
+    assert.equal(
+      (verify.headers['set-cookie'] as string[])[0],
+      'session=new-session; Path=/; HttpOnly',
+    )
+    assert.deepEqual(calls, ['setup', 'verify'])
+  } finally {
+    await app.close()
+  }
+})
+
+test('owner setup acknowledgement requires verified TOTP and is persisted server-side', async () => {
+  const acknowledgements: string[] = []
+  const auth = {
+    handler: async () => new Response('{}'),
+    api: {
+      getSession: async () => ({
+        user: { id: 'owner-1', twoFactorEnabled: true },
+        session: { id: 'session-1' },
+      }),
+      viewBackupCodes: async () => ({ status: true, backupCodes: ['one'] }),
+    },
+  }
+  const deps = {
+    auth,
+    workspace: {
+      hasOwner: async () => true,
+      isOwnerSecurityInitialized: async () => false,
+      acknowledgeOwnerRecoveryCodes: async (id: string) => {
+        acknowledgements.push(id)
+        return true
+      },
+    },
+    codex: { events: { latestEventId: () => 0, subscribe: () => () => undefined } },
+  } as unknown as AppDependencies
+  const app = await buildOwnerServer(config, deps)
+  try {
+    const complete = await app.inject({
+      method: 'POST',
+      url: '/api/auth/owner-security/complete',
+      headers: { origin: 'http://localhost:5173' },
+      payload: {},
+    })
+    assert.equal(complete.statusCode, 200)
+    assert.deepEqual(complete.json(), { initialized: true })
+    assert.deepEqual(acknowledgements, ['owner-1'])
   } finally {
     await app.close()
   }

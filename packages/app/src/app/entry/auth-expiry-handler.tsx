@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { signOut, useSession } from '@/lib/auth/auth-client'
 import { AUTH_EXPIRED_EVENT } from '@/lib/auth/auth-expiry'
+import { clearRemoteOwnerSession } from '@/lib/remote/device-key-store'
 
 export function AuthExpiryHandler() {
   const navigate = useNavigate()
@@ -16,6 +17,7 @@ export function AuthExpiryHandler() {
     const handleAuthExpired = () => {
       if (handlingRef.current || location.pathname === '/login') return
       handlingRef.current = true
+      void clearRemoteOwnerSession().catch(() => undefined)
       void signOut()
         .catch(() => undefined)
         .then(() => refetchRef.current())

@@ -9,7 +9,7 @@
 
 ## Current scope
 
-The product direction is one authenticated Owner user model with remote control through a paired device and Relay. Guest runtime, API, auth flow, lease/quota persistence, frontend routes/adapters, environment configuration, tests, scripts, and documentation have been removed. Do not reintroduce Guest behavior or compatibility. Keep the Owner runtime local and authenticated; remote machine access requires explicit device pairing and revocation.
+The product scope is one authenticated Owner user model with remote control through Relay and an automatically registered remote device identity. Guest runtime, API, auth flow, lease/quota persistence, frontend routes/adapters, environment configuration, tests, scripts, and documentation have been removed. Do not reintroduce Guest behavior or compatibility. Keep the Owner runtime local and authenticated; remote access requires successful Owner authentication or an Owner-issued one-time QR login grant, followed by device registration and revocation support. For the current authentication and remote-access implementation snapshot, see `docs/current-behavior.md`. The 05–07 work-package documents were historical and have been removed; use the architecture and API documents for their respective contracts.
 
 Do not expand work into unrelated features, architecture, dependencies, or documentation.
 

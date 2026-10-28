@@ -16,27 +16,12 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
         access: 'local' as const,
         handle: async (params, context) => {
           const result = await services.bootstrapCreate(context, asRecord(params))
-          await context.authenticate(result.admission satisfies OwnerAdmission)
-          return { token: result.token, session: result.session }
+          await context.authenticate({
+            ...result.admission,
+            setupOnly: true,
+          } satisfies OwnerAdmission)
+          return { token: result.token, session: result.session, securitySetupRequired: true }
         },
-      },
-    ],
-    [
-      'remote.bootstrap.create',
-      {
-        access: 'local' as const,
-        handle: async (params, context) => {
-          const result = await services.bootstrapCreate(context, asRecord(params))
-          await context.authenticate(result.admission satisfies OwnerAdmission)
-          return { token: result.token, session: result.session }
-        },
-      },
-    ],
-    [
-      'remote.bootstrap.consume',
-      {
-        access: 'public' as const,
-        handle: (params, context) => services.bootstrapConsume(context, asRecord(params)),
       },
     ],
     [
@@ -50,6 +35,56 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
           if ('pendingTwoFactor' in result) return result
           return { token: result.token, session: result.session }
         },
+      },
+    ],
+    [
+      'owner.login.verifyTotp',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.loginCandidateVerifyTotp(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.login.verifyRecoveryCode',
+      {
+        access: 'public' as const,
+        handle: (params, context) =>
+          services.loginCandidateVerifyRecoveryCode(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.login.rollback',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.ownerLoginRollback(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.loginQr.issue',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.ownerLoginQrIssue(context),
+      },
+    ],
+    [
+      'owner.loginQr.cancel',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.ownerLoginQrCancel(context),
+      },
+    ],
+    [
+      'owner.loginQr.status',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.ownerLoginQrStatus(context),
+      },
+    ],
+    [
+      'owner.loginQr.redeem',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.ownerLoginQrRedeem(context, asRecord(params)),
       },
     ],
     [
@@ -288,10 +323,17 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'remote.pairing.offer',
+      'owner.code.show',
       {
         access: 'authenticated' as const,
-        handle: (params, context) => services.remotePairingOffer(context, asRecord(params)),
+        handle: (_params, context) => services.ownerCodeShow(context),
+      },
+    ],
+    [
+      'owner.code.rotate',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.ownerCodeRotate(context),
       },
     ],
     [
@@ -316,13 +358,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'remote.device.trust',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.remoteDeviceTrust(context, asRecord(params)),
-      },
-    ],
-    [
       'owner.security.status',
       {
         access: 'local' as const,
@@ -339,14 +374,14 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
     [
       'owner.security.totp.setup',
       {
-        access: 'local' as const,
+        access: 'authenticated' as const,
         handle: (params, context) => services.ownerTotpEnable(context, asRecord(params)),
       },
     ],
     [
       'owner.security.totp.verify',
       {
-        access: 'authenticated' as const,
+        access: 'public' as const,
         handle: (params, context) => services.ownerTotpVerify(context, asRecord(params)),
       },
     ],
@@ -365,47 +400,17 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
+      'owner.security.recovery.acknowledge',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.ownerRecoveryAcknowledge(context),
+      },
+    ],
+    [
       'owner.security.recovery.verify',
       {
         access: 'authenticated' as const,
         handle: (params, context) => services.ownerRecoveryVerify(context, asRecord(params)),
-      },
-    ],
-    [
-      'remote.device.binding.status',
-      {
-        access: 'public' as const,
-        handle: (_params, context) => services.remoteDeviceBindingStatus(context),
-      },
-    ],
-    [
-      'remote.device.binding.verifyTotp',
-      {
-        access: 'public' as const,
-        handle: (params, context) =>
-          services.remoteDeviceBindingVerifyTotp(context, asRecord(params)),
-      },
-    ],
-    [
-      'remote.device.binding.verifyRecoveryCode',
-      {
-        access: 'public' as const,
-        handle: (params, context) =>
-          services.remoteDeviceBindingVerifyRecoveryCode(context, asRecord(params)),
-      },
-    ],
-    [
-      'remote.device.binding.approve',
-      {
-        access: 'local' as const,
-        handle: (params, context) => services.remoteDeviceBindingApprove(context, asRecord(params)),
-      },
-    ],
-    [
-      'remote.device.binding.reject',
-      {
-        access: 'local' as const,
-        handle: (params, context) => services.remoteDeviceBindingReject(context, asRecord(params)),
       },
     ],
   ])

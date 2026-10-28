@@ -13,6 +13,7 @@ class FakeTransport implements OwnerTransport {
   closed: { code?: number; reason?: string } | undefined
   pairedDeviceId?: string
   e2eeVerified?: boolean
+  loginCandidate?: boolean
   kind: 'local' | 'relay' = 'local'
   private messageListener: ((frame: string | Uint8Array) => void) | undefined
   private closeListener: ((reason?: string) => void) | undefined
@@ -193,6 +194,70 @@ test('gates local and authenticated methods and prevents request replay', async 
   assert.equal(transport.sent.join('').includes('sk-secret'), false)
   assert.equal(transport.sent.join('').includes('/home/owner'), false)
   assert.equal(runtime !== undefined, true)
+})
+
+test('keeps an encrypted login candidate limited to authentication methods', async () => {
+  const transport = new FakeTransport()
+  transport.kind = 'relay'
+  transport.e2eeVerified = true
+  transport.loginCandidate = true
+  let businessCalls = 0
+  createRuntime(
+    transport,
+    new Map([
+      ['owner.status', { access: 'public' as const, handle: () => ({ ownerExists: true }) }],
+      ['threads.list', { access: 'authenticated' as const, handle: () => ++businessCalls }],
+    ]),
+  )
+  transport.receive({ type: 'hello', version: 1, clientId: 'login-1', capabilities: [] })
+  await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
+  transport.receive({ type: 'request', requestId: 'business-1', method: 'threads.list' })
+  await waitFor(() => readFrames(transport).some((frame) => frame.type === 'response'))
+  const response = readFrames(transport).find((frame) => frame.type === 'response')
+  assert.equal(response?.type, 'response')
+  if (response?.type === 'response') assert.equal(response.error?.code, 'UNAUTHORIZED')
+  assert.equal(businessCalls, 0)
+})
+
+test('keeps an uninitialized local Owner session limited to security setup methods', async () => {
+  const transport = new FakeTransport()
+  let businessCalls = 0
+  createRuntime(
+    transport,
+    new Map([
+      [
+        'owner.security.status',
+        { access: 'local' as const, handle: () => ({ initialized: false }) },
+      ],
+      ['projects.list', { access: 'authenticated' as const, handle: () => ++businessCalls }],
+    ]),
+    {
+      resumeSession: async () => ({
+        ownerId: 'owner-1',
+        sessionId: 'setup-session',
+        setupOnly: true,
+      }),
+    },
+  )
+  transport.receive({
+    type: 'hello',
+    version: 1,
+    clientId: 'setup-client',
+    capabilities: [],
+    sessionToken: 'setup-token',
+  })
+  await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
+  transport.receive({ type: 'request', requestId: 'security-1', method: 'owner.security.status' })
+  transport.receive({ type: 'request', requestId: 'business-1', method: 'projects.list' })
+  await waitFor(
+    () => readFrames(transport).filter((frame) => frame.type === 'response').length === 2,
+  )
+  const response = readFrames(transport).find(
+    (frame) => frame.type === 'response' && frame.requestId === 'business-1',
+  )
+  assert.ok(response && response.type === 'response')
+  assert.equal(response.error?.code, 'UNAUTHORIZED')
+  assert.equal(businessCalls, 0)
 })
 
 test('opens and explicitly cancels a stream, then cleans active work on disconnect', async () => {

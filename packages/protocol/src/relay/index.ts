@@ -2,10 +2,8 @@ export const RELAY_PROTOCOL_VERSION = 1 as const
 
 export type ConnectionRole = 'owner' | 'client'
 
-/** Upper bound for routing identifiers carried in `relay.attach`. */
+/** Upper bound for routing identifiers carried in relay routing frames. */
 export const MAX_ROUTE_ID_BYTES = 128
-/** Upper bound for the opaque, one-time bootstrap identifier carried in relay metadata. */
-export const MAX_BOOTSTRAP_ID_BYTES = MAX_ROUTE_ID_BYTES
 
 type RelayAttachBase = {
   type: 'relay.attach'
@@ -16,6 +14,7 @@ type RelayAttachBase = {
 
 export type RelayOwnerAttachFrame = RelayAttachBase & {
   role: 'owner'
+  ownerCode: string
   ownerToken: string
   trustEpoch: number
   ownerPublicKey: string
@@ -27,22 +26,21 @@ export type RelayPairedClientAttachFrame = RelayAttachBase & {
   deviceId: string
   trustEpoch: number
   admission?: undefined
-  bootstrapId?: never
 }
 
-export type RelayBootstrapClientAttachFrame = RelayAttachBase & {
+export type RelayLoginClientAttachFrame = {
+  type: 'relay.attach'
+  version: typeof RELAY_PROTOCOL_VERSION
   role: 'client'
-  admission: 'bootstrap'
-  bootstrapId: string
-  clientToken: string
-  trustEpoch: number
-  deviceId?: never
+  admission: 'login'
+  connectionId: string
+  ownerCode: string
 }
 
 export type RelayAttachFrame =
   | RelayOwnerAttachFrame
   | RelayPairedClientAttachFrame
-  | RelayBootstrapClientAttachFrame
+  | RelayLoginClientAttachFrame
 
 export type RelayReadyFrame = {
   type: 'relay.ready'
@@ -62,18 +60,17 @@ type RelayClientConnectedBase = {
 export type RelayPairedClientConnectedFrame = RelayClientConnectedBase & {
   deviceId: string
   admission?: undefined
-  bootstrapId?: never
 }
 
-export type RelayBootstrapClientConnectedFrame = RelayClientConnectedBase & {
-  admission: 'bootstrap'
-  bootstrapId: string
+export type RelayLoginClientConnectedFrame = RelayClientConnectedBase & {
+  admission: 'login'
+  ownerCode: string
   deviceId?: never
 }
 
 export type RelayClientConnectedFrame =
   | RelayPairedClientConnectedFrame
-  | RelayBootstrapClientConnectedFrame
+  | RelayLoginClientConnectedFrame
 
 export type RelayClientDisconnectedFrame = {
   type: 'relay.client.disconnected'
@@ -89,42 +86,12 @@ export type RelayForwardFrame = {
   payload: string
 }
 
-export type PairingOfferFrame = {
-  type: 'pairing.offer'
-  version: typeof RELAY_PROTOCOL_VERSION
-  nodeId: string
-  ownerPublicKey: string
-  challenge: string
-  expiresAt: string
-  trustEpoch: number
-  clientToken: string
-}
-
-export type PairingAcceptFrame = {
-  type: 'pairing.accept'
-  version: typeof RELAY_PROTOCOL_VERSION
-  nodeId: string
-  challenge: string
-  clientPublicKey: string
-}
-
 export type HandshakeFrame = {
   type: 'handshake'
   version: typeof RELAY_PROTOCOL_VERSION
   nodeId: string
   clientPublicKey: string
   trustEpoch: number
-}
-
-export type PairingResultFrame = {
-  type: 'pairing.result'
-  version: typeof RELAY_PROTOCOL_VERSION
-  nodeId: string
-  accepted: boolean
-  trustEpoch: number
-  ownerPublicKey: string
-  deviceId?: string
-  clientToken?: string
 }
 
 /**
@@ -161,9 +128,6 @@ export type RelayFrame =
   | RelayClientConnectedFrame
   | RelayClientDisconnectedFrame
   | RelayForwardFrame
-  | PairingOfferFrame
-  | PairingAcceptFrame
-  | PairingResultFrame
   | HandshakeFrame
   | HandshakeOkFrame
   | EncryptedFrame
@@ -175,9 +139,6 @@ const frameTypes = new Set<RelayFrame['type']>([
   'relay.client.connected',
   'relay.client.disconnected',
   'relay.forward',
-  'pairing.offer',
-  'pairing.accept',
-  'pairing.result',
   'handshake',
   'handshake.ok',
   'encrypted',
@@ -202,9 +163,21 @@ export function parseFrame(value: string): RelayFrame | null {
 
 export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAttachFrame {
   if (
-    !frame ||
-    frame.type !== 'relay.attach' ||
-    frame.version !== RELAY_PROTOCOL_VERSION ||
+    frame &&
+    frame.type === 'relay.attach' &&
+    frame.version === RELAY_PROTOCOL_VERSION &&
+    frame.role === 'client' &&
+    frame.admission === 'login'
+  )
+    return (
+      hasOnlyKeys(frame, ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode']) &&
+      isRouteIdentifier(frame.connectionId) &&
+      isOwnerCode(frame.ownerCode)
+    )
+  if (!frame || frame.type !== 'relay.attach' || frame.version !== RELAY_PROTOCOL_VERSION)
+    return false
+  if (
+    !('nodeId' in frame) ||
     !isRouteIdentifier(frame.nodeId) ||
     !isRouteIdentifier(frame.connectionId) ||
     !Number.isSafeInteger(frame.trustEpoch) ||
@@ -221,33 +194,17 @@ export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAtta
         'role',
         'connectionId',
         'ownerToken',
+        'ownerCode',
         'ownerPublicKey',
         'trustEpoch',
       ]) &&
       typeof frame.ownerToken === 'string' &&
       frame.ownerToken.length >= 32 &&
+      isOwnerCode(frame.ownerCode) &&
       typeof frame.ownerPublicKey === 'string'
     )
 
   if (frame.role !== 'client') return false
-
-  if ('admission' in frame && frame.admission === 'bootstrap')
-    return (
-      hasOnlyKeys(frame, [
-        'type',
-        'version',
-        'nodeId',
-        'role',
-        'connectionId',
-        'admission',
-        'bootstrapId',
-        'clientToken',
-        'trustEpoch',
-      ]) &&
-      isBoundedRouteIdentifier(frame.bootstrapId, MAX_BOOTSTRAP_ID_BYTES) &&
-      typeof frame.clientToken === 'string' &&
-      frame.clientToken.length > 0
-    )
 
   return (
     frame.admission === undefined &&
@@ -267,6 +224,10 @@ export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAtta
   )
 }
 
+export function isOwnerCode(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9]{9}$/.test(value)
+}
+
 export function isRelayClientConnectedFrame(
   frame: RelayFrame | null,
 ): frame is RelayClientConnectedFrame {
@@ -279,33 +240,16 @@ export function isRelayClientConnectedFrame(
   )
     return false
 
-  if ('admission' in frame && frame.admission === 'bootstrap')
+  if ('admission' in frame && frame.admission === 'login')
     return (
-      hasOnlyKeys(frame, [
-        'type',
-        'version',
-        'nodeId',
-        'connectionId',
-        'admission',
-        'bootstrapId',
-      ]) && isBoundedRouteIdentifier(frame.bootstrapId, MAX_BOOTSTRAP_ID_BYTES)
+      hasOnlyKeys(frame, ['type', 'version', 'nodeId', 'connectionId', 'admission', 'ownerCode']) &&
+      isOwnerCode(frame.ownerCode)
     )
 
   return (
     frame.admission === undefined &&
     hasOnlyKeys(frame, ['type', 'version', 'nodeId', 'connectionId', 'deviceId']) &&
     isRouteIdentifier(frame.deviceId)
-  )
-}
-
-export function isPairingAcceptFrame(frame: RelayFrame | null): frame is PairingAcceptFrame {
-  return Boolean(
-    frame &&
-    frame.type === 'pairing.accept' &&
-    frame.version === RELAY_PROTOCOL_VERSION &&
-    typeof frame.nodeId === 'string' &&
-    typeof frame.challenge === 'string' &&
-    typeof frame.clientPublicKey === 'string',
   )
 }
 

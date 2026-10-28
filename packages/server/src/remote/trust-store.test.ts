@@ -40,23 +40,50 @@ async function readTrustFile(dataRoot: string) {
 test('lists paired devices and revokes one device without disturbing another', async () => {
   await withDataRoot(async (dataRoot) => {
     const store = new RemoteTrustStore(dataRoot)
-    const offerA = await store.createPairingOffer('wss://relay.example.test/ws')
-    const offerB = await store.createPairingOffer('wss://relay.example.test/ws')
     const clientA = await serializeKeyPair(await generateKeyPair())
     const clientB = await serializeKeyPair(await generateKeyPair())
-    assert.ok(await store.acceptPairing(offerA.challenge, clientA.publicKey))
-    assert.ok(await store.acceptPairing(offerB.challenge, clientB.publicKey))
+    const deviceA = await store.trustPeer(clientA.publicKey)
+    const deviceB = await store.trustPeer(clientB.publicKey)
 
     const devices = await store.listPeers()
     assert.equal(devices.length, 2)
     assert.equal('publicKey' in (devices[0] ?? {}), false)
-    const revokedId = devices[0]!.id
-    const remainingId = devices[1]!.id
+    const revokedId = deviceA
+    const remainingId = deviceB
     const revokedKey = await store.revokePeer(revokedId)
     assert.ok(revokedKey)
     assert.equal(await store.isAuthorized(revokedKey), false)
     assert.deepEqual(await store.listPeers(), [devices[1]])
     assert.ok(remainingId)
+  })
+})
+
+test('persists a nine-digit owner code and rotates it', async () => {
+  await withDataRoot(async (dataRoot) => {
+    const store = new RemoteTrustStore(dataRoot)
+    const first = await store.ownerCode()
+    assert.match(first, /^\d{9}$/)
+
+    const reloaded = new RemoteTrustStore(dataRoot)
+    assert.equal(await reloaded.ownerCode(), first)
+    const second = await reloaded.rotateOwnerCode()
+    assert.match(second, /^\d{9}$/)
+    assert.notEqual(second, first)
+    assert.equal(await new RemoteTrustStore(dataRoot).ownerCode(), second)
+  })
+})
+
+test('reports whether trusting a client key created or reused a device', async () => {
+  await withDataRoot(async (dataRoot) => {
+    const store = new RemoteTrustStore(dataRoot)
+    const clientKey = (await validKeyPair()).publicKey
+    const created = await store.trustPeerWithStatus(clientKey)
+    const reused = await store.trustPeerWithStatus(clientKey)
+
+    assert.equal(created.created, true)
+    assert.equal(reused.created, false)
+    assert.equal(reused.deviceId, created.deviceId)
+    assert.equal((await store.listPeers()).length, 1)
   })
 })
 
@@ -67,13 +94,6 @@ test('rejects a corrupt trust file instead of repairing it', async () => {
     nodeId: 'node-1',
     trustEpoch: 2,
     keyPair,
-    pendingOffers: [
-      {
-        challenge: 'challenge-1',
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        used: false,
-      },
-    ],
     peers: [
       { id: 'peer-1', publicKey: clientKey, createdAt: new Date().toISOString(), lastSeenAt: null },
     ],
@@ -96,12 +116,6 @@ test('rejects a corrupt trust file instead of repairing it', async () => {
       name: 'peer entry missing publicKey',
       mutate: (state) => {
         state.peers = [{ id: 'peer-1', createdAt: new Date().toISOString(), lastSeenAt: null }]
-      },
-    },
-    {
-      name: 'pending offer with unparseable expiresAt',
-      mutate: (state) => {
-        state.pendingOffers = [{ challenge: 'challenge-1', expiresAt: 'not-a-date', used: false }]
       },
     },
     {
@@ -149,7 +163,6 @@ test('accepts a legacy peer without id and persists the assigned id', async () =
       nodeId: 'node-legacy',
       trustEpoch: 3,
       keyPair,
-      pendingOffers: [],
       peers: [{ publicKey: clientKey, createdAt: new Date().toISOString(), lastSeenAt: null }],
     })
 
@@ -172,66 +185,17 @@ test('accepts a legacy peer without id and persists the assigned id', async () =
   })
 })
 
-test('acceptPairing refuses a second device record for an already trusted key', async () => {
+test('trust reset clears device records and rotates the E2EE trust epoch', async () => {
   await withDataRoot(async (dataRoot) => {
-    const store = new RemoteTrustStore(dataRoot)
-    const pkcs = await validKeyPair()
-    const first = await store.createPairingOffer('wss://relay.example.test/ws')
-    const firstId = await store.acceptPairing(first.challenge, pkcs.publicKey)
-    assert.ok(firstId)
-
-    const second = await store.createPairingOffer('wss://relay.example.test/ws')
-    assert.equal(await store.acceptPairing(second.challenge, pkcs.publicKey), null)
-
-    const devices = await store.listPeers()
-    assert.equal(devices.length, 1)
-    assert.equal(devices[0]!.id, firstId)
-    assert.equal(await store.deviceId(pkcs.publicKey), firstId)
-
-    const persisted = await readTrustFile(dataRoot)
-    assert.equal((persisted.peers as unknown[]).length, 1)
-
-    // The reused offer was still consumed, so it cannot be retried against another key.
-    const other = await validKeyPair()
-    assert.equal(await store.acceptPairing(second.challenge, other.publicKey), null)
-    assert.equal(await store.isAuthorized(other.publicKey), false)
-  })
-})
-
-test('acceptPairing refuses an expired offer and a reused challenge', async () => {
-  await withDataRoot(async (dataRoot) => {
-    const keyPair = await validKeyPair()
-    await writeTrustFile(dataRoot, {
-      nodeId: 'node-offers',
-      trustEpoch: 1,
-      keyPair,
-      pendingOffers: [
-        {
-          challenge: 'expired-challenge',
-          expiresAt: new Date(Date.now() - 60_000).toISOString(),
-          used: false,
-        },
-        {
-          challenge: 'used-challenge',
-          expiresAt: new Date(Date.now() + 60_000).toISOString(),
-          used: true,
-        },
-      ],
-      peers: [],
-    })
-
     const store = new RemoteTrustStore(dataRoot)
     const client = await validKeyPair()
-    assert.equal(await store.acceptPairing('expired-challenge', client.publicKey), null)
-    assert.equal(await store.acceptPairing('used-challenge', client.publicKey), null)
-    assert.equal(await store.acceptPairing('missing-challenge', client.publicKey), null)
-
+    await store.trustPeer(client.publicKey)
+    const before = await store.identity()
+    const after = await store.reset()
+    assert.equal(after.nodeId, before.nodeId)
+    assert.equal(after.trustEpoch, before.trustEpoch + 1)
+    assert.notEqual(after.ownerPublicKey, before.ownerPublicKey)
     assert.deepEqual(await store.listPeers(), [])
     assert.equal(await store.isAuthorized(client.publicKey), false)
-
-    // A freshly minted offer still works, so the rejections came from expiry/use, not breakage.
-    const offer = await store.createPairingOffer('wss://relay.example.test/ws')
-    assert.equal((await store.acceptPairing(offer.challenge, client.publicKey)) !== null, true)
-    assert.equal(await store.isAuthorized(client.publicKey), true)
   })
 })

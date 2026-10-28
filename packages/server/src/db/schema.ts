@@ -158,6 +158,13 @@ export const codexEvent = sqliteTable(
   ],
 )
 
+export const ownerSecurityState = sqliteTable('owner_security_state', {
+  ownerId: text('owner_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  recoveryCodesAcknowledgedAt: timestamp('recovery_codes_acknowledged_at'),
+})
+
 export const schema = {
   user,
   twoFactor,
@@ -167,6 +174,7 @@ export const schema = {
   project,
   credential,
   codexEvent,
+  ownerSecurityState,
 }
 
 export const userRelations = relations(user, ({ many }) => ({

@@ -6,7 +6,7 @@ describe('owner management model', () => {
     expect(emptyOwnerManagementSnapshot()).toEqual({
       totpEnabled: false,
       recoveryCodesAvailable: false,
-      bindingRequests: [],
+      initialized: false,
       devices: [],
     })
   })

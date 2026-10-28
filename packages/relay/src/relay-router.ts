@@ -3,7 +3,6 @@ import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto'
 import {
   encodeFrame,
   isRelayForwardFrame,
-  MAX_BOOTSTRAP_ID_BYTES,
   MAX_ROUTE_ID_BYTES,
   parseFrame,
   type ConnectionRole,
@@ -27,16 +26,24 @@ export type RelaySession = {
   trustEpoch: number
   role: ConnectionRole
   socket: RelaySocket
-  admission?: 'paired' | 'bootstrap'
-  bootstrapId?: string
+  admission?: 'paired' | 'login'
   deviceId?: string
+  ownerCode?: string
   rateTokens: number
   lastRateUpdate: number
 }
 
 export type RelayAttachResult =
   | { ok: true; session: RelaySession; replaced?: RelaySession }
-  | { ok: false; reason: 'duplicate_role' | 'invalid_attachment' | 'capacity' | 'unauthorized' }
+  | {
+      ok: false
+      reason:
+        | 'duplicate_role'
+        | 'invalid_attachment'
+        | 'capacity'
+        | 'unauthorized'
+        | 'owner_code_conflict'
+    }
 
 export type RelayRouterOptions = {
   ownerToken: string
@@ -49,6 +56,7 @@ export type RelayRouterOptions = {
 
 type RelayNode = {
   owner?: RelaySession
+  ownerCode?: string
   trustEpoch: number
   clients: Map<string, RelaySession>
 }
@@ -62,6 +70,7 @@ const encoder = new TextEncoder()
 
 export class RelayRouter {
   private readonly nodes = new Map<string, RelayNode>()
+  private readonly ownerCodes = new Map<string, string>()
   private readonly sessions = new Map<string, RelaySession>()
   private readonly options: RelayRouterOptions
 
@@ -70,6 +79,8 @@ export class RelayRouter {
   }
 
   attach(attachment: RelayAttachFrame, socket: RelaySocket): RelayAttachResult {
+    if (attachment.role === 'client' && attachment.admission === 'login')
+      return this.attachLoginCandidate(attachment, socket)
     const trustEpoch = attachment.trustEpoch
     if (
       !attachment.nodeId ||
@@ -78,17 +89,14 @@ export class RelayRouter {
       attachment.connectionId.length > MAX_ROUTE_ID_BYTES ||
       !Number.isSafeInteger(trustEpoch) ||
       (attachment.role === 'client' &&
-        (attachment.admission === 'bootstrap'
-          ? 'deviceId' in attachment ||
-            typeof attachment.bootstrapId !== 'string' ||
-            attachment.bootstrapId.length === 0 ||
-            encoder.encode(attachment.bootstrapId).byteLength > MAX_BOOTSTRAP_ID_BYTES
-          : typeof attachment.deviceId !== 'string' || attachment.deviceId.length === 0))
+        (typeof attachment.deviceId !== 'string' || attachment.deviceId.length === 0))
     ) {
       return { ok: false, reason: 'invalid_attachment' }
     }
     const epoch = trustEpoch as number
     const existingNode = this.nodes.get(attachment.nodeId)
+    if (attachment.role === 'owner' && !isOwnerCode(attachment.ownerCode))
+      return { ok: false, reason: 'invalid_attachment' }
     const existing =
       attachment.role === 'owner'
         ? existingNode?.owner
@@ -113,6 +121,12 @@ export class RelayRouter {
     ) {
       return { ok: false, reason: 'unauthorized' }
     }
+    if (
+      attachment.role === 'owner' &&
+      this.ownerCodes.has(attachment.ownerCode) &&
+      this.ownerCodes.get(attachment.ownerCode) !== attachment.nodeId
+    )
+      return { ok: false, reason: 'owner_code_conflict' }
     const node = existingNode ?? this.createNode()
     if (attachment.role === 'owner') node.trustEpoch = epoch
     if (
@@ -130,17 +144,19 @@ export class RelayRouter {
       socket,
       ...(attachment.role === 'client'
         ? {
-            admission:
-              attachment.admission === 'bootstrap' ? ('bootstrap' as const) : ('paired' as const),
-            ...(attachment.admission === 'bootstrap'
-              ? { bootstrapId: attachment.bootstrapId }
-              : { deviceId: attachment.deviceId }),
+            admission: 'paired' as const,
+            deviceId: attachment.deviceId,
           }
         : {}),
+      ...(attachment.role === 'owner' ? { ownerCode: attachment.ownerCode } : {}),
       rateTokens: this.options.messagesPerSecond ?? DEFAULT_MESSAGES_PER_SECOND,
       lastRateUpdate: Date.now(),
     }
     if (attachment.role === 'owner') {
+      if (existingNode?.ownerCode && existingNode.ownerCode !== attachment.ownerCode)
+        this.removeOwnerCode(existingNode.ownerCode, attachment.nodeId)
+      this.ownerCodes.set(attachment.ownerCode, attachment.nodeId)
+      node.ownerCode = attachment.ownerCode
       node.owner = session
     } else {
       node.clients.set(attachment.connectionId, session)
@@ -218,6 +234,19 @@ export class RelayRouter {
     return this.sessions.size
   }
 
+  resolveOwnerCode(
+    ownerCode: string,
+  ): { online: true; nodeId: string; trustEpoch: number } | { online: false } {
+    const nodeId = this.ownerCodes.get(ownerCode)
+    if (!nodeId) return { online: false }
+    const node = this.nodes.get(nodeId)
+    if (!node?.owner || node.ownerCode !== ownerCode) {
+      this.removeOwnerCode(ownerCode, nodeId)
+      return { online: false }
+    }
+    return { online: true, nodeId, trustEpoch: node.trustEpoch }
+  }
+
   getSession(sessionId: string) {
     return this.sessions.get(sessionId)
   }
@@ -260,8 +289,8 @@ export class RelayRouter {
       version: 1,
       nodeId: client.nodeId,
       connectionId: client.connectionId,
-      ...(client.admission === 'bootstrap'
-        ? { admission: 'bootstrap' as const, bootstrapId: client.bootstrapId! }
+      ...(client.admission === 'login'
+        ? { admission: 'login' as const, ownerCode: client.ownerCode! }
         : { deviceId: client.deviceId! }),
     }
     owner.socket.send(encodeFrame(frame))
@@ -284,7 +313,11 @@ export class RelayRouter {
       return
     }
     if (session.role === 'owner') {
-      if (node.owner?.sessionId === session.sessionId) delete node.owner
+      if (node.owner?.sessionId === session.sessionId) {
+        delete node.owner
+        if (session.ownerCode) this.removeOwnerCode(session.ownerCode, session.nodeId)
+        if (node.ownerCode === session.ownerCode) delete node.ownerCode
+      }
       const clients = [...node.clients.values()]
       node.clients.clear()
       for (const client of clients) {
@@ -307,6 +340,51 @@ export class RelayRouter {
       this.nodes.delete(session.nodeId)
     session.socket.close(4002, reason)
   }
+
+  private removeOwnerCode(ownerCode: string, nodeId: string) {
+    if (this.ownerCodes.get(ownerCode) === nodeId) this.ownerCodes.delete(ownerCode)
+  }
+
+  private attachLoginCandidate(
+    attachment: Extract<RelayAttachFrame, { role: 'client'; admission: 'login' }>,
+    socket: RelaySocket,
+  ): RelayAttachResult {
+    if (
+      !isOwnerCode(attachment.ownerCode) ||
+      !attachment.connectionId ||
+      encoder.encode(attachment.connectionId).byteLength > MAX_ROUTE_ID_BYTES
+    )
+      return { ok: false, reason: 'invalid_attachment' }
+    const nodeId = this.ownerCodes.get(attachment.ownerCode)
+    const node = nodeId ? this.nodes.get(nodeId) : undefined
+    if (!nodeId || !node?.owner || node.ownerCode !== attachment.ownerCode)
+      return { ok: false, reason: 'unauthorized' }
+    if (this.sessions.size >= (this.options.maxConnections ?? DEFAULT_MAX_CONNECTIONS))
+      return { ok: false, reason: 'capacity' }
+    if (node.clients.has(attachment.connectionId)) return { ok: false, reason: 'duplicate_role' }
+    if (node.clients.size >= (this.options.maxClientsPerNode ?? DEFAULT_MAX_CLIENTS_PER_NODE))
+      return { ok: false, reason: 'capacity' }
+    const session: RelaySession = {
+      sessionId: randomUUID(),
+      nodeId,
+      connectionId: attachment.connectionId,
+      trustEpoch: node.trustEpoch,
+      role: 'client',
+      socket,
+      admission: 'login',
+      ownerCode: attachment.ownerCode,
+      rateTokens: this.options.messagesPerSecond ?? DEFAULT_MESSAGES_PER_SECOND,
+      lastRateUpdate: Date.now(),
+    }
+    node.clients.set(attachment.connectionId, session)
+    this.sessions.set(session.sessionId, session)
+    this.notifyConnected(node.owner, session)
+    return { ok: true, session }
+  }
+}
+
+function isOwnerCode(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9]{9}$/.test(value)
 }
 
 /**
@@ -324,8 +402,6 @@ function verifyToken(
   trustEpoch: number,
   role: 'owner' | 'client',
   deviceId?: string,
-  admission?: 'bootstrap',
-  bootstrapId?: string,
 ) {
   if (typeof token !== 'string') return false
   const [encoded, signature, extra] = token.split('.')
@@ -341,16 +417,13 @@ function verifyToken(
       expiresAt?: unknown
       deviceId?: unknown
       admission?: unknown
-      bootstrapId?: unknown
     }
     return (
       claims.nodeId === nodeId &&
       claims.trustEpoch === trustEpoch &&
       claims.role === role &&
       (deviceId === undefined ? claims.deviceId === undefined : claims.deviceId === deviceId) &&
-      (admission === undefined
-        ? claims.admission === undefined && claims.bootstrapId === undefined
-        : claims.admission === admission && claims.bootstrapId === bootstrapId) &&
+      claims.admission === undefined &&
       typeof claims.expiresAt === 'number' &&
       claims.expiresAt > Date.now()
     )
@@ -360,21 +433,10 @@ function verifyToken(
 }
 
 function verifyClientToken(
-  attachment: Extract<RelayAttachFrame, { role: 'client' }>,
+  attachment: Extract<RelayAttachFrame, { role: 'client'; admission?: undefined }>,
   secret: string,
   trustEpoch: number,
 ) {
-  if (attachment.admission === 'bootstrap')
-    return verifyToken(
-      attachment.clientToken,
-      secret,
-      attachment.nodeId,
-      trustEpoch,
-      'client',
-      undefined,
-      'bootstrap',
-      attachment.bootstrapId,
-    )
   return verifyToken(
     attachment.clientToken,
     secret,

@@ -4,10 +4,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Copy } from 'lucide-react'
 import {
   emptyOwnerManagementSnapshot,
   formatDeviceDate,
   type OwnerManagementClient,
+  type IssuedLoginQr,
 } from './owner-management-model'
 
 export function OwnerManageScreen({ client }: { client: OwnerManagementClient }) {
@@ -24,6 +26,12 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
   const [totpQrCode, setTotpQrCode] = useState<string | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
   const [codesAcknowledged, setCodesAcknowledged] = useState(false)
+  const [loginQr, setLoginQr] = useState<IssuedLoginQr | null>(null)
+  const [loginQrImage, setLoginQrImage] = useState<string | null>(null)
+  const [loginQrRemaining, setLoginQrRemaining] = useState(0)
+  const [loginQrState, setLoginQrState] = useState<
+    'none' | 'active' | 'consumed' | 'expired' | 'cancelled' | 'restarted' | 'failed'
+  >('none')
   const refresh = useCallback(async () => {
     setError(null)
     setStatus('loading')
@@ -45,6 +53,69 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
   useEffect(() => {
     void refresh()
   }, [refresh])
+  useEffect(() => {
+    let active = true
+    void client
+      .loginQrStatus()
+      .then((result) => {
+        if (!active) return undefined
+        if (result.state !== 'none') {
+          setLoginQrState(result.state)
+          return undefined
+        }
+        const oldExpiry = Number(sessionStorage.getItem('owner-login-qr-expires-at'))
+        if (oldExpiry > Date.now()) setLoginQrState('restarted')
+        sessionStorage.removeItem('owner-login-qr-expires-at')
+        return undefined
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [client])
+  useEffect(() => {
+    if (!loginQr) return undefined
+    let active = true
+    const expiresAt = Date.parse(loginQr.expiresAt)
+    const update = () => {
+      if (!active) return
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+      setLoginQrRemaining(remaining)
+      if (!remaining) {
+        setLoginQrState('expired')
+        setLoginQr(null)
+        setLoginQrImage(null)
+        sessionStorage.removeItem('owner-login-qr-expires-at')
+      }
+    }
+    update()
+    const timer = window.setInterval(update, 1000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [loginQr])
+  useEffect(() => {
+    if (!loginQr) return undefined
+    let active = true
+    const check = async () => {
+      try {
+        const result = await client.loginQrStatus()
+        if (!active || result.state === 'active') return
+        setLoginQrState(result.state === 'none' ? 'restarted' : result.state)
+        setLoginQr(null)
+        setLoginQrImage(null)
+        sessionStorage.removeItem('owner-login-qr-expires-at')
+      } catch {
+        // Transport status is presented by the shared management state above.
+      }
+    }
+    const timer = window.setInterval(() => void check(), 3000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [client, loginQr])
   const act = async (key: string, operation: () => Promise<void>) => {
     setBusy(key)
     setError(null)
@@ -79,6 +150,111 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
             {error}
           </p>
         ) : null}
+        <Card>
+          <CardHeader>
+            <CardTitle>One-time device login</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Anyone who scans this QR can sign in to this Owner for five minutes. Treat it as a
+              temporary login credential.
+            </p>
+            {loginQr && loginQrImage ? (
+              <div className="flex flex-wrap items-start gap-4">
+                <img
+                  src={loginQrImage}
+                  alt="One-time Owner login QR code"
+                  className="size-56 bg-white p-2"
+                />
+                <div className="space-y-2 text-sm">
+                  <p role="status">
+                    Active · {Math.floor(loginQrRemaining / 60)}:
+                    {String(loginQrRemaining % 60).padStart(2, '0')} remaining
+                  </p>
+                  <p>
+                    Owner {loginQr.payload.ownerCode} · {loginQr.payload.nodeId}
+                  </p>
+                  <p className="break-all text-xs text-muted-foreground">
+                    Owner key fingerprint: {loginQr.payload.ownerPublicKeyFingerprint}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      void navigator.clipboard.writeText(loginQr.payload.ownerPublicKeyFingerprint)
+                    }
+                  >
+                    <Copy className="size-4" /> Copy fingerprint
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy === 'login-qr-cancel'}
+                    onClick={() =>
+                      void act('login-qr-cancel', async () => {
+                        await client.cancelLoginQr()
+                        setLoginQr(null)
+                        setLoginQrImage(null)
+                        setLoginQrState('cancelled')
+                        sessionStorage.removeItem('owner-login-qr-expires-at')
+                      })
+                    }
+                  >
+                    Cancel QR
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {!loginQr ? (
+              <Button
+                type="button"
+                disabled={busy === 'login-qr-issue'}
+                onClick={() =>
+                  void act('login-qr-issue', async () => {
+                    try {
+                      const issued = await client.issueLoginQr()
+                      const image = await QRCode.toDataURL(JSON.stringify(issued.payload), {
+                        margin: 2,
+                        width: 280,
+                        errorCorrectionLevel: 'Q',
+                      })
+                      setLoginQr(issued)
+                      setLoginQrImage(image)
+                      setLoginQrState('active')
+                      sessionStorage.setItem(
+                        'owner-login-qr-expires-at',
+                        String(Date.parse(issued.expiresAt)),
+                      )
+                    } catch (cause) {
+                      await client.cancelLoginQr().catch(() => undefined)
+                      setLoginQrState('failed')
+                      sessionStorage.removeItem('owner-login-qr-expires-at')
+                      throw cause
+                    }
+                  })
+                }
+              >
+                Generate login QR
+              </Button>
+            ) : null}
+            {!loginQr && loginQrState !== 'none' ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                {loginQrState === 'expired'
+                  ? 'QR expired.'
+                  : loginQrState === 'cancelled'
+                    ? 'QR cancelled.'
+                    : loginQrState === 'consumed'
+                      ? 'QR used.'
+                      : loginQrState === 'restarted'
+                        ? 'QR invalidated after Owner restart.'
+                        : loginQrState === 'failed'
+                          ? 'QR could not be issued. Try again.'
+                          : ''}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle>Two-factor authentication</CardTitle>
@@ -233,51 +409,22 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                 ) : null}
               </div>
             ) : null}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Pending binding requests</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {snapshot.bindingRequests.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No pending requests.</p>
-            ) : (
-              snapshot.bindingRequests.map((request) => (
-                <div
-                  className="flex flex-wrap items-center justify-between gap-3 border-b pb-3 last:border-0"
-                  key={request.requestId}
-                >
-                  <div>
-                    <p className="font-medium">{request.source}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {request.publicKeyFingerprint} · expires {formatDeviceDate(request.expiresAt)}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    disabled={busy === request.requestId}
-                    onClick={() =>
-                      void act(request.requestId, () => client.approveBinding(request.requestId))
-                    }
-                  >
-                    Approve
-                  </Button>
-                  {client.rejectBinding ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={busy === request.requestId}
-                      onClick={() =>
-                        void act(request.requestId, () => client.rejectBinding(request.requestId))
-                      }
-                    >
-                      Reject
-                    </Button>
-                  ) : null}
-                </div>
-              ))
-            )}
+            {recoveryCodes && !snapshot.totpEnabled ? (
+              <Button
+                type="button"
+                disabled={!codesAcknowledged || busy !== null}
+                onClick={() => {
+                  void act('security-initialized', async () => {
+                    await client.acknowledgeRecoveryCodes()
+                    setRecoveryCodes(null)
+                    setCodesAcknowledged(false)
+                    await refresh()
+                  })
+                }}
+              >
+                Finish security setup
+              </Button>
+            ) : null}
           </CardContent>
         </Card>
         <Card>
@@ -313,7 +460,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
             <Button
               variant="destructive"
               disabled={busy === 'reset'}
-              onClick={() => void act('reset', client.resetTrust)}
+              onClick={() => void act('reset', () => client.resetTrust())}
             >
               Reset all trust
             </Button>

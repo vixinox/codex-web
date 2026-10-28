@@ -6,7 +6,11 @@ import * as schema from './db/schema.js'
 import type { ServerConfig } from './config.js'
 import type { Database } from './database.js'
 
-export function createAuth(config: ServerConfig, database: Database) {
+export function createAuth(
+  config: ServerConfig,
+  database: Database,
+  options: { allowPasswordlessTwoFactor?: boolean } = {},
+) {
   return betterAuth({
     appName: 'Codex Web',
     baseURL: config.authUrl,
@@ -19,7 +23,10 @@ export function createAuth(config: ServerConfig, database: Database) {
     emailAndPassword: {
       enabled: true,
     },
-    plugins: [bearer(), twoFactor({ issuer: 'Codex Web' })],
+    plugins: [
+      bearer(),
+      twoFactor({ issuer: 'Codex Web', allowPasswordless: options.allowPasswordlessTwoFactor }),
+    ],
     session: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,

@@ -2,9 +2,11 @@
 
 状态：当前架构基线。本文是 Owner 远程控制、Relay、认证和设备信任的唯一总览入口。
 
+认证、Owner/Relay 远程接入和 CLI 的当前实现快照见 [`current-behavior.md`](./current-behavior.md)。本文继续作为 Owner 远程控制、Relay、认证和设备信任的架构总览。
+
 ## 适用范围与边界
 
-Codex Web 是单 Owner、本地优先的 Codex 工作台。Owner Gateway 运行在 Owner 机器上，远程控制端必须经过一次性 bootstrap、账号认证、TOTP 或本机管理页批准，并登记为受信任设备。
+Codex Web 是单 Owner、本地优先的 Codex 工作台。Owner Gateway 运行在 Owner 机器上，远程控制端通过 Relay 的 E2EE transport 接入同一 Owner runtime。当前认证和新设备 onboarding 的实现情况见 [`current-behavior.md`](./current-behavior.md)；本文中的架构与安全边界仍以本文内容为准。
 
 本文覆盖本地 Owner、远程浏览器、Relay、E2EE transport、认证、设备生命周期和安全边界。产品不支持 Guest 运行时、Relay 账户、多 Owner 节点、离线业务队列或 `remote.device.invite`。Chat、Workspace、Settings 的全量 Owner WS 迁移属于后续工作。
 
@@ -22,39 +24,33 @@ Remote Client -> Relay -> Owner RelayTransport -> Owner Gateway
 
 - **App**：提供本地工作台、官方远程入口、登录/TOTP、设备密钥存储和 `/owner/manage` 管理页。页面只使用 UI-facing model，不接触私钥、宿主路径、API key 或原始 runtime payload。
 - **Owner Gateway / Server**：负责 Better Auth、Owner session、资源归属、Application Services、Owner WebSocket、RelayTransport、trust store 和安全 DTO。身份、授权、设备身份和业务权限以 Owner 的验证结果为准。
-- **Application Services**：是 Owner session、Credential、Project、Thread/Turn、事件、配对、设备批准、撤销和 trust reset 的业务入口，不依赖 Fastify request/reply、Relay socket 或具体数据库类型。
+- **Application Services**：是 Owner session、Credential、Project、Thread/Turn、事件、登录 QR、设备登记/撤销和 trust reset 的业务入口，不依赖 Fastify request/reply、Relay socket 或具体数据库类型。
 - **Relay**：只处理经过 admission 验证的 Owner/client attach、路由、替换、断开、重连和 opaque encrypted payload，不建立账户体系或业务持久化。
-- **Protocol**：`@codex-web/protocol/owner` 定义 Owner request/response/notification/stream/cancel/close；`@codex-web/protocol/relay` 定义 attach、pairing、handshake、encrypted 和连接生命周期 frame；`relay/crypto` 定义 ECDH 与 AES-GCM channel。
+- **Protocol**：`@codex-web/protocol/owner` 定义 Owner request/response/notification/stream/cancel/close；`@codex-web/protocol/relay` 定义 attach、handshake、encrypted 和连接生命周期 frame；`relay/crypto` 定义 ECDH 与 AES-GCM channel。
 - **Codex App Server**：是 Agent、Thread、Turn 和 Codex 原生历史的执行权威。它不负责 Owner session、设备信任或 Relay 权限。
 
 本地 WebSocket 与 Relay data socket 都实现 transport-neutral `OwnerTransport`，统一进入 `OwnerSessionRuntime`。Gateway 不复制业务规则，只调用 Application Services 并投影安全 DTO。
 
-## 认证与设备生命周期
+## Owner 身份与远程接入
 
-远程入口使用 Owner 终端生成的一次性 HTTPS bootstrap URL。bootstrap capability 绑定 `nodeId`、当前 `trustEpoch`、用途和过期时间，凭据放在 URL fragment 中。浏览器读取后立即清除 fragment，避免进入 HTTP 日志、Referer 或后续链接；capability 本身不等于 Owner session。
+Owner 使用 Better Auth 的 email/password 账户和已验证的 TOTP；recovery code 可替代 TOTP 且仅消费一次。Owner-code 是 Relay 范围内 9 位在线路由标识，不承担授权。Relay 仅在内存中维护 Owner-code 在线映射，登录候选使用 `admission: 'login'`，且只能进入受限登录方法。首次远程接入要先比较 E2EE 握手 Owner 公钥指纹，再提交账号因素。
 
-远程登录先建立受限 pending/provisional session。该 session 只能查看自身绑定状态、打开认证 session、提交 TOTP 或请求设备信任，不能访问 threads、credentials、projects、Codex、events 或其他 Owner 业务。Better Auth 启用 TOTP twoFactor；recovery code 单次消费，轮换后旧 code 失效。临时 session 最长 30 分钟，不能通过普通续期延长。
+Owner-code 可由已认证的本机管理页查看或轮换。在线冲突会拒绝注册；Relay 不持久化目录，离线 Owner 不保留号码预约。
 
-新设备绑定有两条路径：
+新设备常规登录需在 E2EE candidate channel 中通过 email/password 和 TOTP/recovery，成功后自动登记设备；一次性 QR 则由已认证 Owner 生成、5 分钟有效、单次消费，直接批准一台设备而不再要求账号因素。QR capability 只由 Owner 保存于进程内存，重启、取消、trust reset 或消费后失效。
 
-1. 密码登录后提交 TOTP；
-2. 密码登录后，由本机 Owner 管理页显式批准当前一次性绑定请求。
-
-两条路径都必须登记浏览器公钥并完成 paired admission。浏览器使用 Web Crypto 生成 ECDH P-256 密钥对，优先把不可导出的 `CryptoKey` 持久化到 IndexedDB，只提交公钥。私钥丢失、IndexedDB 被清除、记录损坏或浏览器不支持该持久化时，设备必须重新走 bootstrap，不降级为明文 localStorage 或 URL 存储。
-
-`remote.device.trust` 成功后返回稳定 `deviceId` 和新的 paired client token。浏览器主动断开 bootstrap connection，再使用 paired admission 重连；不得在同一连接上原地升权。设备撤销立即关闭对应连接并拒绝后续握手。`remote.trust.reset` 轮换 trust epoch 和 Owner trust key、关闭全部远程连接并使旧凭据失效。临时 session 过期、登出、撤销或 trust epoch 变化时，客户端清理 session、密钥引用和连接状态。
+配对凭据只建立设备传输身份，不单独创建 Owner session。浏览器将 Owner session bearer 通过 IndexedDB 中不可导出的 AES-GCM key 加密保存，并与 Relay、ownerCode、nodeId、deviceId 和 expiresAt 做认证绑定；token 只在 runtime 内存解密使用。设备撤销或 trust reset 关闭连接并清除本地会话/设备密钥。
 
 ## 协议合同
 
 Owner protocol 使用版本化 `hello`、`ready`、`request`、`response`、`notification`、`stream.*`、`cancel` 和 `close` frame。Relay protocol 使用：
 
-- Owner/client `relay.attach`，分别携带 Owner admission 或 paired/bootstrap client admission；
+- Owner/client `relay.attach`，分别携带 Owner admission、paired admission 或受限 login-candidate admission；
 - `relay.ready`、`relay.client.connected`、`relay.client.disconnected` 和 `relay.forward`；
-- pairing offer/accept/result；
 - 双向 ECDH `handshake` 与加密确认 `handshake.ok`；
 - 带唯一 sequence/nonce 的 AES-GCM `encrypted` payload。
 
-Relay attach 必须绑定节点、角色、连接 ID、trust epoch、有效期和部署 admission secret。设备身份最终由 Owner 从 E2EE 握手中的客户端公钥推出，不能信任客户端自报的 `deviceId`。连接状态依次经过 `awaiting_handshake`、`handshaking`、`open`；重复握手、握手窗口内错误类型的密文、握手完成后的明文配对帧、未知版本、畸形或超限 frame 都必须拒绝并关闭连接。
+Relay attach 必须绑定节点、角色、连接 ID、trust epoch 和部署 admission secret。设备身份最终由 Owner 从 E2EE 握手中的客户端公钥推出，不能信任客户端自报的 `deviceId`。连接状态依次经过 `awaiting_handshake`、`handshaking`、`open`；重复握手、握手窗口内错误类型的密文、未知版本、畸形或超限 frame 都必须拒绝并关闭连接。
 
 E2EE 派生上下文绑定协议版本、node、trust epoch、双方公钥和连接角色；共享值为全零、AEAD 标签错误、序列重放或错序都必须失败。Owner 只有在设备授权和 `handshake.ok` 验证完成后才把远程连接交给 Owner session runtime。Relay 永远不读取 Owner method、session、账号、设备公钥或业务正文。
 
@@ -69,20 +65,12 @@ E2EE 派生上下文绑定协议版本、node、trust epoch、双方公钥和连
 
 ## 当前实现状态
 
-已实现并纳入当前代码基线：
-
-- Better Auth twoFactor、recovery/pending binding 合同和 provisional remote session 权限限制；
-- 官方 bootstrap fragment 消费与地址栏清理；
-- 浏览器 ECDH P-256 设备密钥和 IndexedDB 存储接口；
-- 本机受保护的 `/owner/manage` 页面；
-- 绑定请求状态、TOTP/管理页批准、设备列表、单设备撤销和 trust reset；
-- Relay bootstrap/paired admission、E2EE handshake、`handshake.ok` 和 Owner remote transport；
-- `remote.device.invite` 已移除，不保留受信任设备创建新设备邀请的产品路径。
+当前实现包含 Relay 在线 owner-code 映射与冲突拒绝、受限 login candidate、TOTP/recovery 登录服务、QR capability 生命周期与兑换、管理页 QR 显示/取消、浏览器扫码入口、owner-code/指纹引导、加密 IndexedDB Owner session、设备撤销与 trust reset，以及首次初始化 recovery 确认 RPC。实现快照和 2026-10-28 验证注记见 [current behavior baseline](./current-behavior.md)。
 
 已知限制和后续工作：
 
-- 完整 app typecheck 仍受仓库中既有缺失 bridge adapter 模块影响；这不是远程架构文档迁移引入的问题。
-- Relay/Vite/Owner 的真实浏览器链路仍需要由用户启动服务后手工验收，包括 bootstrap 清理、登录、TOTP、管理页批准、paired 重连、临时 session 过期、撤销、trust reset、Relay 断线和 IndexedDB 清除后的重新配对。
+- 07D CLI 已实现 data-root 单实例锁、headless Owner services 和管理命令入口；TOTP reset 通过无回显终端交互读取 Owner 密码。不得用 trust 文件直改或静态 data-root bearer secret 代替此边界。
+- Relay/Vite/Owner 的真实浏览器链路尚未手工验收。须覆盖常规 candidate 登录、指纹拒绝、TOTP/recovery、QR 扫码和上传、session 恢复、注销、撤销、trust reset、Owner/Relay 重启与离线重连。
 - Chat、Workspace、Settings 的全量 Owner WS 迁移不属于本远程入口基线。
 
 ## 验证要求
@@ -98,4 +86,4 @@ pnpm exec oxfmt --check <修改的 TypeScript 文件>
 pnpm lint:staged
 ```
 
-远程链路的自动化和手工验收应覆盖：协议非法输入、attach 冒认、pairing 过期/重放、双向握手确认、Owner status、临时 session 权限、设备批准、单设备撤销、全部 trust reset、Relay 重启重连、事件 cursor 恢复、慢消费者和本地 Owner 回归。自动化不得依赖真实公共 Relay 或真实用户凭据。
+后续验证范围按具体变更和当前项目约束确定；自动化不得依赖真实公共 Relay 或真实用户凭据。

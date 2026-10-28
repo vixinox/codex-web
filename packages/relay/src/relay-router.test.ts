@@ -13,7 +13,6 @@ const signedToken = (
   nodeId = 'node-1',
   trustEpoch = 0,
   deviceId?: string,
-  bootstrapId?: string,
 ) => {
   const encoded = Buffer.from(
     JSON.stringify({
@@ -21,29 +20,12 @@ const signedToken = (
       trustEpoch,
       role,
       ...(deviceId ? { deviceId } : {}),
-      ...(bootstrapId ? { admission: 'bootstrap', bootstrapId } : {}),
       expiresAt: Date.now() + 60_000,
     }),
   ).toString('base64url')
   const signature = createHmac('sha256', ownerToken).update(encoded).digest('base64url')
   return `${encoded}.${signature}`
 }
-
-const bootstrapClientAttach = (
-  overrides: Partial<Extract<RelayAttachFrame, { role: 'client'; admission: 'bootstrap' }>> = {},
-  bootstrapId = 'bootstrap-1',
-): RelayAttachFrame => ({
-  type: 'relay.attach',
-  version: RELAY_PROTOCOL_VERSION,
-  nodeId: 'node-1',
-  role: 'client',
-  connectionId: 'bootstrap-connection',
-  admission: 'bootstrap',
-  bootstrapId,
-  clientToken: signedToken('client', 'node-1', 0, undefined, bootstrapId),
-  trustEpoch: 0,
-  ...overrides,
-})
 
 const ownerAttach = (
   overrides: Partial<Extract<RelayAttachFrame, { role: 'owner' }>> = {},
@@ -54,6 +36,7 @@ const ownerAttach = (
   version: RELAY_PROTOCOL_VERSION,
   nodeId,
   role: 'owner',
+  ownerCode: '123456789',
   connectionId: 'owner',
   ownerPublicKey: 'owner-public-key',
   ownerToken: signedToken('owner', nodeId, trustEpoch),
@@ -100,6 +83,7 @@ test('forwards opaque frames only between matching owner and client attachments'
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'connection-1',
       ownerToken: signedToken('owner'),
@@ -152,6 +136,7 @@ test('separates connection ids and closes a peer when its counterpart disconnect
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'a',
       ownerToken: signedToken('owner'),
@@ -178,6 +163,7 @@ test('separates connection ids and closes a peer when its counterpart disconnect
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'b',
       ownerToken: signedToken('owner'),
@@ -201,6 +187,7 @@ test('rejects owner impersonation and enforces per-node client capacity', () => 
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: 'wrong-owner-token-that-is-long-enough',
@@ -216,6 +203,7 @@ test('rejects owner impersonation and enforces per-node client capacity', () => 
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner'),
@@ -262,6 +250,7 @@ test('rejects client tokens for another node, role, or trust epoch', () => {
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner', 'node-1', 4),
@@ -294,6 +283,7 @@ test('rejects forwarding above the per-connection message rate', () => {
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner'),
@@ -337,6 +327,7 @@ test('closes a slow peer without dropping the healthy endpoint', () => {
       version: RELAY_PROTOCOL_VERSION,
       nodeId: 'node-1',
       role: 'owner',
+      ownerCode: '123456789',
       ownerPublicKey: 'owner-public-key',
       connectionId: 'owner',
       ownerToken: signedToken('owner'),
@@ -423,61 +414,6 @@ test('rejects a client token without a device claim', () => {
   assert.equal(router.connectionCount(), 1)
 })
 
-test('accepts a bootstrap client without a device id and notifies the owner with its bootstrap id', () => {
-  const router = createRouter()
-  const owner = fakeSocket()
-  const ownerResult = router.attach(ownerAttach(), owner.socket)
-  assert.equal(ownerResult.ok, true)
-
-  const bootstrap = fakeSocket()
-  const result = router.attach(bootstrapClientAttach(), bootstrap.socket)
-  assert.equal(result.ok, true)
-  assert.equal(bootstrap.messages.length, 0)
-  assert.equal(owner.messages.length, 1)
-  assert.deepEqual(JSON.parse(String(owner.messages[0])), {
-    type: 'relay.client.connected',
-    version: RELAY_PROTOCOL_VERSION,
-    nodeId: 'node-1',
-    connectionId: 'bootstrap-connection',
-    admission: 'bootstrap',
-    bootstrapId: 'bootstrap-1',
-  })
-})
-
-test('rejects bootstrap clients when the token and attachment bootstrap ids differ', () => {
-  const router = createRouter()
-  router.attach(ownerAttach(), fakeSocket().socket)
-  const result = router.attach(
-    bootstrapClientAttach({
-      clientToken: signedToken('client', 'node-1', 0, undefined, 'token-bootstrap'),
-    }),
-    fakeSocket().socket,
-  )
-  assert.deepEqual(result, { ok: false, reason: 'unauthorized' })
-  assert.equal(router.connectionCount(), 1)
-})
-
-test('rejects bootstrap clients that include a device id or exceed the bootstrap id limit', () => {
-  const router = createRouter()
-  router.attach(ownerAttach(), fakeSocket().socket)
-  const withDevice = router.attach(
-    { ...bootstrapClientAttach(), deviceId: 'device-1' } as unknown as RelayAttachFrame,
-    fakeSocket().socket,
-  )
-  assert.deepEqual(withDevice, { ok: false, reason: 'invalid_attachment' })
-
-  const oversized = 'x'.repeat(129)
-  const tooLong = router.attach(
-    bootstrapClientAttach({
-      bootstrapId: oversized,
-      clientToken: signedToken('client', 'node-1', 0, undefined, oversized),
-    }),
-    fakeSocket().socket,
-  )
-  assert.deepEqual(tooLong, { ok: false, reason: 'invalid_attachment' })
-  assert.equal(router.connectionCount(), 1)
-})
-
 test('closes each socket exactly once when removeSession runs more than once', () => {
   const router = createRouter()
   const owner = fakeSocket()
@@ -537,6 +473,107 @@ test('detaching a replaced session leaves the replacement alive and closes it on
   router.detach(replacementResult.session.sessionId)
   assert.deepEqual(replacement.closed, [{ code: 4002, reason: 'peer_disconnected' }])
   assert.equal(router.connectionCount(), 1)
+})
+
+test('keeps owner codes unique among online nodes and releases the mapping on detach', () => {
+  const router = createRouter()
+  const owner1 = router.attach(
+    ownerAttach({ ownerCode: '111111111' }, 'node-1'),
+    fakeSocket().socket,
+  )
+  assert.equal(owner1.ok, true)
+  assert.deepEqual(router.resolveOwnerCode('111111111'), {
+    online: true,
+    nodeId: 'node-1',
+    trustEpoch: 0,
+  })
+  assert.deepEqual(
+    router.attach(ownerAttach({ ownerCode: '111111111' }, 'node-2'), fakeSocket().socket),
+    { ok: false, reason: 'owner_code_conflict' },
+  )
+  assert.deepEqual(
+    router.attach(ownerAttach({ ownerCode: '222222222' }, 'node-2'), fakeSocket().socket).ok,
+    true,
+  )
+  assert.deepEqual(router.resolveOwnerCode('222222222'), {
+    online: true,
+    nodeId: 'node-2',
+    trustEpoch: 0,
+  })
+  if (!owner1.ok) return
+  router.detach(owner1.session.sessionId)
+  assert.deepEqual(router.resolveOwnerCode('111111111'), { online: false })
+})
+
+test('owner code changes and stale owner detach do not remove the active mapping', () => {
+  const router = createRouter()
+  const first = router.attach(ownerAttach({ ownerCode: '111111111' }), fakeSocket().socket)
+  const second = router.attach(ownerAttach({ ownerCode: '222222222' }), fakeSocket().socket)
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, true)
+  if (!first.ok || !second.ok) return
+  assert.deepEqual(router.resolveOwnerCode('111111111'), { online: false })
+  assert.deepEqual(router.resolveOwnerCode('222222222'), {
+    online: true,
+    nodeId: 'node-1',
+    trustEpoch: 0,
+  })
+  router.detach(first.session.sessionId)
+  assert.deepEqual(router.resolveOwnerCode('222222222'), {
+    online: true,
+    nodeId: 'node-1',
+    trustEpoch: 0,
+  })
+})
+
+test('attaches login candidates by online owner code and applies normal node limits', () => {
+  const router = new RelayRouter({ ownerToken, maxClientsPerNode: 1 })
+  const owner = fakeSocket()
+  router.attach(ownerAttach({ ownerCode: '123456789' }), owner.socket)
+  const candidate = router.attach(
+    {
+      type: 'relay.attach',
+      version: RELAY_PROTOCOL_VERSION,
+      role: 'client',
+      admission: 'login',
+      connectionId: 'login-1',
+      ownerCode: '123456789',
+    },
+    fakeSocket().socket,
+  )
+  assert.equal(candidate.ok, true)
+  assert.deepEqual(JSON.parse(String(owner.messages.at(-1))), {
+    type: 'relay.client.connected',
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    connectionId: 'login-1',
+    admission: 'login',
+    ownerCode: '123456789',
+  })
+  const overflow = router.attach(
+    {
+      type: 'relay.attach',
+      version: RELAY_PROTOCOL_VERSION,
+      role: 'client',
+      admission: 'login',
+      connectionId: 'login-2',
+      ownerCode: '123456789',
+    },
+    fakeSocket().socket,
+  )
+  assert.deepEqual(overflow, { ok: false, reason: 'capacity' })
+  const offline = router.attach(
+    {
+      type: 'relay.attach',
+      version: RELAY_PROTOCOL_VERSION,
+      role: 'client',
+      admission: 'login',
+      connectionId: 'login-3',
+      ownerCode: '999999999',
+    },
+    fakeSocket().socket,
+  )
+  assert.deepEqual(offline, { ok: false, reason: 'unauthorized' })
 })
 
 test('allows replacing a routing slot at the global connection limit', () => {

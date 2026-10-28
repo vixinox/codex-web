@@ -1,5 +1,7 @@
 # Codex Web API 契约
 
+> 本文定义 REST、WebSocket 与 Relay 相关 API 合同。认证和远程 onboarding 的当前实现快照见 [`../current-behavior.md`](../current-behavior.md)。
+
 Owner 业务统一通过版本化 WebSocket 提供。浏览器、桌面端和远程控制端都连接同一个 Owner Gateway；远程连接经 Relay E2EE transport 接入，不重新模拟 HTTP request/reply。
 
 ## HTTP 外围
@@ -12,7 +14,10 @@ HTTP 只保留不属于 Owner 核心业务协议的入口：
 | `GET` | `/ready` | 依赖和事件 store 就绪检查 |
 | `GET` | `/metadata` | 产品、协议版本和公开能力 |
 | `GET` | `/api/auth/bootstrap` | 本地首次 Owner 创建发现 |
-| `POST` | `/api/remote/pairing/offer` | 本地已认证 Owner 创建一次性配对 offer |
+| `POST` | `/api/auth/owner-security/setup` | 已登录本机 Owner 首次设置 TOTP，返回 setup URI |
+| `POST` | `/api/auth/owner-security/verify` | 本机首次 TOTP 验证并返回一次性 recovery codes |
+| `POST` | `/api/auth/owner-security/complete` | 确认 recovery codes 已保存并持久完成首次安全初始化 |
+| `GET` | `<Relay origin>/owner-code/:9-digit-code` | 查询 Relay 内存中的在线 Owner 映射，公开只读、CORS、no-store |
 
 不再提供 credential、project、configuration、codex、skills、thread、event、auth session 或 `/api/me` REST/SSE 业务路由。
 
@@ -27,6 +32,15 @@ owner.status
 owner.bootstrap.create
 owner.session.open
 owner.session.close
+owner.login.verifyTotp
+owner.login.verifyRecoveryCode
+owner.login.rollback
+owner.loginQr.issue
+owner.loginQr.cancel
+owner.loginQr.redeem
+owner.security.recovery.acknowledge
+owner.code.show
+owner.code.rotate
 credentials.*
 projects.*
 codex.*
@@ -39,7 +53,6 @@ approvals.resolve
 events.subscribe
 events.resume
 remote.status
-remote.pairing.offer
 remote.trust.reset
 ```
 
@@ -47,7 +60,9 @@ remote.trust.reset
 
 ## 认证与权限
 
-首次 Owner bootstrap 只能来自本地、可信 Origin 的连接。`owner.session.open` 使用 email/password，通过 Better Auth 公共 API 返回 opaque bearer token；后续连接在 `hello.sessionToken` 携带 token。远程连接必须先通过设备配对、当前 trust epoch 和 E2EE admission。
+首次 Owner 创建只能来自本地、可信 Origin。创建后需完成 TOTP setup、TOTP 验证和 recovery code 保存确认。普通远程登录先以 owner-code 定位在线节点，再通过 E2EE login-candidate 提交 email/password 和 TOTP 或 recovery code；未认证连接不能调用 Owner 业务方法。首次 Owner fingerprint 必须与本机管理页显示值核对。
+
+已认证 Owner 可签发一个当前有效期为 5 分钟的一次性 QR；再次签发、取消、Owner 重启、trust epoch 变更或成功兑换都会使原 capability 失效。QR 兑换绑定当前 E2EE 客户端公钥，创建 session 与设备记录后提升为 paired admission。Relay 只转发 opaque E2EE 帧。
 
 每个请求都执行 Owner、Project、Thread 和受控路径归属校验。产品只有一个 Owner 不会取消资源归属检查。
 

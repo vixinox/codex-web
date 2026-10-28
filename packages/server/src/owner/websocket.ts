@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { WebSocket } from '@fastify/websocket'
 
 import type { ServerConfig } from '../config.js'
-import { createOwnerApplicationServices } from './application-services.js'
+import { createOwnerApplicationServices, withAuthSecret } from './application-services.js'
 import type { OwnerApplicationServices } from './application-services.js'
 import { createOwnerMethodRegistry } from './methods.js'
 import type { AppDependencies } from '../http/types.js'
@@ -28,7 +28,7 @@ export async function registerOwnerWebSocket(
 
   const services =
     providedServices ??
-    createOwnerApplicationServices(dependencies, {
+    createOwnerApplicationServices(withAuthSecret(dependencies, config), {
       trustedOrigins: config.trustedOrigins,
       requireDangerousAccessConfirmation: config.requireDangerousAccessConfirmation,
       remoteRelayUrl: config.remoteRelayUrl,
@@ -69,7 +69,8 @@ function createFastifyTransport(socket: WebSocket, origin: string): OwnerTranspo
     },
     onMessage(listener) {
       const onMessage = (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
-        listener(isBinary ? toBytes(data) : data.toString())
+        const bytes = toBytes(data)
+        listener(isBinary ? bytes : new TextDecoder().decode(bytes))
       }
       socket.on('message', onMessage)
       return () => socket.off('message', onMessage)

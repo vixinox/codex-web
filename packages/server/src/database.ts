@@ -47,6 +47,7 @@ function assertCurrentSchema(driver: DatabaseDriver.Database) {
     'project',
     'credential',
     'codex_event',
+    'owner_security_state',
   ].filter((table) => !tables.has(table))
   const hasLegacyMigrationTable = tables.has('schema_migrations')
   if (

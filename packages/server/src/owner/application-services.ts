@@ -1,5 +1,6 @@
 import type { Auth } from '../auth.js'
 import { createHash, randomUUID } from 'node:crypto'
+import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
 import type { CodexBridge } from '../http/types.js'
 import { projectNativeThread } from '../codex/native-protocol.js'
 import { parseRequestId } from '../codex/request-id.js'
@@ -8,6 +9,7 @@ import { SkillHandleStore, skillsForCwd, turnInput } from '../skills.js'
 import { parseSkillHandles, resolveSelectedSkills } from './skill-selection.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { OwnerConnector } from '../remote/connector.js'
+import { issueOwnerSessionForConsumedLoginQr } from '../qr-session-issuer.js'
 import { OwnerMethodError } from './session-runtime.js'
 import type { OwnerContext, OwnerMethodContext, OwnerTransport } from './session-runtime.js'
 
@@ -89,9 +91,16 @@ type SessionSnapshot = {
 
 export type OwnerApplicationServiceDependencies = {
   auth: Auth
-  workspace: WorkspaceService & { hasOwner?: () => Promise<boolean> }
+  localAuth?: Auth
+  workspace: WorkspaceService & {
+    hasOwner?: () => Promise<boolean>
+    isOwnerSecurityInitialized: (ownerId: string) => Promise<boolean>
+    getOnlyOwnerId: () => Promise<string | null>
+    clearOwnerSecurityInitialization: (ownerId: string) => Promise<void>
+  }
   codex: CodexBridge
   remote?: OwnerConnector
+  authSecret: string
 }
 
 export type OwnerApplicationServiceOptions = {
@@ -120,17 +129,114 @@ type OwnerSessionOpenResult =
 type PendingTwoFactor = {
   cookie: string
   expiresAt: number
-  bootstrapId?: string
-  clientPublicKey?: string
+  clientPublicKey: string
+  loginCandidate: boolean
+  verifying?: boolean
+}
+
+type LoginRollback = {
+  connectionId: string
+  ownerId: string
+  sessionId: string
+  sessionToken: string
+  clientPublicKey: string
+  deviceId: string
+  createdDevice: boolean
+  expiresAt: number
+}
+
+function issueLoginRollback(
+  rollbacks: Map<string, LoginRollback>,
+  rollback: LoginRollback,
+  onExpire: (entry: LoginRollback) => void,
+) {
+  const now = Date.now()
+  for (const [token, entry] of rollbacks) {
+    if (entry.expiresAt <= now) {
+      rollbacks.delete(token)
+      onExpire(entry)
+    }
+  }
+  if (rollbacks.size >= 256) {
+    const oldest = rollbacks.keys().next().value
+    if (oldest) {
+      const entry = rollbacks.get(oldest)
+      rollbacks.delete(oldest)
+      if (entry) onExpire(entry)
+    }
+  }
+  const token = randomUUID()
+  rollbacks.set(token, rollback)
+  return token
+}
+
+async function completeLoginCandidate(
+  context: OwnerMethodContext,
+  resolved: ResolvedOwnerSession,
+  remote: OwnerConnector | undefined,
+  createRollback: (rollback: LoginRollback) => string,
+  discardRollback: (token: string) => void,
+) {
+  const publicKey = context.transport.clientPublicKey
+  if (!publicKey || !context.transport.promote || !remote)
+    throw new OwnerMethodError('AUTH_FAILURE')
+  let deviceId: string | undefined
+  let createdDevice = false
+  let rollbackToken: string | undefined
+  try {
+    const trustedPeer = await remote.trust.trustPeerWithStatus(publicKey)
+    deviceId = trustedPeer.deviceId
+    createdDevice = trustedPeer.created
+    const clientToken = await remote.createPairedClientToken(deviceId)
+    const identity = await remote.trust.identity()
+    rollbackToken = createRollback({
+      connectionId: context.connectionId,
+      ownerId: resolved.snapshot.user.id,
+      sessionId: resolved.snapshot.session.id,
+      sessionToken: resolved.token,
+      clientPublicKey: publicKey,
+      deviceId,
+      createdDevice,
+      expiresAt: Date.now() + 2 * 60 * 1_000,
+    })
+    await context.authenticate({
+      ownerId: resolved.snapshot.user.id,
+      sessionId: resolved.snapshot.session.id,
+      sessionToken: resolved.token,
+    })
+    context.transport.promote(deviceId, clientToken)
+    return {
+      verified: true,
+      deviceId,
+      clientToken,
+      trustEpoch: identity.trustEpoch,
+      ownerId: resolved.snapshot.user.id,
+      sessionToken: resolved.token,
+      expiresAt: new Date(resolved.snapshot.session.expiresAt).toISOString(),
+      rollbackToken,
+    }
+  } catch {
+    context.unauthenticate()
+    if (rollbackToken) discardRollback(rollbackToken)
+    if (deviceId && createdDevice) await remote.trust.revokePeer(deviceId).catch(() => undefined)
+    throw new OwnerMethodError('AUTH_FAILURE')
+  }
 }
 
 export type OwnerApplicationServices = ReturnType<typeof createOwnerApplicationServices>
+
+export function withAuthSecret(
+  dependencies: Omit<OwnerApplicationServiceDependencies, 'authSecret'>,
+  config: { authSecret: string },
+): OwnerApplicationServiceDependencies {
+  return { ...dependencies, authSecret: config.authSecret }
+}
 
 export function createOwnerApplicationServices(
   dependencies: OwnerApplicationServiceDependencies,
   options: OwnerApplicationServiceOptions,
 ) {
-  let bootstrapQueue: Promise<void> = Promise.resolve()
+  let ownerCreationQueue: Promise<void> = Promise.resolve()
   const threadDomain = createThreadDomain({
     workspace: dependencies.workspace,
     codex: dependencies.codex,
@@ -147,8 +253,47 @@ export function createOwnerApplicationServices(
     }
   >()
   const pendingTwoFactor = new Map<string, PendingTwoFactor>()
+  const loginRollbacks = new Map<string, LoginRollback>()
+  const cleanupLoginRollback = async (rollback: LoginRollback) => {
+    await dependencies.auth.api
+      .signOut({ headers: bearerHeaders(rollback.sessionToken) })
+      .catch(() => undefined)
+    if (
+      rollback.createdDevice &&
+      dependencies.remote &&
+      (await dependencies.remote.trust.deviceId(rollback.clientPublicKey)) === rollback.deviceId
+    )
+      await dependencies.remote.trust.revokePeer(rollback.deviceId).catch(() => undefined)
+  }
+  const createLoginRollback = (rollback: LoginRollback) =>
+    issueLoginRollback(loginRollbacks, rollback, (entry) => {
+      void cleanupLoginRollback(entry)
+    })
+  const discardLoginRollback = (token: string) => loginRollbacks.delete(token)
+  const takeLoginRollback = (context: OwnerMethodContext, input: Record<string, unknown>) => {
+    const token = typeof input.rollbackToken === 'string' ? input.rollbackToken : null
+    const rollback = token ? loginRollbacks.get(token) : undefined
+    const owner = context.owner
+    if (
+      !token ||
+      !rollback ||
+      rollback.expiresAt <= Date.now() ||
+      context.transport.kind !== 'relay' ||
+      context.transport.e2eeVerified !== true ||
+      context.transport.loginCandidate !== true ||
+      context.transport.promoted !== true ||
+      context.transport.clientPublicKey !== rollback.clientPublicKey ||
+      context.connectionId !== rollback.connectionId ||
+      owner?.ownerId !== rollback.ownerId ||
+      owner.sessionId !== rollback.sessionId ||
+      owner.sessionToken !== rollback.sessionToken
+    )
+      throw new OwnerMethodError('AUTH_FAILURE')
+    discardLoginRollback(token)
+    return rollback
+  }
 
-  return {
+  const services = {
     async ownerStatus(context: OwnerMethodContext) {
       const ownerExists = (await dependencies.workspace.hasOwner?.()) ?? false
       return {
@@ -170,7 +315,7 @@ export function createOwnerApplicationServices(
       )
         throw new OwnerMethodError('INVALID_PARAMS')
 
-      return withBootstrapLock(async () => {
+      return withOwnerCreationLock(async () => {
         if ((await dependencies.workspace.hasOwner?.()) ?? false)
           throw new OwnerMethodError('OWNER_ALREADY_EXISTS')
         try {
@@ -190,30 +335,31 @@ export function createOwnerApplicationServices(
       })
     },
 
-    async bootstrapConsume(context: OwnerMethodContext, input: { token?: unknown }) {
-      if (
-        context.transport.kind !== 'relay' ||
-        !dependencies.remote ||
-        typeof input.token !== 'string'
-      )
-        throw new OwnerMethodError('INVALID_PARAMS')
-      return dependencies.remote.consumeBootstrapCapability(input.token)
-    },
-
     async sessionOpen(
-      input: { email?: unknown; password?: unknown },
+      input: { email?: unknown; username?: unknown; password?: unknown },
       context?: OwnerMethodContext,
     ): Promise<OwnerSessionOpenResult> {
-      if (typeof input.email !== 'string' || typeof input.password !== 'string')
+      const email = typeof input.email === 'string' ? input.email : input.username
+      if (typeof email !== 'string' || typeof input.password !== 'string')
         throw new OwnerMethodError('INVALID_PARAMS')
       try {
         const response = await dependencies.auth.api.signInEmail({
-          body: { email: input.email, password: input.password },
+          body: { email, password: input.password },
           asResponse: true,
         })
         if (response.ok) {
           const token = response.headers.get('set-auth-token')
-          if (token) return await sessionResult(dependencies.auth, response)
+          if (token) {
+            const resolved = await sessionFromToken(dependencies.auth, token)
+            if (
+              !resolved ||
+              !resolved.snapshot.user.twoFactorEnabled ||
+              !(await dependencies.workspace.isOwnerSecurityInitialized(resolved.snapshot.user.id))
+            )
+              throw new OwnerMethodError('AUTH_FAILURE')
+            if (context?.transport.kind === 'relay') throw new OwnerMethodError('AUTH_FAILURE')
+            return sessionResultFromResolved(resolved)
+          }
           const body = await response
             .clone()
             .json()
@@ -223,15 +369,17 @@ export function createOwnerApplicationServices(
             isRecord(body) &&
             body.twoFactorRedirect === true &&
             cookie &&
-            context?.transport.kind === 'relay'
+            context?.transport.kind === 'relay' &&
+            context.transport.loginCandidate === true &&
+            typeof context.transport.clientPublicKey === 'string'
           ) {
             const challengeId = randomUUID()
             const expiresAt = Date.now() + 10 * 60 * 1_000
             pendingTwoFactor.set(challengeId, {
               cookie,
               expiresAt,
-              bootstrapId: context.transport.bootstrapId,
               clientPublicKey: context.transport.clientPublicKey,
+              loginCandidate: true,
             })
             return {
               pendingTwoFactor: {
@@ -248,57 +396,6 @@ export function createOwnerApplicationServices(
       }
     },
 
-    async remoteDeviceTrust(
-      context: OwnerMethodContext,
-      input: { publicKey?: unknown; challenge?: unknown },
-    ) {
-      const owner = requireOwner(context)
-      if (
-        context.transport.kind !== 'relay' ||
-        !context.transport.e2eeVerified ||
-        !context.transport.pairedDeviceId?.startsWith('bootstrap:')
-      )
-        throw new OwnerMethodError('UNAUTHORIZED')
-      const provisional = context.transport as OwnerTransport & {
-        bootstrapId?: string
-        clientPublicKey?: string
-        promote?: (deviceId: string, clientToken: string) => void
-      }
-      if (
-        typeof input.publicKey !== 'string' ||
-        input.publicKey !== provisional.clientPublicKey ||
-        !provisional.bootstrapId ||
-        !provisional.promote ||
-        !dependencies.remote
-      )
-        throw new OwnerMethodError('INVALID_PARAMS')
-      if (!context.owner) throw new OwnerMethodError('UNAUTHORIZED')
-      if (typeof input.challenge !== 'string') {
-        return dependencies.remote.trust.issueTrustChallenge(
-          context.owner.sessionId,
-          input.publicKey,
-        )
-      }
-      if (
-        !dependencies.remote.trust.consumeTrustChallenge(
-          input.challenge,
-          context.owner.sessionId,
-          input.publicKey,
-        )
-      )
-        throw new OwnerMethodError('UNAUTHORIZED')
-      const promoted = await dependencies.remote.promoteBootstrap(
-        provisional.bootstrapId,
-        input.publicKey,
-      )
-      if (!promoted) throw new OwnerMethodError('RESOURCE_NOT_FOUND')
-      return {
-        deviceId: promoted.deviceId,
-        clientToken: promoted.clientToken,
-        ownerId: owner.ownerId,
-      }
-    },
-
     async resumeSession(token: string, transport: OwnerTransport) {
       if (
         transport.kind === 'relay' &&
@@ -308,10 +405,16 @@ export function createOwnerApplicationServices(
       if (!token || token.length > 4096) return null
       const resolved = await sessionFromToken(dependencies.auth, token)
       if (!resolved) return null
+      const initialized = await dependencies.workspace.isOwnerSecurityInitialized(
+        resolved.snapshot.user.id,
+      )
+      if (!initialized && transport.kind !== 'local') return null
+      if (!resolved.snapshot.user.twoFactorEnabled && initialized) return null
       return {
         ownerId: resolved.snapshot.user.id,
         sessionId: resolved.snapshot.session.id,
         sessionToken: resolved.token,
+        ...(!initialized ? { setupOnly: true } : {}),
       }
     },
 
@@ -913,7 +1016,10 @@ export function createOwnerApplicationServices(
     async userInputRespond(context: OwnerMethodContext, input: Record<string, unknown>) {
       const owner = requireOwner(context)
       const threadId = input.threadId
-      const parsedRequestId = parseRequestId(String(input.requestId ?? ''))
+      const parsedRequestId =
+        typeof input.requestId === 'string' || typeof input.requestId === 'number'
+          ? parseRequestId(String(input.requestId))
+          : null
       const answers = input.answers
       if (
         !safeId(threadId) ||
@@ -955,7 +1061,10 @@ export function createOwnerApplicationServices(
     async approvalsResolve(context: OwnerMethodContext, input: Record<string, unknown>) {
       const owner = requireOwner(context)
       const threadId = input.threadId
-      const parsedRequestId = parseRequestId(String(input.requestId ?? ''))
+      const parsedRequestId =
+        typeof input.requestId === 'string' || typeof input.requestId === 'number'
+          ? parseRequestId(String(input.requestId))
+          : null
       if (
         !safeId(threadId) ||
         (typeof parsedRequestId !== 'string' && typeof parsedRequestId !== 'number') ||
@@ -1142,18 +1251,153 @@ export function createOwnerApplicationServices(
       }
     },
 
-    async remotePairingOffer(context: OwnerMethodContext, input: Record<string, unknown>) {
+    async ownerCodeShow(context: OwnerMethodContext) {
       requireLocalOwner(context)
       if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
-      const relayUrl = input.relayUrl
-      if (relayUrl !== undefined && typeof relayUrl !== 'string')
-        throw new OwnerMethodError('INVALID_PARAMS')
+      return { ownerCode: await dependencies.remote.trust.ownerCode() }
+    },
+
+    async ownerCodeRotate(context: OwnerMethodContext) {
+      requireLocalOwner(context)
+      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      const remote = dependencies.remote
       try {
-        return await dependencies.remote.createPairingOffer(relayUrl as string | undefined)
+        const ownerCode = await remote.rotateOwnerCode()
+        return { ownerCode }
       } catch (error) {
-        if (error instanceof Error && error.message === 'CODEX_REMOTE_RELAY_URL_REQUIRED')
-          throw new OwnerMethodError('REMOTE_RELAY_REQUIRED')
+        if (error instanceof Error && error.message === 'OWNER_CODE_CONFLICT')
+          throw new OwnerMethodError('OWNER_CODE_CONFLICT')
         throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      }
+    },
+
+    async ownerLoginQrIssue(context: OwnerMethodContext) {
+      requireLocalOwner(context)
+      const owner = requireOwner(context)
+      if (!dependencies.remote || !options.remoteRelayUrl)
+        throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      if (!(await dependencies.workspace.isOwnerSecurityInitialized(owner.ownerId)))
+        throw new OwnerMethodError('AUTH_FAILURE')
+      try {
+        const identity = await dependencies.remote.trust.identity()
+        const grant = await dependencies.remote.issueLoginQrCapability(owner.ownerId)
+        return {
+          payload: {
+            version: 1,
+            relayUrl: options.remoteRelayUrl,
+            ownerCode: identity.ownerCode,
+            nodeId: identity.nodeId,
+            trustEpoch: identity.trustEpoch,
+            ownerPublicKey: identity.ownerPublicKey,
+            ownerPublicKeyFingerprint: createHash('sha256')
+              .update(identity.ownerPublicKey)
+              .digest('base64url')
+              .slice(0, 16),
+            capability: grant.capability,
+          },
+          expiresAt: new Date(grant.expiresAt).toISOString(),
+        }
+      } catch {
+        throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      }
+    },
+
+    async ownerLoginQrCancel(context: OwnerMethodContext) {
+      requireLocalOwner(context)
+      requireOwner(context)
+      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      return { cancelled: await dependencies.remote.cancelLoginQrCapability() }
+    },
+
+    async ownerLoginQrStatus(context: OwnerMethodContext) {
+      requireLocalOwner(context)
+      requireOwner(context)
+      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      return dependencies.remote.loginQrCapabilityStatus()
+    },
+
+    async ownerLoginQrRedeem(context: OwnerMethodContext, input: Record<string, unknown>) {
+      const transport = context.transport
+      if (
+        transport.kind !== 'relay' ||
+        transport.e2eeVerified !== true ||
+        transport.loginCandidate !== true ||
+        transport.promoted ||
+        !transport.clientPublicKey ||
+        !transport.promote ||
+        typeof input.capability !== 'string' ||
+        input.capability.length < 32 ||
+        input.capability.length > 256 ||
+        !dependencies.remote
+      )
+        throw new OwnerMethodError('AUTH_FAILURE')
+
+      const currentIdentity = await dependencies.remote.trust.identity()
+      if (!(await dependencies.workspace.hasOwner?.())) throw new OwnerMethodError('AUTH_FAILURE')
+
+      const consumed = await dependencies.remote.consumeLoginQrCapability(input.capability)
+      if (!consumed) throw new OwnerMethodError('AUTH_FAILURE')
+      if (
+        consumed.nodeId !== currentIdentity.nodeId ||
+        consumed.trustEpoch !== currentIdentity.trustEpoch
+      )
+        throw new OwnerMethodError('AUTH_FAILURE')
+      if (!(await dependencies.workspace.isOwnerSecurityInitialized(consumed.ownerId)))
+        throw new OwnerMethodError('AUTH_FAILURE')
+
+      let issued: Awaited<ReturnType<typeof issueOwnerSessionForConsumedLoginQr>>
+      try {
+        issued = await issueOwnerSessionForConsumedLoginQr(dependencies.auth, consumed.ownerId)
+      } catch {
+        throw new OwnerMethodError('AUTH_FAILURE')
+      }
+
+      let deviceId: string | undefined
+      let createdDevice = false
+      let rollbackToken: string | undefined
+      try {
+        const trustedPeer = await dependencies.remote.trust.trustPeerWithStatus(
+          transport.clientPublicKey,
+        )
+        deviceId = trustedPeer.deviceId
+        createdDevice = trustedPeer.created
+        const clientToken = await dependencies.remote.createPairedClientToken(deviceId)
+        const identity = await dependencies.remote.trust.identity()
+        rollbackToken = createLoginRollback({
+          connectionId: context.connectionId,
+          ownerId: issued.user.id,
+          sessionId: issued.session.id,
+          sessionToken: issued.token,
+          clientPublicKey: transport.clientPublicKey,
+          deviceId,
+          createdDevice,
+          expiresAt: Date.now() + 2 * 60 * 1_000,
+        })
+        await context.authenticate({
+          ownerId: issued.user.id,
+          sessionId: issued.session.id,
+          sessionToken: issued.token,
+        })
+        transport.promote(deviceId, clientToken)
+        return {
+          verified: true,
+          ownerId: issued.user.id,
+          sessionToken: issued.token,
+          expiresAt: issued.session.expiresAt,
+          deviceId,
+          clientToken,
+          trustEpoch: identity.trustEpoch,
+          ownerNodeId: identity.nodeId,
+          rollbackToken,
+        }
+      } catch {
+        if (rollbackToken) discardLoginRollback(rollbackToken)
+        if (deviceId && createdDevice)
+          await dependencies.remote.trust.revokePeer(deviceId).catch(() => undefined)
+        await dependencies.auth.api
+          .signOut({ headers: bearerHeaders(issued.token) })
+          .catch(() => undefined)
+        throw new OwnerMethodError('AUTH_FAILURE')
       }
     },
 
@@ -1191,14 +1435,12 @@ export function createOwnerApplicationServices(
         const session = await sessionFromToken(dependencies.auth, owner.sessionToken)
         totpEnabled = Boolean(session?.snapshot.user.twoFactorEnabled)
       }
-      const bindingRequests = dependencies.remote
-        ? await dependencies.remote.listPendingBindings()
-        : []
       let recoveryCodesAvailable = false
       if (owner.sessionToken && typeof dependencies.auth.api.viewBackupCodes === 'function') {
         try {
           const codes = await dependencies.auth.api.viewBackupCodes({
             body: { userId: owner.ownerId },
+            headers: bearerHeaders(owner.sessionToken),
           })
           recoveryCodesAvailable =
             isRecord(codes) && Array.isArray(codes.backupCodes) && codes.backupCodes.length > 0
@@ -1209,7 +1451,7 @@ export function createOwnerApplicationServices(
       return {
         totpEnabled,
         recoveryCodesAvailable,
-        bindingRequests,
+        initialized: await dependencies.workspace.isOwnerSecurityInitialized(owner.ownerId),
         devices,
       }
     },
@@ -1217,7 +1459,8 @@ export function createOwnerApplicationServices(
     async ownerTotpEnable(context: OwnerMethodContext, input: Record<string, unknown>) {
       requireLocalOwner(context)
       const owner = requireOwner(context)
-      if (typeof input.password !== 'string') throw new OwnerMethodError('INVALID_PARAMS')
+      if (typeof input.password !== 'string' && context.transport.kind !== 'local')
+        throw new OwnerMethodError('INVALID_PARAMS')
       try {
         const enable = (
           dependencies.auth.api as unknown as {
@@ -1225,7 +1468,11 @@ export function createOwnerApplicationServices(
           }
         ).enableTwoFactor
         const result = await enable({
-          body: { password: input.password, method: 'totp', issuer: 'Codex Web' },
+          body: {
+            ...(typeof input.password === 'string' ? { password: input.password } : {}),
+            method: 'totp',
+            issuer: 'Codex Web',
+          },
           headers: bearerHeaders(owner.sessionToken!),
         })
         if (!isRecord(result)) throw new OwnerMethodError('AUTH_FAILURE')
@@ -1253,9 +1500,18 @@ export function createOwnerApplicationServices(
           headers: bearerHeaders(owner.sessionToken!),
         })
         if (!isRecord(result)) throw new OwnerMethodError('AUTH_FAILURE')
+        const initialized = await dependencies.workspace.isOwnerSecurityInitialized(owner.ownerId)
+        if (!initialized) {
+          return { verified: true, ...(await generateRecoveryCodes(dependencies.auth, owner)) }
+        }
         return {
           verified: true,
-          recoveryCodes: await generateRecoveryCodes(dependencies.auth, owner),
+          recoveryCodes:
+            isRecord(result) &&
+            Array.isArray(result.backupCodes) &&
+            result.backupCodes.every((code) => typeof code === 'string')
+              ? result.backupCodes
+              : await generateRecoveryCodes(dependencies.auth, owner),
         }
       } catch {
         throw new OwnerMethodError('AUTH_FAILURE')
@@ -1263,9 +1519,30 @@ export function createOwnerApplicationServices(
     },
 
     async ownerRecoveryGenerate(context: OwnerMethodContext, input: Record<string, unknown>) {
-      requireLocalOwner(context)
+      if (context.transport.kind !== 'local') throw new OwnerMethodError('LOCAL_TRANSPORT_REQUIRED')
       const owner = requireOwner(context)
       return generateRecoveryCodes(dependencies.auth, owner, input.password)
+    },
+
+    async ownerRecoveryAcknowledge(context: OwnerMethodContext) {
+      if (context.transport.kind !== 'local') throw new OwnerMethodError('LOCAL_TRANSPORT_REQUIRED')
+      const owner = requireOwner(context)
+      const session = await sessionFromToken(dependencies.auth, owner.sessionToken ?? '')
+      if (!session?.snapshot.user.twoFactorEnabled) throw new OwnerMethodError('AUTH_FAILURE')
+      const codes = await dependencies.auth.api.viewBackupCodes({
+        body: { userId: owner.ownerId },
+        headers: bearerHeaders(owner.sessionToken ?? ''),
+      })
+      if (
+        !isRecord(codes) ||
+        !Array.isArray(codes.backupCodes) ||
+        codes.backupCodes.length === 0 ||
+        !codes.backupCodes.every((code) => typeof code === 'string')
+      )
+        throw new OwnerMethodError('AUTH_FAILURE')
+      if (!(await dependencies.workspace.acknowledgeOwnerRecoveryCodes(owner.ownerId)))
+        throw new OwnerMethodError('AUTH_FAILURE')
+      return { initialized: true }
     },
 
     async ownerRecoveryVerify(context: OwnerMethodContext, input: Record<string, unknown>) {
@@ -1288,36 +1565,24 @@ export function createOwnerApplicationServices(
       }
     },
 
-    async remoteDeviceBindingStatus(context: OwnerMethodContext) {
-      if (context.transport.kind !== 'relay' || !context.transport.bootstrapId)
-        throw new OwnerMethodError('UNAUTHORIZED')
-      return {
-        status: 'pending',
-        requestId: context.transport.bootstrapId,
-        expiresAt: new Date(
-          (await dependencies.remote?.bootstrap.capability(context.transport.bootstrapId))
-            ?.expiresAt ?? 0,
-        ).toISOString(),
-      }
-    },
-
-    async remoteDeviceBindingVerifyTotp(
-      context: OwnerMethodContext,
-      input: Record<string, unknown>,
-    ) {
+    async loginCandidateVerifyTotp(context: OwnerMethodContext, input: Record<string, unknown>) {
       if (context.transport.kind !== 'relay' || typeof input.code !== 'string')
         throw new OwnerMethodError('INVALID_PARAMS')
       const challengeId = typeof input.challengeId === 'string' ? input.challengeId : null
       const pending = challengeId ? pendingTwoFactor.get(challengeId) : undefined
       if (
         !pending ||
+        pending.verifying ||
         pending.expiresAt <= Date.now() ||
-        pending.bootstrapId !== context.transport.bootstrapId ||
+        !pending.loginCandidate ||
+        !context.transport.loginCandidate ||
         pending.clientPublicKey !== context.transport.clientPublicKey
       ) {
         if (challengeId) pendingTwoFactor.delete(challengeId)
         throw new OwnerMethodError('AUTH_FAILURE')
       }
+      pending.verifying = true
+      let sessionToken: string | undefined
       try {
         const verify = (
           dependencies.auth.api as unknown as {
@@ -1331,26 +1596,30 @@ export function createOwnerApplicationServices(
         const token =
           isRecord(verified) && typeof verified.token === 'string' ? verified.token : null
         if (!token) throw new Error('Missing verified session')
+        sessionToken = token
         const resolved = await sessionFromToken(dependencies.auth, token)
-        if (!resolved) throw new Error('Missing verified session')
-        await context.authenticate({
-          ownerId: resolved.snapshot.user.id,
-          sessionId: resolved.snapshot.session.id,
-          sessionToken: resolved.token,
-        })
+        if (!resolved?.snapshot.user.twoFactorEnabled) throw new Error('Missing verified session')
+        if (!(await dependencies.workspace.isOwnerSecurityInitialized(resolved.snapshot.user.id)))
+          throw new Error('Owner security setup is incomplete')
         if (challengeId) pendingTwoFactor.delete(challengeId)
-        return {
-          verified: true,
-          requestId: context.transport.bootstrapId,
-          ownerId: resolved.snapshot.user.id,
-          sessionToken: resolved.token,
-        }
+        return await completeLoginCandidate(
+          context,
+          resolved,
+          dependencies.remote,
+          createLoginRollback,
+          discardLoginRollback,
+        )
       } catch {
+        pending.verifying = false
+        if (sessionToken)
+          await dependencies.auth.api
+            .signOut({ headers: bearerHeaders(sessionToken) })
+            .catch(() => undefined)
         throw new OwnerMethodError('AUTH_FAILURE')
       }
     },
 
-    async remoteDeviceBindingVerifyRecoveryCode(
+    async loginCandidateVerifyRecoveryCode(
       context: OwnerMethodContext,
       input: Record<string, unknown>,
     ) {
@@ -1360,13 +1629,17 @@ export function createOwnerApplicationServices(
       const pending = challengeId ? pendingTwoFactor.get(challengeId) : undefined
       if (
         !pending ||
+        pending.verifying ||
         pending.expiresAt <= Date.now() ||
-        pending.bootstrapId !== context.transport.bootstrapId ||
+        !pending.loginCandidate ||
+        !context.transport.loginCandidate ||
         pending.clientPublicKey !== context.transport.clientPublicKey
       ) {
         if (challengeId) pendingTwoFactor.delete(challengeId)
         throw new OwnerMethodError('AUTH_FAILURE')
       }
+      pending.verifying = true
+      let sessionToken: string | undefined
       try {
         const verify = (
           dependencies.auth.api as unknown as {
@@ -1380,42 +1653,132 @@ export function createOwnerApplicationServices(
         const token =
           isRecord(verified) && typeof verified.token === 'string' ? verified.token : null
         if (!token) throw new Error('Missing verified session')
+        sessionToken = token
         const resolved = await sessionFromToken(dependencies.auth, token)
-        if (!resolved) throw new Error('Missing verified session')
-        await context.authenticate({
-          ownerId: resolved.snapshot.user.id,
-          sessionId: resolved.snapshot.session.id,
-          sessionToken: resolved.token,
-        })
+        if (!resolved?.snapshot.user.twoFactorEnabled) throw new Error('Missing verified session')
+        if (!(await dependencies.workspace.isOwnerSecurityInitialized(resolved.snapshot.user.id)))
+          throw new Error('Owner security setup is incomplete')
         if (challengeId) pendingTwoFactor.delete(challengeId)
-        return {
-          verified: true,
-          requestId: context.transport.bootstrapId,
-          ownerId: resolved.snapshot.user.id,
-          sessionToken: resolved.token,
-        }
+        return await completeLoginCandidate(
+          context,
+          resolved,
+          dependencies.remote,
+          createLoginRollback,
+          discardLoginRollback,
+        )
       } catch {
+        pending.verifying = false
+        if (sessionToken)
+          await dependencies.auth.api
+            .signOut({ headers: bearerHeaders(sessionToken) })
+            .catch(() => undefined)
         throw new OwnerMethodError('AUTH_FAILURE')
       }
     },
 
-    async remoteDeviceBindingApprove(context: OwnerMethodContext, input: Record<string, unknown>) {
-      requireLocalOwner(context)
-      if (!dependencies.remote || !safeId(input.requestId))
-        throw new OwnerMethodError('INVALID_PARAMS')
-      const result = await dependencies.remote.approveBootstrap(input.requestId)
-      if (!result) throw new OwnerMethodError('RESOURCE_NOT_FOUND')
-      return { approved: true, deviceId: result.deviceId }
+    async ownerLoginRollback(context: OwnerMethodContext, input: Record<string, unknown>) {
+      const rollback = takeLoginRollback(context, input)
+      try {
+        await cleanupLoginRollback(rollback)
+        return { rolledBack: true }
+      } catch {
+        throw new OwnerMethodError('AUTH_FAILURE')
+      } finally {
+        context.unauthenticate()
+      }
     },
+  }
 
-    async remoteDeviceBindingReject(context: OwnerMethodContext, input: Record<string, unknown>) {
-      requireLocalOwner(context)
-      if (!dependencies.remote || !safeId(input.requestId))
-        throw new OwnerMethodError('INVALID_PARAMS')
-      if (!(await dependencies.remote.rejectBootstrap(input.requestId)))
-        throw new OwnerMethodError('RESOURCE_NOT_FOUND')
-      return { rejected: true }
-    },
+  return {
+    ...services,
+    localManagement: createLocalManagementServices(dependencies),
+  }
+
+  function createLocalManagementServices(deps: OwnerApplicationServiceDependencies) {
+    return {
+      async authStatus() {
+        const ownerId = await deps.workspace.getOnlyOwnerId()
+        if (!ownerId)
+          return { initialized: false, totpEnabled: false, recoveryCodesAvailable: false }
+        const status = await getOwnerSecurityStatus(deps.auth, ownerId)
+        const initialized = await deps.workspace.isOwnerSecurityInitialized(ownerId)
+        return { ...status, initialized }
+      },
+      async resetTotp(password: string) {
+        const ownerId = await deps.workspace.getOnlyOwnerId()
+        if (!ownerId) throw new Error('OWNER_NOT_FOUND')
+        if (!password) throw new Error('OWNER_PASSWORD_REQUIRED')
+        if (typeof deps.auth.api.disableTwoFactor !== 'function')
+          throw new Error('TOTP_RESET_UNAVAILABLE')
+        const token = await createManagementSession(deps.auth, ownerId)
+        try {
+          const disable = deps.auth.api.disableTwoFactor as unknown as (
+            input: unknown,
+          ) => Promise<unknown>
+          await disable({ body: { password }, headers: bearerHeaders(token) })
+          await deps.workspace.clearOwnerSecurityInitialization(ownerId)
+          return { reset: true }
+        } finally {
+          await deps.auth.api.signOut({ headers: bearerHeaders(token) }).catch(() => undefined)
+        }
+      },
+      async rotateRecoveryCodes() {
+        const ownerId = await deps.workspace.getOnlyOwnerId()
+        if (!ownerId) throw new Error('OWNER_NOT_FOUND')
+        // Better Auth only mints codes behind the Owner password, which this boundary forbids.
+        // Mint a fresh group and store it in Better Auth's own encrypted shape so the previous
+        // plaintext stops verifying while `verifyBackupCode` keeps working unchanged.
+        const codes = generateRecoveryCodeGroup()
+        const stored = await deps.workspace.replaceRecoveryCodes(
+          ownerId,
+          await symmetricEncrypt({ key: deps.authSecret, data: JSON.stringify(codes) }),
+        )
+        if (!stored) throw new Error('RECOVERY_CODES_UNAVAILABLE')
+        return { recoveryCodes: codes }
+      },
+      async revokeAllSessions() {
+        const ownerId = await deps.workspace.getOnlyOwnerId()
+        if (!ownerId) return { revoked: 0 }
+        const auth = deps.localAuth ?? deps.auth
+        const token = await createManagementSession(auth, ownerId)
+        try {
+          const revoke = auth.api.revokeSessions as unknown as (input: unknown) => Promise<unknown>
+          await revoke({ headers: bearerHeaders(token) })
+          return { revoked: true }
+        } finally {
+          await auth.api.signOut({ headers: bearerHeaders(token) }).catch(() => undefined)
+        }
+      },
+      async listDevices() {
+        return deps.remote ? deps.remote.listDevices() : []
+      },
+      async revokeDevice(deviceId: string) {
+        if (!safeId(deviceId)) throw new Error('INVALID_DEVICE_ID')
+        if (!deps.remote || !(await deps.remote.revokeDevice(deviceId)))
+          throw new Error('DEVICE_NOT_FOUND')
+        return { revoked: true }
+      },
+      async revokeAllDevices() {
+        if (!deps.remote) return { revoked: 0 }
+        const devices = await deps.remote.listDevices()
+        const results = await Promise.all(
+          devices.map((device) => deps.remote!.revokeDevice(device.id)),
+        )
+        return { revoked: results.filter(Boolean).length }
+      },
+      async ownerCodeShow() {
+        if (!deps.remote) throw new Error('REMOTE_UNAVAILABLE')
+        return { ownerCode: await deps.remote.trust.ownerCode() }
+      },
+      async ownerCodeRotate() {
+        if (!deps.remote) throw new Error('REMOTE_UNAVAILABLE')
+        return { ownerCode: await deps.remote.rotateOwnerCode() }
+      },
+      async trustReset() {
+        if (!deps.remote) throw new Error('REMOTE_UNAVAILABLE')
+        return deps.remote.resetRemoteTrust()
+      },
+    }
   }
 
   async function threadMutation(
@@ -1454,13 +1817,13 @@ export function createOwnerApplicationServices(
     }
   }
 
-  async function withBootstrapLock<T>(operation: () => Promise<T>): Promise<T> {
+  async function withOwnerCreationLock<T>(operation: () => Promise<T>): Promise<T> {
     let release!: () => void
     const next = new Promise<void>((resolve) => {
       release = resolve
     })
-    const previous = bootstrapQueue
-    bootstrapQueue = next
+    const previous = ownerCreationQueue
+    ownerCreationQueue = next
     await previous
     try {
       return await operation()
@@ -1506,6 +1869,10 @@ async function sessionResult(auth: Auth, response: Response): Promise<OwnerSessi
   if (!token) throw new OwnerMethodError('AUTH_FAILURE')
   const resolved = await sessionFromToken(auth, token)
   if (!resolved) throw new OwnerMethodError('AUTH_FAILURE')
+  return sessionResultFromResolved(resolved)
+}
+
+function sessionResultFromResolved(resolved: ResolvedOwnerSession): OwnerSessionResult {
   const session = resolved.snapshot
   return {
     token: resolved.token,
@@ -1555,6 +1922,47 @@ async function sessionFromToken(auth: Auth, token: string): Promise<ResolvedOwne
     },
     token: resolvedToken,
   }
+}
+
+async function getOwnerSecurityStatus(auth: Auth, ownerId: string) {
+  const authContext = await auth.$context
+  const owner = await authContext.internalAdapter.findUserById(ownerId)
+  const token = await createManagementSession(auth, ownerId)
+  let recoveryCodesAvailable = false
+  try {
+    const result = await auth.api.viewBackupCodes({
+      body: { userId: ownerId },
+      headers: bearerHeaders(token),
+    })
+    recoveryCodesAvailable =
+      isRecord(result) &&
+      Array.isArray(result.backupCodes) &&
+      result.backupCodes.length > 0 &&
+      result.backupCodes.every((code) => typeof code === 'string')
+  } catch {
+    recoveryCodesAvailable = false
+  } finally {
+    await auth.api.signOut({ headers: bearerHeaders(token) }).catch(() => undefined)
+  }
+  return {
+    initialized: false,
+    totpEnabled: Boolean((owner as { twoFactorEnabled?: boolean } | null)?.twoFactorEnabled),
+    recoveryCodesAvailable,
+  }
+}
+
+async function createManagementSession(auth: Auth, ownerId: string) {
+  const authContext = await auth.$context
+  const session = await authContext.internalAdapter.createSession(ownerId)
+  return session.token
+}
+
+function generateRecoveryCodeGroup() {
+  // Matches Better Auth's own backup code shape: 10 codes, 10 chars, `xxxxx-xxxxx`.
+  return Array.from({ length: 10 }, () => {
+    const code = generateRandomString(10, 'a-z', '0-9', 'A-Z')
+    return `${code.slice(0, 5)}-${code.slice(5)}`
+  })
 }
 
 function bearerHeaders(token: string): Headers {

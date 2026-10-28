@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 
-import { credential, project, user } from './db/schema.js'
+import {
+  credential,
+  ownerSecurityState,
+  project,
+  twoFactor as twoFactorTable,
+  user,
+} from './db/schema.js'
 import type { ServerConfig } from './config.js'
 import type { Database } from './database.js'
 import {
@@ -27,6 +33,51 @@ export function createWorkspaceService(
     async hasOwner() {
       const [owner] = await db.select({ id: user.id }).from(user).limit(1)
       return Boolean(owner)
+    },
+    async isOwnerSecurityInitialized(ownerId: string) {
+      const [state] = await db
+        .select({ acknowledgedAt: ownerSecurityState.recoveryCodesAcknowledgedAt })
+        .from(ownerSecurityState)
+        .where(eq(ownerSecurityState.ownerId, ownerId))
+      return Boolean(state?.acknowledgedAt)
+    },
+    async acknowledgeOwnerRecoveryCodes(ownerId: string) {
+      const [owner] = await db
+        .select({ twoFactorEnabled: user.twoFactorEnabled })
+        .from(user)
+        .where(eq(user.id, ownerId))
+      if (!owner?.twoFactorEnabled) return false
+      const acknowledgedAt = new Date()
+      await db
+        .insert(ownerSecurityState)
+        .values({ ownerId, recoveryCodesAcknowledgedAt: acknowledgedAt })
+        .onConflictDoUpdate({
+          target: ownerSecurityState.ownerId,
+          set: { recoveryCodesAcknowledgedAt: acknowledgedAt },
+        })
+      return true
+    },
+    async clearOwnerSecurityInitialization(ownerId: string) {
+      await db.delete(ownerSecurityState).where(eq(ownerSecurityState.ownerId, ownerId))
+    },
+    async listRecoveryCodes(ownerId: string) {
+      const [twoFactor] = await db
+        .select({ backupCodes: twoFactorTable.backupCodes })
+        .from(twoFactorTable)
+        .where(eq(twoFactorTable.userId, ownerId))
+      return twoFactor?.backupCodes ?? null
+    },
+    async replaceRecoveryCodes(ownerId: string, backupCodes: string) {
+      const updated = await db
+        .update(twoFactorTable)
+        .set({ backupCodes })
+        .where(eq(twoFactorTable.userId, ownerId))
+        .returning({ id: twoFactorTable.id })
+      return updated.length > 0
+    },
+    async getOnlyOwnerId() {
+      const [owner] = await db.select({ id: user.id }).from(user).limit(1)
+      return owner?.id ?? null
     },
     getUserRoot(userId: string) {
       return userRoot(config, userId)

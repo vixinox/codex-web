@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
 import {
   decryptPayload,
@@ -12,14 +12,12 @@ import {
   encodeFrame,
   isEncryptedFrame,
   isHandshakeFrame,
-  isPairingAcceptFrame,
   parseFrame,
   RELAY_PROTOCOL_VERSION,
   type ConnectionCloseFrame,
   type EncryptedFrame,
   type RelayForwardFrame,
 } from '@codex-web/protocol/relay'
-import { encodeOwnerFrame } from '@codex-web/protocol/owner'
 
 import type { ServerConfig } from '../config.js'
 import {
@@ -27,8 +25,8 @@ import {
   VirtualOwnerTransport,
   type OwnerMethodRegistry,
 } from '../owner/session-runtime.js'
-import { RemoteTrustStore, type PairingOfferWithClientToken } from './trust-store.js'
-import { RemoteBootstrapStore } from './bootstrap-store.js'
+import { RemoteTrustStore } from './trust-store.js'
+import { LoginQrCapabilityStore } from './login-qr-capability-store.js'
 import { signAdmissionToken } from './admission-token.js'
 
 export type ConnectorTransport = {
@@ -86,6 +84,7 @@ export class OwnerConnector {
   private transport?: ConnectorTransport
   private socket?: RelayWebSocket
   private connected = false
+  private lastRelayCloseReason?: string
   private running = false
   private lastRelayActivity = 0
   private reconnectTimer?: ReturnType<typeof setTimeout>
@@ -95,7 +94,6 @@ export class OwnerConnector {
   private readonly connectionId = randomUUID()
   private readonly connections = new Map<string, ConnectionState>()
   private readonly connectedClientIds = new Map<string, string>()
-  private readonly promotingBindings = new Set<string>()
   private runtimeRegistry?: OwnerMethodRegistry
   private resumeSession?: NonNullable<
     ConstructorParameters<typeof OwnerSessionRuntime>[2]['resumeSession']
@@ -104,26 +102,17 @@ export class OwnerConnector {
 
   private readonly config: ServerConfig
   readonly trust: RemoteTrustStore
-  readonly bootstrap: RemoteBootstrapStore
+  readonly loginQrCapabilities = new LoginQrCapabilityStore()
   private readonly webSocketFactory: RelayWebSocketFactory
 
   constructor(
     config: ServerConfig,
     trust: RemoteTrustStore,
-    bootstrapOrFactory: RemoteBootstrapStore | RelayWebSocketFactory = new RemoteBootstrapStore(
-      config.dataRoot,
-    ),
     webSocketFactory: RelayWebSocketFactory = defaultWebSocketFactory,
   ) {
     this.config = config
     this.trust = trust
-    if (typeof bootstrapOrFactory === 'function') {
-      this.bootstrap = new RemoteBootstrapStore(config.dataRoot)
-      this.webSocketFactory = bootstrapOrFactory
-    } else {
-      this.bootstrap = bootstrapOrFactory
-      this.webSocketFactory = webSocketFactory
-    }
+    this.webSocketFactory = webSocketFactory
   }
 
   async start() {
@@ -134,6 +123,7 @@ export class OwnerConnector {
 
   async stop() {
     this.running = false
+    this.loginQrCapabilities.invalidate()
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     this.clearRelayTimers()
@@ -157,72 +147,47 @@ export class OwnerConnector {
     return this.connected
   }
 
-  async createPairingOffer(
-    relayUrl = this.config.remoteRelayUrl ?? '',
-  ): Promise<PairingOfferWithClientToken> {
-    if (!relayUrl) throw new Error('CODEX_REMOTE_RELAY_URL_REQUIRED')
-    if (!this.config.remoteRelayOwnerToken) throw new Error('CODEX_REMOTE_RELAY_ADMISSION_REQUIRED')
-    const offer = await this.trust.createPairingOffer(relayUrl)
-    const expiresAt = Date.parse(offer.expiresAt)
-    return {
-      ...offer,
-      clientToken: signRelayToken(this.requireRelaySecret(), {
-        nodeId: offer.nodeId,
-        trustEpoch: offer.trustEpoch,
-        role: 'client',
-        expiresAt,
-      }),
+  async waitUntilConnected(timeoutMs = RELAY_READY_TIMEOUT_MS) {
+    const deadline = Date.now() + timeoutMs
+    while (!this.connected && Date.now() < deadline) {
+      if (this.lastRelayCloseReason === 'owner_code_conflict')
+        throw new Error('OWNER_CODE_CONFLICT')
+      if (!this.running) throw new Error('REMOTE_UNAVAILABLE')
+      // Polling depends on each prior state check.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => {
+        const poll = () => {
+          if (
+            this.connected ||
+            this.lastRelayCloseReason === 'owner_code_conflict' ||
+            !this.running
+          ) {
+            resolve(undefined)
+          } else if (Date.now() >= deadline) {
+            resolve(undefined)
+          } else {
+            setTimeout(poll, 50)
+          }
+        }
+        setTimeout(poll, 50)
+      })
     }
+    if (!this.connected) throw new Error('REMOTE_UNAVAILABLE')
   }
 
-  async createBootstrapCapability() {
-    if (!this.config.remoteRelayUrl) throw new Error('CODEX_REMOTE_RELAY_URL_REQUIRED')
-    if (!this.config.remoteRelayOwnerToken) throw new Error('CODEX_REMOTE_RELAY_ADMISSION_REQUIRED')
-    const identity = await this.trust.identity()
-    const capability = await this.bootstrap.issue(identity.nodeId, identity.trustEpoch)
-    return {
-      ...capability,
-      nodeId: identity.nodeId,
-      trustEpoch: identity.trustEpoch,
-      relayUrl: this.config.remoteRelayUrl,
-      clientToken: signRelayToken(this.requireRelaySecret(), {
-        nodeId: identity.nodeId,
-        trustEpoch: identity.trustEpoch,
-        role: 'client',
-        admission: 'bootstrap',
-        purpose: 'bootstrap-attach',
-        bootstrapId: capability.bootstrapId,
-        expiresAt: capability.expiresAt,
-      }),
-    }
-  }
-
-  async consumeBootstrapCapability(token: string) {
-    const identity = await this.trust.identity()
-    const bootstrapId = await this.bootstrap.consume(
-      token,
-      this.requireRelaySecret(),
-      identity.nodeId,
-      identity.trustEpoch,
-    )
-    if (!bootstrapId) throw new Error('INVALID_BOOTSTRAP_CAPABILITY')
-    const capability = await this.bootstrap.capability(bootstrapId)
-    if (!capability) throw new Error('INVALID_BOOTSTRAP_CAPABILITY')
-    return {
-      bootstrapId,
-      nodeId: identity.nodeId,
-      trustEpoch: identity.trustEpoch,
-      relayUrl: this.config.remoteRelayUrl,
-      clientToken: signRelayToken(this.requireRelaySecret(), {
-        nodeId: identity.nodeId,
-        trustEpoch: identity.trustEpoch,
-        role: 'client',
-        admission: 'bootstrap',
-        purpose: 'bootstrap-attach',
-        bootstrapId,
-        expiresAt: capability.expiresAt,
-      }),
-      expiresAt: capability.expiresAt,
+  async rotateOwnerCode() {
+    const previous = await this.trust.ownerCode()
+    const ownerCode = await this.trust.rotateOwnerCode()
+    if (!this.config.remoteRelayUrl) return ownerCode
+    await this.refreshOwnerCode()
+    try {
+      await this.waitUntilConnected()
+      return ownerCode
+    } catch (error) {
+      await this.trust.setOwnerCode(previous)
+      await this.refreshOwnerCode()
+      await this.waitUntilConnected().catch(() => undefined)
+      throw error
     }
   }
 
@@ -238,15 +203,35 @@ export class OwnerConnector {
     })
   }
 
-  async acceptPairing(challenge: string, clientPublicKey: string) {
-    return this.trust.acceptPairing(challenge, clientPublicKey)
-  }
-
   async resetRemoteTrust() {
     await this.closeAllConnections('trust_reset')
     const reset = await this.trust.reset()
+    this.loginQrCapabilities.invalidate()
     this.socket?.close?.(1012, 'trust_reset')
     return reset
+  }
+
+  async issueLoginQrCapability(ownerId: string) {
+    const identity = await this.trust.identity()
+    return this.loginQrCapabilities.issue(ownerId, identity.nodeId, identity.trustEpoch)
+  }
+
+  async cancelLoginQrCapability() {
+    return this.loginQrCapabilities.cancel()
+  }
+
+  loginQrCapabilityStatus() {
+    return this.loginQrCapabilities.status()
+  }
+
+  async consumeLoginQrCapability(capability: string) {
+    const identity = await this.trust.identity()
+    return this.loginQrCapabilities.consume(capability, identity.nodeId, identity.trustEpoch)
+  }
+
+  async refreshOwnerCode() {
+    await this.closeAllConnections('owner_code_rotated')
+    this.socket?.close?.(1012, 'owner_code_rotated')
   }
 
   configureRemoteSessions(
@@ -261,77 +246,6 @@ export class OwnerConnector {
 
   async listDevices() {
     return this.trust.listPeers()
-  }
-
-  async listPendingBindings() {
-    const pending = []
-    for (const [connectionId, state] of this.connections) {
-      if (state.phase !== 'open' || !state.session.deviceId.startsWith('bootstrap:')) continue
-      const requestId = state.session.deviceId.slice('bootstrap:'.length)
-      if (this.promotingBindings.has(requestId)) continue
-      const capability = await this.bootstrap.capability(requestId)
-      if (!capability) {
-        void this.closeConnection(connectionId, 'binding_expired')
-        continue
-      }
-      pending.push({
-        requestId,
-        source: 'remote browser',
-        createdAt: new Date(state.session.createdAt).toISOString(),
-        publicKeyFingerprint: createHash('sha256')
-          .update(state.session.publicKey)
-          .digest('base64url')
-          .slice(0, 16),
-        expiresAt: new Date(capability.expiresAt).toISOString(),
-      })
-    }
-    return pending
-  }
-
-  async approveBootstrap(requestId: string) {
-    const entry = [...this.connections.entries()].find(
-      ([, state]) => state.phase === 'open' && state.session.deviceId === `bootstrap:${requestId}`,
-    )
-    if (!entry || entry[1].phase !== 'open') return null
-    return this.promoteBootstrap(requestId, entry[1].session.publicKey, true)
-  }
-
-  async promoteBootstrap(requestId: string, clientPublicKey: string, closeImmediately = false) {
-    if (this.promotingBindings.has(requestId)) return null
-    const entry = [...this.connections.entries()].find(
-      ([, state]) => state.phase === 'open' && state.session.deviceId === `bootstrap:${requestId}`,
-    )
-    if (!entry || entry[1].phase !== 'open' || entry[1].session.publicKey !== clientPublicKey)
-      return null
-    this.promotingBindings.add(requestId)
-    try {
-      const deviceId = await this.trust.trustPeer(clientPublicKey)
-      const clientToken = await this.createPairedClientToken(deviceId)
-      if (closeImmediately) {
-        await this.sendEncrypted(
-          entry[0],
-          encodeOwnerFrame({
-            type: 'notification',
-            method: 'remote.device.paired',
-            params: { deviceId, clientToken },
-          }),
-        )
-      }
-      entry[1].session.transport.promote?.(deviceId, clientToken)
-      if (closeImmediately) await this.closeConnection(entry[0], 'paired')
-      return { deviceId, clientToken }
-    } finally {
-      this.promotingBindings.delete(requestId)
-    }
-  }
-
-  async rejectBootstrap(requestId: string) {
-    const entry = [...this.connections.entries()].find(
-      ([, state]) => state.phase === 'open' && state.session.deviceId === `bootstrap:${requestId}`,
-    )
-    if (!entry) return false
-    await this.closeConnection(entry[0], 'binding_rejected')
-    return true
   }
 
   async revokeDevice(deviceId: string) {
@@ -371,6 +285,7 @@ export class OwnerConnector {
     socket.onopen = () => {
       if (this.socket !== socket) return
       this.attachTransport(socket)
+      this.lastRelayCloseReason = undefined
       this.lastRelayActivity = Date.now()
       this.relayReadyTimer = setTimeout(() => {
         if (this.socket !== socket) return
@@ -397,7 +312,21 @@ export class OwnerConnector {
       if (this.socket !== socket) return
       this.detachTransport()
     }
-    socket.onclose = () => {
+    socket.onclose = (...args: never[]) => {
+      const [eventOrCode, closeReason] = args as unknown[]
+      const event =
+        typeof eventOrCode === 'object' && eventOrCode !== null
+          ? (eventOrCode as { reason?: unknown })
+          : undefined
+      const reason =
+        typeof event?.reason === 'string'
+          ? event.reason
+          : typeof closeReason === 'string'
+            ? closeReason
+            : Buffer.isBuffer(closeReason)
+              ? closeReason.toString()
+              : undefined
+      this.lastRelayCloseReason = reason
       if (this.socket === socket) this.socket = undefined
       this.clearRelayTimers()
       this.detachTransport()
@@ -407,12 +336,13 @@ export class OwnerConnector {
   }
 
   private async sendRelayAttach() {
-    const { nodeId, trustEpoch, ownerPublicKey } = await this.trust.identity()
+    const { nodeId, ownerCode, trustEpoch, ownerPublicKey } = await this.trust.identity()
     if (!this.socket) return
     this.sendRelayFrame({
       type: 'relay.attach',
       version: RELAY_PROTOCOL_VERSION,
       nodeId,
+      ownerCode,
       role: 'owner',
       connectionId: this.connectionId,
       ownerToken: signRelayToken(this.requireRelaySecret(), {
@@ -486,14 +416,14 @@ export class OwnerConnector {
     }
     if (frame.type === 'relay.client.connected') {
       const deviceId = frame.deviceId
-      const bootstrapId = frame.bootstrapId
-      if (!deviceId && !(frame.admission === 'bootstrap' && bootstrapId)) {
+      const loginCandidate = frame.admission === 'login'
+      if (!deviceId && !loginCandidate) {
         // Relay admission always carries the device binding; without it the Owner cannot tell
         // which paired device owns this connection.
         this.socket?.close?.(1008, 'invalid_client_binding')
         return
       }
-      this.connectedClientIds.set(frame.connectionId, deviceId ?? `bootstrap:${bootstrapId}`)
+      this.connectedClientIds.set(frame.connectionId, deviceId ?? 'login')
       this.connections.set(frame.connectionId, { phase: 'awaiting_handshake' })
       return
     }
@@ -510,14 +440,6 @@ export class OwnerConnector {
     if (!state) return
     const payload = parseFrame(frame.payload)
     if (!payload) return
-    if (isPairingAcceptFrame(payload)) {
-      if (state.phase !== 'awaiting_handshake') {
-        this.teardownConnection(frame.connectionId, 'invalid_handshake_state')
-        return
-      }
-      await this.handlePairingAccept(frame.connectionId, payload)
-      return
-    }
     if (isHandshakeFrame(payload)) {
       if (state.phase !== 'awaiting_handshake') {
         // A repeat handshake would overwrite an established session (or race a pending one).
@@ -536,45 +458,6 @@ export class OwnerConnector {
     await this.handleEncrypted(frame.connectionId, state.session, payload)
   }
 
-  private async handlePairingAccept(
-    connectionId: string,
-    payload: Extract<ReturnType<typeof parseFrame>, { type: 'pairing.accept' }>,
-  ) {
-    const identity = await this.trust.identity()
-    const deviceId =
-      payload.nodeId === identity.nodeId
-        ? await this.trust.acceptPairing(payload.challenge, payload.clientPublicKey)
-        : null
-    const nextIdentity = await this.trust.identity()
-    const accepted = deviceId !== null
-    this.sendRelayPayload(
-      connectionId,
-      encodeFrame({
-        type: 'pairing.result',
-        version: RELAY_PROTOCOL_VERSION,
-        nodeId: nextIdentity.nodeId,
-        accepted,
-        trustEpoch: nextIdentity.trustEpoch,
-        ownerPublicKey: nextIdentity.ownerPublicKey,
-        ...(deviceId
-          ? {
-              deviceId,
-              clientToken: signRelayToken(this.requireRelaySecret(), {
-                nodeId: nextIdentity.nodeId,
-                trustEpoch: nextIdentity.trustEpoch,
-                role: 'client',
-                expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-                deviceId,
-              }),
-            }
-          : {}),
-      }),
-    )
-    // A rejected pairing keeps the connection in `awaiting_handshake`; an accepted one must
-    // re-attach with the newly issued device credential.
-    if (accepted) this.connections.set(connectionId, { phase: 'awaiting_handshake' })
-  }
-
   private async handleHandshake(
     connectionId: string,
     frame: Extract<ReturnType<typeof parseFrame>, { type: 'handshake' }>,
@@ -582,21 +465,11 @@ export class OwnerConnector {
     const identity = await this.trust.identity()
     const attachedDeviceId = this.connectedClientIds.get(connectionId)
     const deviceId = await this.trust.deviceId(frame.clientPublicKey)
-    const bootstrapId = attachedDeviceId?.startsWith('bootstrap:')
-      ? attachedDeviceId.slice('bootstrap:'.length)
-      : undefined
-    const provisional = Boolean(bootstrapId)
+    const loginCandidate = attachedDeviceId === 'login'
     if (
       frame.nodeId !== identity.nodeId ||
       frame.trustEpoch !== identity.trustEpoch ||
-      (!provisional && (!deviceId || attachedDeviceId !== deviceId)) ||
-      (provisional &&
-        !(await this.bootstrap.authorizeAttach(
-          bootstrapId!,
-          identity.nodeId,
-          identity.trustEpoch,
-          frame.clientPublicKey,
-        ))) ||
+      (!loginCandidate && (!deviceId || attachedDeviceId !== deviceId)) ||
       !this.runtimeRegistry ||
       !this.resumeSession
     ) {
@@ -621,12 +494,12 @@ export class OwnerConnector {
     }
     if (this.connections.get(connectionId)?.phase !== 'handshaking') return
     const transport = new VirtualOwnerTransport(
-      deviceId ?? `bootstrap:${bootstrapId}`,
+      deviceId ?? 'login',
       (ownerFrame) => void this.sendEncrypted(connectionId, ownerFrame),
       (code, reason) => this.teardownConnection(connectionId, reason, code),
     )
-    if (provisional && bootstrapId) {
-      transport.bootstrapId = bootstrapId
+    if (loginCandidate) {
+      transport.loginCandidate = true
       transport.clientPublicKey = frame.clientPublicKey
       transport.promote = (promotedDeviceId) => {
         transport.pairedDeviceId = promotedDeviceId
@@ -636,22 +509,13 @@ export class OwnerConnector {
     const runtime = new OwnerSessionRuntime(transport, this.runtimeRegistry, {
       connectionId,
       resumeSession: this.resumeSession,
-      provisional: provisional
-        ? {
-            bootstrapId: bootstrapId!,
-            nodeId: identity.nodeId,
-            trustEpoch: identity.trustEpoch,
-            clientPublicKey: frame.clientPublicKey,
-            store: this.bootstrap,
-          }
-        : undefined,
     })
     const session: ClientSession = {
       key,
       lastReceiveSequence: 0,
       sendSequence: 0,
       publicKey: frame.clientPublicKey,
-      deviceId: deviceId ?? `bootstrap:${bootstrapId}`,
+      deviceId: deviceId ?? 'login',
       transport,
       runtime,
       createdAt: Date.now(),
@@ -737,12 +601,6 @@ export class OwnerConnector {
       // relay to drop the routing slot before releasing the encrypted channel below.
       this.sendClose(connectionId, reason ?? 'connection_closed')
       state.session.transport.close(closeCode, reason)
-      if (state.session.deviceId.startsWith('bootstrap:')) {
-        void this.bootstrap.invalidateBinding(
-          state.session.deviceId.slice('bootstrap:'.length),
-          state.session.publicKey,
-        )
-      }
       return
     }
     // A connection that never completed its handshake has no encrypted channel, so the peer can
@@ -808,11 +666,5 @@ function sessionKeyContext(
 }
 
 function signRelayToken(secret: string, claims: Record<string, string | number>) {
-  const purpose =
-    claims.purpose === 'bootstrap-attach'
-      ? 'bootstrap-attach'
-      : claims.purpose === 'paired-attach'
-        ? 'paired-attach'
-        : 'paired-attach'
-  return signAdmissionToken(secret, { ...claims, purpose } as never)
+  return signAdmissionToken(secret, { ...claims, purpose: 'paired-attach' } as never)
 }

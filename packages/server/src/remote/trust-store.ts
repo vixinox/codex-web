@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { randomInt } from 'node:crypto'
 import { join } from 'node:path'
 import {
   randomToken,
@@ -6,18 +7,10 @@ import {
   serializeKeyPair,
   type SerializedKeyPair,
 } from '@codex-web/protocol/relay/crypto'
-
 import { importPublicKey } from '@codex-web/protocol/relay/crypto'
 
 const STORE_NAME = 'remote-trust.json'
-const OFFER_TTL_MS = 5 * 60 * 1_000
 const TRUST_CHALLENGE_TTL_MS = 60_000
-
-type PendingOffer = {
-  challenge: string
-  expiresAt: string
-  used: boolean
-}
 
 type RemotePeer = {
   id: string
@@ -28,21 +21,11 @@ type RemotePeer = {
 
 type TrustState = {
   nodeId: string
+  ownerCode: string
   trustEpoch: number
   keyPair: SerializedKeyPair
-  pendingOffers: PendingOffer[]
   peers: RemotePeer[]
 }
-
-export type PairingOffer = {
-  nodeId: string
-  ownerPublicKey: string
-  challenge: string
-  expiresAt: string
-  trustEpoch: number
-}
-
-export type PairingOfferWithClientToken = PairingOffer & { relayUrl: string; clientToken: string }
 
 export class RemoteTrustStore {
   private state?: TrustState
@@ -58,17 +41,17 @@ export class RemoteTrustStore {
     if (this.state) return this.state
     try {
       const raw = await readFile(this.path(), 'utf8')
-      const { state, legacyPeerIds } = parseState(raw)
+      const { state, legacyPeerIds, legacyOwnerCode } = parseState(raw)
       this.state = state
-      if (legacyPeerIds) await this.persist()
+      if (legacyPeerIds || legacyOwnerCode) await this.persist()
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       const keyPair = await serializeKeyPair(await generateKeyPair())
       this.state = {
         nodeId: randomToken(18),
+        ownerCode: createOwnerCode(),
         trustEpoch: 0,
         keyPair,
-        pendingOffers: [],
         peers: [],
       }
       await this.persist()
@@ -76,58 +59,15 @@ export class RemoteTrustStore {
     return this.state
   }
 
-  async createPairingOffer(relayUrl: string): Promise<PairingOffer & { relayUrl: string }> {
-    const state = await this.load()
-    const now = Date.now()
-    state.pendingOffers = state.pendingOffers.filter(
-      (offer) => !offer.used && Date.parse(offer.expiresAt) > now,
-    )
-    const expiresAt = new Date(now + OFFER_TTL_MS).toISOString()
-    const offer: PendingOffer = { challenge: randomToken(24), expiresAt, used: false }
-    state.pendingOffers.push(offer)
-    await this.persist()
-    return {
-      relayUrl,
-      nodeId: state.nodeId,
-      ownerPublicKey: state.keyPair.publicKey,
-      challenge: offer.challenge,
-      expiresAt,
-      trustEpoch: state.trustEpoch,
-    }
-  }
-
-  async acceptPairing(challenge: string, clientPublicKey: string) {
-    const state = await this.load()
-    await importPublicKey(clientPublicKey)
-    const offer = state.pendingOffers.find(
-      (candidate) =>
-        candidate.challenge === challenge &&
-        !candidate.used &&
-        Date.parse(candidate.expiresAt) > Date.now(),
-    )
-    if (!offer) return null
-    offer.used = true
-    if (state.peers.some((peer) => peer.publicKey === clientPublicKey)) {
-      // Re-pairing an already trusted key must not mint a second device identity for it.
-      await this.persist()
-      return null
-    }
-    const deviceId = randomToken(12)
-    state.peers.push({
-      id: deviceId,
-      publicKey: clientPublicKey,
-      createdAt: new Date().toISOString(),
-      lastSeenAt: null,
-    })
-    await this.persist()
-    return deviceId
-  }
-
   async trustPeer(clientPublicKey: string) {
+    return (await this.trustPeerWithStatus(clientPublicKey)).deviceId
+  }
+
+  async trustPeerWithStatus(clientPublicKey: string) {
     const state = await this.load()
     await importPublicKey(clientPublicKey)
     const existing = state.peers.find((peer) => peer.publicKey === clientPublicKey)
-    if (existing) return existing.id
+    if (existing) return { deviceId: existing.id, created: false }
     const deviceId = randomToken(12)
     state.peers.push({
       id: deviceId,
@@ -136,7 +76,7 @@ export class RemoteTrustStore {
       lastSeenAt: new Date().toISOString(),
     })
     await this.persist()
-    return deviceId
+    return { deviceId, created: true }
   }
 
   issueTrustChallenge(_sessionId: string, publicKey: string) {
@@ -191,7 +131,6 @@ export class RemoteTrustStore {
     const state = await this.load()
     state.trustEpoch += 1
     state.keyPair = await serializeKeyPair(await generateKeyPair())
-    state.pendingOffers = []
     state.peers = []
     await this.persist()
     return {
@@ -205,10 +144,29 @@ export class RemoteTrustStore {
     const state = await this.load()
     return {
       nodeId: state.nodeId,
+      ownerCode: state.ownerCode,
       trustEpoch: state.trustEpoch,
       ownerPublicKey: state.keyPair.publicKey,
       privateKey: state.keyPair.privateKey,
     }
+  }
+
+  async ownerCode() {
+    return (await this.load()).ownerCode
+  }
+
+  async rotateOwnerCode() {
+    const state = await this.load()
+    state.ownerCode = createOwnerCode()
+    await this.persist()
+    return state.ownerCode
+  }
+
+  async setOwnerCode(ownerCode: string) {
+    if (!isOwnerCode(ownerCode)) throw new Error('INVALID_OWNER_CODE')
+    const state = await this.load()
+    state.ownerCode = ownerCode
+    await this.persist()
   }
 
   async status() {
@@ -218,9 +176,6 @@ export class RemoteTrustStore {
       trustEpoch: state.trustEpoch,
       ownerPublicKey: state.keyPair.publicKey,
       pairedClients: state.peers.length,
-      pendingOffers: state.pendingOffers.filter(
-        (offer) => !offer.used && Date.parse(offer.expiresAt) > Date.now(),
-      ).length,
     }
   }
 
@@ -250,34 +205,25 @@ export class RemoteTrustStore {
  * silently repaired, because a dropped peer entry or reset epoch would change who is authorized.
  * The only tolerated legacy shape is a peer written before device ids existed.
  */
-function parseState(raw: string): { state: TrustState; legacyPeerIds: boolean } {
+function parseState(raw: string): {
+  state: TrustState
+  legacyPeerIds: boolean
+  legacyOwnerCode: boolean
+} {
   const value: unknown = JSON.parse(raw)
   if (!isRecord(value)) throw new Error('Invalid remote trust state')
-  const { nodeId, trustEpoch, keyPair, pendingOffers, peers } = value
+  const { nodeId, ownerCode, trustEpoch, keyPair, peers } = value
   if (
     typeof nodeId !== 'string' ||
     nodeId.length === 0 ||
+    (ownerCode !== undefined && !isOwnerCode(ownerCode)) ||
     !Number.isSafeInteger(trustEpoch) ||
     !isRecord(keyPair) ||
     typeof keyPair.publicKey !== 'string' ||
     typeof keyPair.privateKey !== 'string' ||
-    !Array.isArray(pendingOffers) ||
     !Array.isArray(peers)
   )
     throw new Error('Invalid remote trust state')
-
-  const parsedOffers: PendingOffer[] = pendingOffers.map((offer) => {
-    if (
-      !isRecord(offer) ||
-      typeof offer.challenge !== 'string' ||
-      offer.challenge.length === 0 ||
-      typeof offer.expiresAt !== 'string' ||
-      !Number.isFinite(Date.parse(offer.expiresAt)) ||
-      typeof offer.used !== 'boolean'
-    )
-      throw new Error('Invalid remote trust offer')
-    return { challenge: offer.challenge, expiresAt: offer.expiresAt, used: offer.used }
-  })
 
   const seenKeys = new Set<string>()
   const seenIds = new Set<string>()
@@ -315,13 +261,22 @@ function parseState(raw: string): { state: TrustState; legacyPeerIds: boolean } 
   return {
     state: {
       nodeId,
+      ownerCode: isOwnerCode(ownerCode) ? ownerCode : createOwnerCode(),
       trustEpoch: trustEpoch as number,
       keyPair: { publicKey: keyPair.publicKey, privateKey: keyPair.privateKey },
-      pendingOffers: parsedOffers,
       peers: parsedPeers,
     },
     legacyPeerIds,
+    legacyOwnerCode: ownerCode === undefined,
   }
+}
+
+function createOwnerCode() {
+  return randomInt(0, 1_000_000_000).toString().padStart(9, '0')
+}
+
+function isOwnerCode(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{9}$/.test(value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
