@@ -12,8 +12,10 @@ export type OwnerTransport = {
   pairedDeviceId?: string
   e2eeVerified?: boolean
   loginCandidate?: boolean
+  firstSessionCandidate?: boolean
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
+  enrollmentTicket?: string
   promoted?: boolean
   send(frame: string | Uint8Array): Promise<void> | void
   close(code?: number, reason?: string): void
@@ -29,6 +31,7 @@ export class VirtualOwnerTransport implements OwnerTransport {
   promote?: (deviceId: string, clientToken: string) => void
   promoted = false
   loginCandidate = false
+  firstSessionCandidate = false
   private readonly sendFrame: (frame: string | Uint8Array) => void
   private readonly closeTransport: (code?: number, reason?: string) => void
   private readonly messageListeners = new Set<(frame: string | Uint8Array) => void>()
@@ -84,6 +87,7 @@ export type OwnerContext = {
   ownerId: string
   sessionId: string
   sessionToken?: string
+  scope?: 'bootstrap' | 'full'
   clientId: string
   connectionId: string
   transport: { kind: OwnerTransport['kind']; pairedDeviceId?: string }
@@ -93,7 +97,7 @@ export type OwnerAdmission = {
   ownerId: string
   sessionId: string
   sessionToken?: string
-  setupOnly?: boolean
+  scope?: 'bootstrap' | 'full'
 }
 
 export type OwnerStream = {
@@ -111,6 +115,8 @@ export type OwnerMethodContext = {
   readonly connectionId: string
   readonly transport: OwnerTransport
   readonly signal: AbortSignal
+  readonly requestId: string
+  readonly enrollmentTicket?: string
   authenticate(admission: OwnerAdmission): Promise<void> | void
   unauthenticate(): void
 }
@@ -151,6 +157,10 @@ const AUTH_FAILURE: OwnerError = {
   code: 'UNAUTHORIZED',
   message: 'Authentication is required.',
   retryable: false,
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 export class OwnerMethodError extends Error {
@@ -308,29 +318,14 @@ export class OwnerSessionRuntime {
       return
     }
     if (
-      this.session?.setupOnly &&
-      ![
-        'owner.status',
-        'owner.security.status',
-        'owner.security.totp.setup',
-        'owner.security.totp.verify',
-        'owner.security.recovery.rotate',
-        'owner.security.recovery.acknowledge',
-      ].includes(methodName)
-    ) {
-      await this.respondError(requestId, AUTH_FAILURE)
-      return
-    }
-    if (
       this.transport.kind === 'relay' &&
       this.transport.loginCandidate &&
       !this.transport.promoted &&
       ![
         'owner.status',
-        'owner.session.open',
-        'owner.login.verifyTotp',
-        'owner.login.verifyRecoveryCode',
-        'owner.loginQr.redeem',
+        'owner.firstSession.redeem',
+        'owner.passkey.authentication.options',
+        'owner.passkey.authentication.verify',
       ].includes(methodName)
     ) {
       await this.respondError(requestId, AUTH_FAILURE)
@@ -345,6 +340,51 @@ export class OwnerSessionRuntime {
       return
     }
     if (method.access === 'authenticated' && !this.session) {
+      await this.respondError(requestId, AUTH_FAILURE)
+      return
+    }
+    if (
+      this.session?.scope === 'bootstrap' &&
+      ![
+        'owner.status',
+        'owner.passkey.registration.options',
+        'owner.passkey.registration.verify',
+        'owner.recovery.generate',
+        'owner.security.status',
+        'owner.session.close',
+        'credentials.list',
+        'credentials.create',
+        'credentials.test',
+        'credentials.select',
+        'credentials.delete',
+        'projects.list',
+        'projects.create',
+        'projects.rename',
+        'projects.delete',
+        'codex.status',
+        'capabilities.list',
+        'configuration.contextWindow.read',
+        'configuration.contextWindow.write',
+        'codex.start',
+        'codex.restart',
+        'skills.list',
+        'threads.list',
+        'threads.create',
+        'threads.read',
+        'threads.status',
+        'threads.send',
+        'threads.cancel',
+        'threads.compact',
+        'threads.archive',
+        'threads.unarchive',
+        'threads.delete',
+        'threads.deleteAll',
+        'userInput.respond',
+        'approvals.resolve',
+        'events.subscribe',
+        'events.resume',
+      ].includes(methodName)
+    ) {
       await this.respondError(requestId, AUTH_FAILURE)
       return
     }
@@ -364,7 +404,7 @@ export class OwnerSessionRuntime {
     this.activeRequests.set(requestId, state)
 
     try {
-      const context = this.createMethodContext(controller.signal)
+      const context = this.createMethodContext(controller.signal, requestId, params)
       const output = await raceAbort(
         Promise.resolve(method.handle(params, context)),
         controller.signal,
@@ -397,7 +437,11 @@ export class OwnerSessionRuntime {
     }
   }
 
-  private createMethodContext(signal: AbortSignal): OwnerMethodContext {
+  private createMethodContext(
+    signal: AbortSignal,
+    requestId: string,
+    params: unknown,
+  ): OwnerMethodContext {
     const owner = () => (this.session ? this.ownerContext() : null)
     return {
       get owner() {
@@ -406,6 +450,12 @@ export class OwnerSessionRuntime {
       transport: this.transport,
       connectionId: this.options.connectionId,
       signal,
+      requestId,
+      ...(this.transport.enrollmentTicket
+        ? { enrollmentTicket: this.transport.enrollmentTicket }
+        : isRecord(params) && typeof params.ticket === 'string'
+          ? { enrollmentTicket: params.ticket }
+          : {}),
       authenticate: async (admission) => {
         if (
           this.transport.kind === 'relay' &&

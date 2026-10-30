@@ -14,7 +14,7 @@ import {
 
 export type OwnerRuntimeState = {
   transport: OwnerTransportState | 'reconnecting'
-  authentication: OwnerAuthenticationState | 'pending_binding' | 'pending_totp'
+  authentication: OwnerAuthenticationState | 'pending_binding'
   runtime: OwnerRuntimePhase
   error: string | null
   reconnectAttempt: number

@@ -22,8 +22,8 @@ Remote Client -> Relay -> Owner RelayTransport -> Owner Gateway
 
 ## 职责边界
 
-- **App**：提供本地工作台、官方远程入口、登录/TOTP、设备密钥存储和 `/owner/manage` 管理页。页面只使用 UI-facing model，不接触私钥、宿主路径、API key 或原始 runtime payload。
-- **Owner Gateway / Server**：负责 Better Auth、Owner session、资源归属、Application Services、Owner WebSocket、RelayTransport、trust store 和安全 DTO。身份、授权、设备身份和业务权限以 Owner 的验证结果为准。
+- **App**：提供本地工作台、官方远程入口、Passkey/recovery 登录、设备密钥存储和 `/owner/manage` 管理页。页面只使用 UI-facing model，不接触私钥、宿主路径、API key 或原始 runtime payload。
+- **Owner Gateway / Server**：负责 Owner-only Passkey/recovery/session、资源归属、Application Services、Owner WebSocket、RelayTransport、trust store 和安全 DTO。身份、授权、设备身份和业务权限以 Owner 的验证结果为准。
 - **Application Services**：是 Owner session、Credential、Project、Thread/Turn、事件、登录 QR、设备登记/撤销和 trust reset 的业务入口，不依赖 Fastify request/reply、Relay socket 或具体数据库类型。
 - **Relay**：只处理经过 admission 验证的 Owner/client attach、路由、替换、断开、重连和 opaque encrypted payload，不建立账户体系或业务持久化。
 - **Protocol**：`@codex-web/protocol/owner` 定义 Owner request/response/notification/stream/cancel/close；`@codex-web/protocol/relay` 定义 attach、handshake、encrypted 和连接生命周期 frame；`relay/crypto` 定义 ECDH 与 AES-GCM channel。
@@ -33,11 +33,13 @@ Remote Client -> Relay -> Owner RelayTransport -> Owner Gateway
 
 ## Owner 身份与远程接入
 
-Owner 使用 Better Auth 的 email/password 账户和已验证的 TOTP；recovery code 可替代 TOTP 且仅消费一次。Owner-code 是 Relay 范围内 9 位在线路由标识，不承担授权。Relay 仅在内存中维护 Owner-code 在线映射，登录候选使用 `admission: 'login'`，且只能进入受限登录方法。首次远程接入要先比较 E2EE 握手 Owner 公钥指纹，再提交账号因素。
+Owner 是单一本地身份，不需要用户名、邮箱、密码或 TOTP 即可启动。WebAuthn 远程 profile 固定为 `https://codex.vixinox.com` / `codex.vixinox.com`，本地 profile 固定为 `http://localhost:5173` / `localhost`，不能跨 profile 使用。Owner-code 是 Relay 范围内 9 位在线路由标识，不承担授权。Relay 仅在内存中维护 Owner-code 在线映射；远程 Passkey/recovery 使用 `admission: 'login'`，首次 bootstrap 使用单独的 `first_session` admission。
 
 Owner-code 可由已认证的本机管理页查看或轮换。在线冲突会拒绝注册；Relay 不持久化目录，离线 Owner 不保留号码预约。
 
-新设备常规登录需在 E2EE candidate channel 中通过 email/password 和 TOTP/recovery，成功后自动登记设备；一次性 QR 则由已认证 Owner 生成、5 分钟有效、单次消费，直接批准一台设备而不再要求账号因素。QR capability 只由 Owner 保存于进程内存，重启、取消、trust reset 或消费后失效。
+首次远程接入通过 Owner 监听就绪后输出的一次性 five-minute first-session grant。兑换前校验 Owner 公钥 fingerprint，grant 与 Owner、node、trust epoch 和远程 origin 绑定；兑换创建唯一首台设备/session，不注册 Passkey，也不授予设备管理或 trust-reset 权限。普通管理 QR 是短时单次 request reference，不独立创建 session。内存 grant 在 Owner 重启后失效。
+
+远程 Passkey 可用于后续登录；十个高熵 recovery code 只持久化哈希、单次消费。Recovery 必须完成新 Passkey 注册、轮换整批 recovery code 并撤销既有远程 session。Session token 仅返回一次，数据库存哈希；会话受 30 天 idle / 90 天 absolute TTL、device revocation 和 trust epoch 约束。
 
 配对凭据只建立设备传输身份，不单独创建 Owner session。浏览器将 Owner session bearer 通过 IndexedDB 中不可导出的 AES-GCM key 加密保存，并与 Relay、ownerCode、nodeId、deviceId 和 expiresAt 做认证绑定；token 只在 runtime 内存解密使用。设备撤销或 trust reset 关闭连接并清除本地会话/设备密钥。
 
@@ -65,12 +67,12 @@ E2EE 派生上下文绑定协议版本、node、trust epoch、双方公钥和连
 
 ## 当前实现状态
 
-当前实现包含 Relay 在线 owner-code 映射与冲突拒绝、受限 login candidate、TOTP/recovery 登录服务、QR capability 生命周期与兑换、管理页 QR 显示/取消、浏览器扫码入口、owner-code/指纹引导、加密 IndexedDB Owner session、设备撤销与 trust reset，以及首次初始化 recovery 确认 RPC。实现快照和 2026-10-28 验证注记见 [current behavior baseline](./current-behavior.md)。
+当前实现包含 Owner-only SQLite schema、无凭据启动、Passkey/recovery domain、first-session bootstrap、受限 bootstrap session、Relay 在线 owner-code 映射、加密 IndexedDB Owner session、设备撤销与 trust reset、CLI IPC 和显式数据库 reset。实现快照见 [current behavior baseline](./current-behavior.md)。
 
 已知限制和后续工作：
 
-- 07D CLI 已实现 data-root 单实例锁、headless Owner services 和管理命令入口；TOTP reset 通过无回显终端交互读取 Owner 密码。不得用 trust 文件直改或静态 data-root bearer secret 代替此边界。
-- Relay/Vite/Owner 的真实浏览器链路尚未手工验收。须覆盖常规 candidate 登录、指纹拒绝、TOTP/recovery、QR 扫码和上传、session 恢复、注销、撤销、trust reset、Owner/Relay 重启与离线重连。
+- CLI 在 Owner 运行时走 allowlisted 本机 IPC，Owner 停止时才获取 instance lock 并启动短生命周期 runtime；IPC Windows named-pipe 同用户 ACL 仍需平台实现与验证。
+- Relay/Vite/Owner 的真实浏览器链路尚未手工验收。须覆盖首次 grant 单次兑换、指纹拒绝、Passkey/recovery、QR 扫码和上传、session 恢复、注销、撤销、trust reset、Owner/Relay 重启与离线重连。
 - Chat、Workspace、Settings 的全量 Owner WS 迁移不属于本远程入口基线。
 
 ## 验证要求
@@ -87,3 +89,7 @@ pnpm lint:staged
 ```
 
 后续验证范围按具体变更和当前项目约束确定；自动化不得依赖真实公共 Relay 或真实用户凭据。
+
+## Acceptance status (2026-10-30)
+
+The current implementation has passed the server suite, typecheck, focused protocol/Relay checks, formatting, and diff checks. It has not passed live browser/Relay acceptance. The next implementation session must begin with [`docs/acceptance-findings.md`](acceptance-findings.md), especially the bootstrap-reference routing seam: the current Relay routes by owner code, so a reference-only URL requires Owner-to-Relay registration and revocation before the printed URL can be shortened. Local/production App origin and WebAuthn RP ID are also not yet environment-configurable; local startup currently prints the production origin and embeds the full payload, producing an oversized terminal QR.

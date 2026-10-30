@@ -1,808 +1,461 @@
 import * as React from 'react'
-import { authClient, signIn, signUp } from '@/lib/auth/auth-client'
+import { useNavigate } from 'react-router'
+import { KeyRound, Loader2, QrCode, Laptop, Radio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp'
-import { Loader2, KeyRound } from 'lucide-react'
+import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
 import {
   checkOwnerCodeAvailability,
-  readOwnerCodePreference,
-  saveRecentOwnerTarget,
   readKnownOwnerFingerprint,
-  unlockOwnerCodeEditing,
+  readOwnerCodePreference,
   rememberOwnerFingerprint,
+  saveRecentOwnerTarget,
   type OwnerCodeAvailability,
 } from '@/lib/remote/owner-code-preference'
-import { loadDeviceKey } from '@/lib/remote/device-key-store'
-import { inspectRemoteOwnerFingerprint, loginToRemoteOwner } from '@/lib/remote/admission'
-import { LoginQrScanner } from '@/app/owner/login-qr-scanner'
-import { redeemLoginQr } from '@/lib/remote/admission'
-import { useNavigate } from 'react-router'
+import { createDeviceKey } from '@/lib/remote/device-key-store'
+import {
+  authenticateWithPasskey,
+  authenticateWithRecoveryCode,
+  redeemFirstSession,
+} from '@/lib/remote/admission'
+import { inspectRemoteOwnerFingerprint } from '@/lib/remote/admission'
+import { LoginQrScanner, parseLoginQrPayload } from '@/app/owner/login-qr-scanner'
+import type { FirstSessionPayload } from '@/app/owner/owner-management-model'
+import { saveLocalOwnerSession } from '@/lib/auth/auth-client'
+import {
+  loadRemoteOwnerSession,
+  loadDeviceKey,
+  saveRemoteOwnerSession,
+  setPairedDevice,
+} from '@/lib/remote/device-key-store'
 
-function formText(data: FormData, name: string) {
-  const value = data.get(name)
-  return typeof value === 'string' ? value : ''
-}
-
-function RemoteOnboardingPanel() {
-  const initial = React.useMemo(() => readOwnerCodePreference(), [])
-  const [ownerCode, setOwnerCode] = React.useState(initial.ownerCode)
-  const [editable, setEditable] = React.useState(initial.editable || !initial.ownerCode)
-  const [relayUrl, setRelayUrl] = React.useState(initial.target?.relayUrl ?? '')
-  const [availability, setAvailability] = React.useState<OwnerCodeAvailability>('idle')
-  const [owner, setOwner] = React.useState<{ nodeId: string; trustEpoch: number } | null>(null)
-  const [fingerprint, setFingerprint] = React.useState('')
-  const [confirmation, setConfirmation] = React.useState<'idle' | 'saved' | 'mismatch'>('idle')
-  const [savedFingerprint, setSavedFingerprint] = React.useState<string | null>(null)
+export function LoginScreen() {
+  const navigate = useNavigate()
+  const [mode, setMode] = React.useState<'local' | 'remote'>('local')
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const [factorKind, setFactorKind] = React.useState<'totp' | 'recovery'>('totp')
-  const [showLogin, setShowLogin] = React.useState(false)
-  const [email, setEmail] = React.useState('')
-  const [password, setPassword] = React.useState('')
-  const [factorCode, setFactorCode] = React.useState('')
-  const [scanningQr, setScanningQr] = React.useState(false)
-  const navigate = useNavigate()
+  const [showScanner, setShowScanner] = React.useState(false)
+  const [manualPayload, setManualPayload] = React.useState('')
+  const [relayUrl, setRelayUrl] = React.useState(readOwnerCodePreference().target?.relayUrl ?? '')
+  const [ownerCode, setOwnerCode] = React.useState(readOwnerCodePreference().ownerCode)
+  const [availability, setAvailability] = React.useState<OwnerCodeAvailability>('idle')
+  const [target, setTarget] = React.useState<{ nodeId: string; trustEpoch: number } | null>(null)
+  const [fingerprint, setFingerprint] = React.useState('')
+  const [verifiedFingerprint, setVerifiedFingerprint] = React.useState<string | null>(null)
+  const [presence, setPresence] = React.useState<{
+    remotePasskey: boolean
+    recovery: boolean
+  } | null>(null)
+  const [recoveryCode, setRecoveryCode] = React.useState('')
+  const [showSecurityPrompt, setShowSecurityPrompt] = React.useState(false)
 
   React.useEffect(() => {
     let active = true
-    void loadDeviceKey().then((record) => {
-      if (active && !initial.target?.relayUrl && record?.relayUrl) setRelayUrl(record.relayUrl)
-      return record
-    })
+    void (async () => {
+      const device = await loadDeviceKey()
+      if (
+        !device?.pairedClientToken ||
+        !device.deviceId ||
+        !device.nodeId ||
+        !device.relayUrl ||
+        !device.ownerCode
+      )
+        return
+      const session = await loadRemoteOwnerSession({
+        relayUrl: device.relayUrl,
+        ownerCode: device.ownerCode,
+        nodeId: device.nodeId,
+        deviceId: device.deviceId,
+        ownerId: device.ownerId ?? undefined,
+      })
+      if (active && session)
+        await navigate('/app', { replace: true, state: { remoteOwnerId: session.ownerId } })
+    })().catch(() => undefined)
     return () => {
       active = false
     }
-  }, [initial.target?.relayUrl])
+  }, [navigate])
 
   React.useEffect(() => {
-    if (ownerCode.length !== 9 || !relayUrl) {
-      setAvailability('idle')
-      setOwner(null)
-      return
-    }
+    if (mode !== 'remote' || ownerCode.length !== 9 || !relayUrl) return
     let active = true
     setAvailability('checking')
-    const timeout = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       void checkOwnerCodeAvailability({ relayUrl, ownerCode }).then((result) => {
         if (!active) return
         setAvailability(result.status)
-        setOwner(
+        setTarget(
           result.status === 'online'
             ? { nodeId: result.nodeId, trustEpoch: result.trustEpoch }
             : null,
         )
-        setConfirmation('idle')
-        return result
       })
-    }, 250)
+    }, 200)
     return () => {
       active = false
-      window.clearTimeout(timeout)
+      window.clearTimeout(timer)
     }
-  }, [ownerCode, relayUrl])
+  }, [mode, ownerCode, relayUrl])
 
   React.useEffect(() => {
-    const known = owner ? readKnownOwnerFingerprint(relayUrl, owner.nodeId) : null
-    setSavedFingerprint(known)
-    setFingerprint(known ?? '')
-  }, [owner, relayUrl])
+    if (!target) return
+    const saved = readKnownOwnerFingerprint(relayUrl, target.nodeId)
+    setFingerprint(saved ?? '')
+    setVerifiedFingerprint(null)
+    setPresence(null)
+  }, [relayUrl, target])
 
-  return (
-    <Card className="border-border bg-card">
-      <CardContent className="space-y-4 p-4 sm:p-6">
-        <div>
-          <h2 className="text-base font-semibold">Connect to a remote Owner</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            This is separate from signing in to the Owner running on this machine.
-          </p>
-        </div>
-        <FieldGroup>
-          <Field>
-            <div className="flex items-center justify-between gap-3">
-              <FieldLabel htmlFor="remote-owner-code">Owner connection code</FieldLabel>
-              {initial.ownerCode && !editable ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => {
-                    unlockOwnerCodeEditing()
-                    setEditable(true)
-                  }}
-                >
-                  Change device
-                </Button>
-              ) : null}
-            </div>
-            <Input
-              id="remote-owner-code"
-              inputMode="numeric"
-              autoComplete="off"
-              pattern="[0-9]{9}"
-              maxLength={9}
-              placeholder="9-digit code"
-              value={ownerCode}
-              readOnly={!editable}
-              onChange={(event) => setOwnerCode(event.target.value.replace(/\D/gu, '').slice(0, 9))}
-            />
-            {initial.ownerCode && !editable ? (
-              <p className="text-xs text-muted-foreground">Last used</p>
-            ) : null}
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="remote-relay-url">Relay URL</FieldLabel>
-            <Input
-              id="remote-relay-url"
-              autoComplete="url"
-              placeholder="wss://relay.example.com/ws"
-              value={relayUrl}
-              onChange={(event) => setRelayUrl(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-              {availability === 'checking'
-                ? 'Checking Relay…'
-                : availability === 'online'
-                  ? 'Owner online'
-                  : availability === 'offline'
-                    ? 'Owner unavailable'
-                    : availability === 'unreachable'
-                      ? 'Relay unreachable'
-                      : 'Enter a Relay URL and 9-digit Owner code'}
-            </p>
-          </Field>
-          {owner ? (
-            <Field>
-              <FieldLabel htmlFor="remote-owner-fingerprint">
-                Owner public-key fingerprint
-              </FieldLabel>
-              <Input
-                id="remote-owner-fingerprint"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Read from the local Owner management page"
-                value={fingerprint}
-                onChange={(event) => {
-                  setFingerprint(event.target.value.trim())
-                  setConfirmation('idle')
-                }}
-              />
-              <p className="text-xs text-muted-foreground">
-                {savedFingerprint
-                  ? 'Compare this saved fingerprint with the value shown in local Owner management.'
-                  : 'For a first connection, compare this value with the fingerprint shown in local Owner management.'}
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!fingerprint || busy}
-                onClick={() => {
-                  void inspectRemoteOwnerFingerprint({
-                    relayUrl,
-                    ownerCode,
-                    nodeId: owner.nodeId,
-                    trustEpoch: owner.trustEpoch,
-                  })
-                    .then((actual) => {
-                      if (actual !== fingerprint) {
-                        setConfirmation('mismatch')
-                        return actual
-                      }
-                      rememberOwnerFingerprint(relayUrl, owner.nodeId, fingerprint)
-                      setSavedFingerprint(fingerprint)
-                      setConfirmation('saved')
-                      return actual
-                    })
-                    .catch((cause: unknown) =>
-                      setError(
-                        cause instanceof Error ? cause.message : 'Fingerprint check failed.',
-                      ),
-                    )
-                }}
-              >
-                Verify and save fingerprint
-              </Button>
-              {confirmation === 'saved' ? (
-                <p role="status" className="text-xs text-success">
-                  Fingerprint verified against the remote Owner.
-                </p>
-              ) : null}
-              {confirmation === 'mismatch' ? (
-                <p role="alert" className="text-xs text-destructive">
-                  The supplied fingerprint does not match this Owner.
-                </p>
-              ) : null}
-            </Field>
-          ) : null}
-          {owner ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!savedFingerprint || availability !== 'online' || busy}
-                onClick={() => setShowLogin(true)}
-              >
-                Continue with Owner credentials
-              </Button>
-              {showLogin ? (
-                <form
-                  className="grid gap-3 border-t border-border pt-4"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    setBusy(true)
-                    setError(null)
-                    void loginToRemoteOwner({
-                      relayUrl,
-                      ownerCode,
-                      nodeId: owner.nodeId,
-                      trustEpoch: owner.trustEpoch,
-                      expectedFingerprint: savedFingerprint!,
-                      credentials: { email, password },
-                      factor: { kind: factorKind, code: factorCode },
-                    })
-                      .then((result) => {
-                        saveRecentOwnerTarget({ relayUrl, ownerCode, nodeId: owner.nodeId })
-                        void navigate('/app', {
-                          replace: true,
-                          state: { remoteOwnerId: result.ownerId },
-                        })
-                        return result
-                      })
-                      .catch((cause: unknown) =>
-                        setError(cause instanceof Error ? cause.message : 'Remote sign-in failed.'),
-                      )
-                      .finally(() => setBusy(false))
-                  }}
-                >
-                  <Input
-                    type="email"
-                    autoComplete="username"
-                    placeholder="Owner email"
-                    required
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                  />
-                  <Input
-                    type="password"
-                    autoComplete="current-password"
-                    placeholder="Password"
-                    required
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <Input
-                      autoComplete="one-time-code"
-                      placeholder={factorKind === 'totp' ? 'Authenticator code' : 'Recovery code'}
-                      required
-                      value={factorCode}
-                      onChange={(event) => setFactorCode(event.target.value)}
-                    />
-                    <select
-                      aria-label="Verification method"
-                      value={factorKind}
-                      onChange={(event) => setFactorKind(event.target.value as 'totp' | 'recovery')}
-                    >
-                      <option value="totp">TOTP</option>
-                      <option value="recovery">Recovery</option>
-                    </select>
-                  </div>
-                  <Button type="submit" disabled={busy || !savedFingerprint}>
-                    {busy ? <Loader2 className="size-4 animate-spin" /> : 'Sign in remotely'}
-                  </Button>
-                  {error ? (
-                    <p role="alert" className="text-sm text-destructive">
-                      {error}
-                    </p>
-                  ) : null}
-                </form>
-              ) : null}
-            </>
-          ) : null}
-          <Button type="button" variant="link" onClick={() => setScanningQr(true)}>
-            Sign in with QR code
-          </Button>
-        </FieldGroup>
-        {scanningQr ? (
-          <LoginQrScanner
-            onClose={() => setScanningQr(false)}
-            onRedeem={async (payload) => {
-              const result = await redeemLoginQr(payload)
-              saveRecentOwnerTarget({
-                relayUrl: payload.relayUrl,
-                ownerCode: payload.ownerCode,
-                nodeId: payload.nodeId,
-              })
-              await navigate('/app', {
-                replace: true,
-                state: { remoteOwnerId: result.ownerId },
-              })
-            }}
-          />
-        ) : null}
-      </CardContent>
-    </Card>
-  )
-}
-
-export function LoginScreen({
-  securitySetupRequired = false,
-}: {
-  securitySetupRequired?: boolean
-}) {
-  const [mode, setMode] = React.useState<'sign-in' | 'sign-up' | 'initializing'>('initializing')
-  const [ownerExists, setOwnerExists] = React.useState<boolean | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
-  const [waitingForSession, setWaitingForSession] = React.useState(false)
-  const [needsSecuritySetup, setNeedsSecuritySetup] = React.useState(securitySetupRequired)
-  const [setupTotpUri, setSetupTotpUri] = React.useState<string | null>(null)
-  const [setupTotpCode, setSetupTotpCode] = React.useState('')
-  const [setupRecoveryCodes, setSetupRecoveryCodes] = React.useState<string[] | null>(null)
-  const [setupCodesSaved, setSetupCodesSaved] = React.useState(false)
-  const [setupTotpVerified, setSetupTotpVerified] = React.useState(false)
-  const [setupPassword, setSetupPassword] = React.useState('')
-  const [challengeMethods, setChallengeMethods] = React.useState<string[] | null>(null)
-  const [verificationMethod, setVerificationMethod] = React.useState<'totp' | 'recovery'>('totp')
-  const [verificationCode, setVerificationCode] = React.useState('')
-  const [email, setEmail] = React.useState('')
-  const emailInputRef = React.useRef<HTMLInputElement>(null)
-
-  React.useEffect(() => {
-    if (!waitingForSession) return
-    const timeout = window.setTimeout(() => {
-      setWaitingForSession(false)
-      setError(
-        'Sign-in completed, but no active session was found. Check the browser session cookie and try again.',
-      )
-    }, 5000)
-    return () => window.clearTimeout(timeout)
-  }, [waitingForSession])
-
-  React.useEffect(() => {
-    const controller = new AbortController()
-    const minLoadTime = new Promise((resolve) => setTimeout(resolve, 400))
-    const fetchBootstrap = fetch('/api/auth/bootstrap', {
-      credentials: 'include',
-      signal: controller.signal,
+  const connectRemoteCandidate = async (options: {
+    relayUrl: string
+    ownerCode: string
+    nodeId: string
+    trustEpoch: number
+    expectedFingerprint: string
+  }) => {
+    const record = await loadDeviceKey()
+    if (!record) await createDeviceKey()
+    const device = await loadDeviceKey()
+    if (!device) throw new Error('Unable to create a remote device key.')
+    const targetSocket = {
+      nodeId: options.nodeId,
+      trustEpoch: options.trustEpoch,
+      clientToken: '',
+      publicKey: device.publicKey,
+      privateKey: device.privateKey,
+      loginOwnerCode: options.ownerCode,
+      expectedOwnerFingerprint: options.expectedFingerprint,
+    }
+    const { createRelayOwnerSocket } = await import('@/lib/remote/relay-owner-socket')
+    const relaySocket = createRelayOwnerSocket(options.relayUrl, targetSocket)
+    const candidate = createOwnerRuntime(() => relaySocket)
+    await candidate.connect({
+      url: options.relayUrl,
+      clientId: 'owner-login-candidate',
+      capabilities: ['owner'],
     })
+    return candidate
+  }
 
-    void Promise.all([fetchBootstrap, minLoadTime])
-      .then(async ([bootstrapResponse]) => {
-        if (!bootstrapResponse.ok) throw new Error('Bootstrap state is unavailable')
-        const body = (await bootstrapResponse.json()) as { ownerExists?: unknown }
-        const exists = body.ownerExists === true
-        setOwnerExists(exists)
-        setMode(exists ? 'sign-in' : 'sign-up')
-        return undefined
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setOwnerExists(true)
-          setMode('sign-in')
-        }
-      })
-
-    return () => controller.abort()
-  }, [])
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError(null)
-    setIsSubmitting(true)
-
+  const inspectRemotePresence = async (
+    owner: { nodeId: string; trustEpoch: number },
+    fingerprint: string,
+  ) => {
+    const runtime = await connectRemoteCandidate({
+      relayUrl,
+      ownerCode,
+      nodeId: owner.nodeId,
+      trustEpoch: owner.trustEpoch,
+      expectedFingerprint: fingerprint,
+    })
     try {
-      if (challengeMethods) {
-        const result =
-          verificationMethod === 'totp'
-            ? await authClient.twoFactor.verifyTotp({ code: verificationCode })
-            : await authClient.twoFactor.verifyBackupCode({ code: verificationCode })
-        if (result.error) {
-          setError(result.error.message ?? 'Verification failed')
-          return
-        }
-        setVerificationCode('')
-        setWaitingForSession(true)
-        return
-      }
-
-      const form = new FormData(event.currentTarget)
-      const submittedEmail = formText(form, 'email')
-      const password = formText(form, 'password')
-      const result =
-        mode === 'sign-up'
-          ? await signUp.email({ email: submittedEmail, password, name: formText(form, 'name') })
-          : await signIn.email({ email: submittedEmail, password })
-
-      if (result.error) {
-        setError(result.error.message ?? 'Authentication failed')
-        return
-      }
-      if (mode === 'sign-up' && result.data?.token) {
-        setSetupPassword(password)
-        setNeedsSecuritySetup(true)
-        return
-      }
-      if (result.data && 'twoFactorRedirect' in result.data && result.data.twoFactorRedirect) {
-        const methods =
-          'twoFactorMethods' in result.data && Array.isArray(result.data.twoFactorMethods)
-            ? result.data.twoFactorMethods.filter(
-                (method): method is string => typeof method === 'string',
-              )
-            : []
-        setChallengeMethods(methods)
-        setVerificationMethod(methods.includes('totp') ? 'totp' : 'recovery')
-        return
-      }
-      setWaitingForSession(true)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Authentication failed')
+      const status = await runtime.request<{
+        remotePasskeyAvailable?: boolean
+        recoveryAvailable?: boolean
+      }>('owner.status')
+      setPresence({
+        remotePasskey: status.remotePasskeyAvailable === true,
+        recovery: status.recoveryAvailable === true,
+      })
     } finally {
-      setIsSubmitting(false)
+      runtime.close('presence checked')
+    }
+  }
+
+  const finishRemote = async (payload: FirstSessionPayload) => {
+    const result = await redeemFirstSession(payload)
+    saveRecentOwnerTarget({
+      relayUrl: payload.relayUrl,
+      ownerCode: payload.ownerCode,
+      nodeId: payload.nodeId,
+    })
+    await navigate('/app', {
+      replace: true,
+      state: { remoteOwnerId: result.ownerId, firstSession: true },
+    })
+    setShowSecurityPrompt(true)
+  }
+
+  const signInPasskey = async () => {
+    if (!target || !verifiedFingerprint) throw new Error('Verify the Owner fingerprint first.')
+    const runtime = await connectRemoteCandidate({
+      relayUrl,
+      ownerCode,
+      nodeId: target.nodeId,
+      trustEpoch: target.trustEpoch,
+      expectedFingerprint: verifiedFingerprint,
+    })
+    try {
+      const result = await authenticateWithPasskey(runtime, 'remote')
+      saveRecentOwnerTarget({ relayUrl, ownerCode, nodeId: target.nodeId })
+      await navigate('/app', { replace: true, state: { remoteOwnerId: result.ownerId } })
+    } finally {
+      runtime.close('passkey sign-in complete')
+    }
+  }
+
+  const signInRecovery = async () => {
+    if (!target || !verifiedFingerprint) throw new Error('Verify the Owner fingerprint first.')
+    const runtime = await connectRemoteCandidate({
+      relayUrl,
+      ownerCode,
+      nodeId: target.nodeId,
+      trustEpoch: target.trustEpoch,
+      expectedFingerprint: verifiedFingerprint,
+    })
+    try {
+      const result = await authenticateWithRecoveryCode(runtime, recoveryCode.trim())
+      const device = await loadDeviceKey()
+      if (!device) throw new Error('Remote device key is unavailable.')
+      await setPairedDevice({
+        deviceId: result.deviceId,
+        pairedClientToken: result.clientToken,
+        trustEpoch: result.trustEpoch,
+        nodeId: target.nodeId,
+        relayUrl,
+      })
+      await saveRemoteOwnerSession({
+        token: result.sessionToken,
+        expiresAt: result.expiresAt,
+        relayUrl,
+        ownerCode,
+        nodeId: target.nodeId,
+        deviceId: result.deviceId,
+        ownerId: result.ownerId,
+      })
+      saveRecentOwnerTarget({ relayUrl, ownerCode, nodeId: target.nodeId })
+      await navigate('/app', {
+        replace: true,
+        state: {
+          remoteOwnerId: result.ownerId!,
+          recovered: true,
+          recoveryCodes: result.recoveryCodes,
+        },
+      })
+    } finally {
+      runtime.close('recovery sign-in complete')
+    }
+  }
+
+  const signInLocal = async () => {
+    const runtime = createOwnerRuntime()
+    await runtime.connect({
+      url: `${window.location.origin.replace(/^http/, 'ws')}/ws`,
+      clientId: 'owner-local-login',
+      capabilities: ['owner'],
+    })
+    const result = await authenticateWithPasskey(runtime, 'local')
+    if (!result.ownerId) throw new Error('Owner identity is unavailable.')
+    saveLocalOwnerSession({
+      token: result.token!,
+      ownerId: result.ownerId,
+      expiresAt: result.expiresAt,
+    })
+    runtime.close('local passkey sign-in complete')
+    await navigate('/app', { replace: true })
+  }
+
+  const run = async (operation: () => Promise<void>) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await operation()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Connection failed')
+    } finally {
+      setBusy(false)
     }
   }
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center bg-background px-4 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] text-foreground sm:p-8 md:p-10">
-      <div className="flex w-full max-w-sm flex-col gap-6">
-        <Card className="border-border bg-card shadow-lg">
-          <CardContent className="p-4 transition-all duration-300 sm:p-6">
-            {needsSecuritySetup ? (
-              <div className="space-y-4">
-                <div>
-                  <h1 className="text-lg font-semibold">Secure your Owner account</h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Configure an authenticator and save recovery codes before continuing.
-                  </p>
-                </div>
-                {!setupTotpUri ? (
+    <main className="flex min-h-svh items-center justify-center bg-background px-4 py-8 text-foreground">
+      <div className="w-full max-w-md space-y-5">
+        <header>
+          <p className="text-sm text-muted-foreground">Codex Web</p>
+          <h1 className="text-2xl font-semibold">Connect to Owner</h1>
+        </header>
+        {showSecurityPrompt ? (
+          <div role="status" className="rounded-md border p-3 text-sm">
+            First connection complete. You can set up Passkey and recovery codes later in{' '}
+            <a className="underline" href="/app/owner">
+              Owner security settings
+            </a>
+            .
+            <Button
+              className="ml-2"
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowSecurityPrompt(false)}
+            >
+              Continue
+            </Button>
+          </div>
+        ) : null}
+        <div className="inline-flex border-b border-border">
+          <Button
+            variant={mode === 'local' ? 'secondary' : 'ghost'}
+            onClick={() => setMode('local')}
+          >
+            <Laptop className="size-4" /> This machine
+          </Button>
+          <Button
+            variant={mode === 'remote' ? 'secondary' : 'ghost'}
+            onClick={() => setMode('remote')}
+          >
+            <Radio className="size-4" /> Remote
+          </Button>
+        </div>
+        <Card className="border-border bg-card">
+          <CardContent className="space-y-4 p-5">
+            {mode === 'local' ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Sign in with a Passkey registered for localhost.
+                </p>
+                <Button className="w-full" disabled={busy} onClick={() => void run(signInLocal)}>
+                  {busy ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <KeyRound className="size-4" />
+                  )}
+                  Use local Passkey
+                </Button>
+              </>
+            ) : (
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="relay-url">Relay URL</FieldLabel>
                   <Input
-                    type="password"
-                    autoComplete="current-password"
-                    aria-label="Owner password"
-                    placeholder="Owner password"
-                    value={setupPassword}
-                    onChange={(event) => setSetupPassword(event.target.value)}
-                    required
+                    id="relay-url"
+                    value={relayUrl}
+                    onChange={(event) => setRelayUrl(event.target.value)}
+                    placeholder="wss://relay.vixinox.com/ws"
                   />
-                ) : null}
-                {!setupTotpUri ? (
-                  <Button
-                    type="button"
-                    disabled={isSubmitting || !setupPassword}
-                    onClick={() => {
-                      setIsSubmitting(true)
-                      void fetch('/api/auth/owner-security/setup', {
-                        method: 'POST',
-                        headers: { 'content-type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify({ password: setupPassword }),
-                      })
-                        .then(async (response) => {
-                          const body = (await response.json()) as {
-                            totpURI?: unknown
-                            backupCodes?: unknown
-                          }
-                          if (!response.ok) throw new Error('TOTP setup failed.')
-                          return body
-                        })
-                        .then((result) => {
-                          setSetupTotpUri(
-                            typeof result.totpURI === 'string' ? result.totpURI : null,
-                          )
-                          setSetupRecoveryCodes(
-                            Array.isArray(result.backupCodes) &&
-                              result.backupCodes.every((code) => typeof code === 'string')
-                              ? result.backupCodes
-                              : null,
-                          )
-                          return result
-                        })
-                        .catch((cause: unknown) =>
-                          setError(cause instanceof Error ? cause.message : 'TOTP setup failed'),
-                        )
-                        .finally(() => setIsSubmitting(false))
-                    }}
-                  >
-                    Set up authenticator
-                  </Button>
-                ) : null}
-                {setupTotpUri ? (
-                  <div className="space-y-3">
-                    <p className="break-all text-xs text-muted-foreground">{setupTotpUri}</p>
-                    <InputOTP
-                      aria-label="6-digit authenticator code"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={6}
-                      value={setupTotpCode}
-                      onChange={setSetupTotpCode}
-                    >
-                      <InputOTPGroup>
-                        {Array.from({ length: 6 }, (_, index) => (
-                          <InputOTPSlot key={index} index={index} />
-                        ))}
-                      </InputOTPGroup>
-                    </InputOTP>
-                    <Button
-                      type="button"
-                      disabled={setupTotpCode.length !== 6 || isSubmitting}
-                      onClick={() => {
-                        setIsSubmitting(true)
-                        void fetch('/api/auth/owner-security/verify', {
-                          method: 'POST',
-                          headers: { 'content-type': 'application/json' },
-                          credentials: 'include',
-                          body: JSON.stringify({ code: setupTotpCode }),
-                        })
-                          .then(async (response) => {
-                            const body = (await response.json()) as {
-                              token?: unknown
-                              user?: { twoFactorEnabled?: unknown }
-                            }
-                            if (!response.ok || body.user?.twoFactorEnabled !== true)
-                              throw new Error('Authenticator verification failed.')
-                            setSetupTotpVerified(true)
-                            setSetupCodesSaved(false)
-                            return body
-                          })
-                          .catch((cause: unknown) =>
-                            setError(cause instanceof Error ? cause.message : 'TOTP check failed'),
-                          )
-                          .finally(() => setIsSubmitting(false))
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="owner-code">Owner code</FieldLabel>
+                  <Input
+                    id="owner-code"
+                    inputMode="numeric"
+                    maxLength={9}
+                    value={ownerCode}
+                    onChange={(event) =>
+                      setOwnerCode(event.target.value.replace(/\D/gu, '').slice(0, 9))
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground" role="status">
+                    {availability === 'online'
+                      ? 'Owner online'
+                      : availability === 'checking'
+                        ? 'Checking Owner'
+                        : availability === 'offline'
+                          ? 'Owner offline'
+                          : availability === 'unreachable'
+                            ? 'Relay unreachable'
+                            : ''}
+                  </p>
+                </Field>
+                {target ? (
+                  <Field>
+                    <FieldLabel htmlFor="fingerprint">Owner fingerprint</FieldLabel>
+                    <Input
+                      id="fingerprint"
+                      value={fingerprint}
+                      onChange={(event) => {
+                        setFingerprint(event.target.value)
+                        setVerifiedFingerprint(null)
                       }}
+                      spellCheck={false}
+                    />
+                    <Button
+                      variant="outline"
+                      disabled={busy || !fingerprint}
+                      onClick={() =>
+                        void run(async () => {
+                          const actual = await inspectRemoteOwnerFingerprint({
+                            relayUrl,
+                            ownerCode,
+                            nodeId: target.nodeId,
+                            trustEpoch: target.trustEpoch,
+                          })
+                          if (actual !== fingerprint) throw new Error('Owner fingerprint mismatch.')
+                          rememberOwnerFingerprint(relayUrl, target.nodeId, actual)
+                          setVerifiedFingerprint(actual)
+                          await inspectRemotePresence(target, actual)
+                        })
+                      }
                     >
-                      Verify authenticator
+                      Verify fingerprint
                     </Button>
-                    {setupRecoveryCodes ? (
-                      <div className="space-y-3 border-t border-border pt-3">
-                        <pre className="grid grid-cols-2 gap-1 text-xs">
-                          {setupRecoveryCodes.join('\n')}
-                        </pre>
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={setupCodesSaved}
-                            onChange={(event) => setSetupCodesSaved(event.target.checked)}
-                          />
-                          I saved these recovery codes
-                        </label>
+                  </Field>
+                ) : null}
+                {verifiedFingerprint ? (
+                  <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+                    <Button variant="outline" disabled={busy} onClick={() => setShowScanner(true)}>
+                      <QrCode className="size-4" /> First-session QR
+                    </Button>
+                    <Input
+                      value={manualPayload}
+                      onChange={(event) => setManualPayload(event.target.value)}
+                      placeholder="Paste first-session URL"
+                      aria-label="First-session URL"
+                    />
+                    <Button
+                      variant="outline"
+                      disabled={busy || !manualPayload}
+                      onClick={() =>
+                        void run(async () => finishRemote(parseLoginQrPayload(manualPayload)))
+                      }
+                    >
+                      Connect
+                    </Button>
+                    {presence?.remotePasskey ? (
+                      <Button disabled={busy} onClick={() => void run(signInPasskey)}>
+                        <KeyRound className="size-4" /> Passkey
+                      </Button>
+                    ) : null}
+                    {presence?.recovery ? (
+                      <div className="w-full space-y-2">
+                        <Input
+                          aria-label="Recovery code"
+                          value={recoveryCode}
+                          onChange={(event) => setRecoveryCode(event.target.value)}
+                          placeholder="Recovery code"
+                        />
                         <Button
-                          type="button"
-                          disabled={!setupCodesSaved || !setupTotpVerified || isSubmitting}
-                          onClick={() => {
-                            setIsSubmitting(true)
-                            setError(null)
-                            void fetch('/api/auth/owner-security/complete', {
-                              method: 'POST',
-                              credentials: 'include',
-                            })
-                              .then(async (response) => {
-                                if (!response.ok)
-                                  throw new Error('Recovery code confirmation could not be saved.')
-                                window.location.assign('/app')
-                                return response
-                              })
-                              .catch((cause: unknown) =>
-                                setError(
-                                  cause instanceof Error
-                                    ? cause.message
-                                    : 'Security setup could not be completed.',
-                                ),
-                              )
-                              .finally(() => setIsSubmitting(false))
-                          }}
+                          variant="outline"
+                          disabled={busy || !recoveryCode.trim()}
+                          onClick={() => void run(signInRecovery)}
                         >
-                          Finish security setup
+                          Use recovery code and register a new Passkey
                         </Button>
                       </div>
+                    ) : null}
+                    {!presence?.remotePasskey && !presence?.recovery ? (
+                      <p className="w-full text-xs text-muted-foreground">
+                        If no first-session QR is available, generate a new bootstrap URL on the
+                        Owner machine.
+                      </p>
                     ) : null}
                   </div>
                 ) : null}
-                {error ? (
-                  <p role="alert" className="text-sm text-destructive">
-                    {error}
-                  </p>
-                ) : null}
-              </div>
-            ) : mode === 'initializing' ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-10">
-                <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
-                <span className="text-sm text-muted-foreground">Connecting...</span>
-              </div>
-            ) : (
-              <div key={mode} className="native-fade-blur flex flex-col">
-                <form onSubmit={handleSubmit}>
-                  {mode === 'sign-up' && (
-                    <div className="mb-6 text-center">
-                      <h2 className="text-lg font-medium">Initialize System</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        Create the local owner account
-                      </p>
-                    </div>
-                  )}
-
-                  <FieldGroup>
-                    {mode === 'sign-up' && (
-                      <Field>
-                        <FieldLabel htmlFor="name">Name</FieldLabel>
-                        <Input id="name" name="name" autoComplete="name" required />
-                      </Field>
-                    )}
-
-                    <Field>
-                      <FieldLabel htmlFor="email">Owner email</FieldLabel>
-                      <Input
-                        ref={emailInputRef}
-                        id="email"
-                        name="email"
-                        type="email"
-                        inputMode="email"
-                        placeholder="you@example.com"
-                        autoComplete="email"
-                        required
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        readOnly={Boolean(challengeMethods)}
-                        disabled={isSubmitting || waitingForSession}
-                      />
-                    </Field>
-
-                    <Field>
-                      <FieldLabel htmlFor="password">Password</FieldLabel>
-                      <Input
-                        id="password"
-                        name="password"
-                        type="password"
-                        minLength={8}
-                        placeholder="••••••••"
-                        autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
-                        required
-                        readOnly={Boolean(challengeMethods)}
-                        disabled={isSubmitting || waitingForSession}
-                      />
-                    </Field>
-
-                    {challengeMethods ? (
-                      <div className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
-                        <div className="mb-3">
-                          <p className="text-sm font-medium">Two-step verification</p>
-                        </div>
-                        <Field>
-                          {verificationMethod === 'totp' ? (
-                            <InputOTP
-                              id="verification-code"
-                              name="verificationCode"
-                              aria-label="6-digit authenticator code"
-                              autoComplete="one-time-code"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              maxLength={6}
-                              required
-                              value={verificationCode}
-                              onChange={setVerificationCode}
-                              disabled={isSubmitting || waitingForSession}
-                              containerClassName="w-full justify-center"
-                            >
-                              <InputOTPGroup>
-                                {Array.from({ length: 6 }, (_, index) => (
-                                  <InputOTPSlot
-                                    key={index}
-                                    index={index}
-                                    className="size-10 text-base sm:size-11"
-                                  />
-                                ))}
-                              </InputOTPGroup>
-                            </InputOTP>
-                          ) : (
-                            <Input
-                              id="verification-code"
-                              name="verificationCode"
-                              autoComplete="one-time-code"
-                              autoCapitalize="none"
-                              spellCheck={false}
-                              required
-                              value={verificationCode}
-                              onChange={(event) => setVerificationCode(event.target.value)}
-                              disabled={isSubmitting || waitingForSession}
-                            />
-                          )}
-                        </Field>
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-                          <Button
-                            type="button"
-                            variant="link"
-                            className="justify-start px-0"
-                            disabled={isSubmitting || waitingForSession}
-                            onClick={() => {
-                              setVerificationMethod(
-                                verificationMethod === 'totp' ? 'recovery' : 'totp',
-                              )
-                              setVerificationCode('')
-                              setError(null)
-                            }}
-                          >
-                            {verificationMethod === 'totp'
-                              ? 'Use recovery code'
-                              : 'Use authenticator code'}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="link"
-                            className="justify-start px-0 text-muted-foreground"
-                            disabled={isSubmitting || waitingForSession}
-                            onClick={() => {
-                              setChallengeMethods(null)
-                              setVerificationCode('')
-                              setError(null)
-                              requestAnimationFrame(() => emailInputRef.current?.focus())
-                            }}
-                          >
-                            Use a different account
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {error && (
-                      <p className="text-sm font-medium text-red-500" role="alert">
-                        {error}
-                      </p>
-                    )}
-
-                    <Field className="pt-2">
-                      <Button
-                        type="submit"
-                        disabled={isSubmitting || waitingForSession}
-                        className="w-full"
-                      >
-                        {isSubmitting ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            {mode === 'sign-in' ? (
-                              <KeyRound className="mr-2 h-4 w-4 opacity-70" />
-                            ) : null}
-                            {challengeMethods
-                              ? 'Verify and sign in'
-                              : mode === 'sign-in'
-                                ? 'Sign in'
-                                : 'Create account'}
-                          </>
-                        )}
-                      </Button>
-                      {waitingForSession ? (
-                        <p role="status" className="text-center text-xs text-zinc-500">
-                          Restoring session...
-                        </p>
-                      ) : null}
-
-                      {ownerExists === false && !challengeMethods && (
-                        <Button
-                          type="button"
-                          variant="link"
-                          disabled={isSubmitting}
-                          onClick={() => {
-                            setError(null)
-                            setMode((current) => (current === 'sign-in' ? 'sign-up' : 'sign-in'))
-                          }}
-                          className="mt-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-                        >
-                          {mode === 'sign-in' ? 'Create local owner' : 'Use existing owner'}
-                        </Button>
-                      )}
-                    </Field>
-                  </FieldGroup>
-                </form>
-                {mode === 'sign-in' && !challengeMethods ? <RemoteOnboardingPanel /> : null}
-              </div>
+              </FieldGroup>
             )}
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
           </CardContent>
         </Card>
       </div>
-    </div>
+      {showScanner ? (
+        <LoginQrScanner
+          onClose={() => setShowScanner(false)}
+          onRedeem={(payload) => finishRemote(payload)}
+        />
+      ) : null}
+    </main>
   )
 }

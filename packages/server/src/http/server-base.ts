@@ -2,7 +2,10 @@ import sensible from '@fastify/sensible'
 import Fastify from 'fastify'
 
 import { log, safeError } from '../logger.js'
-import { apiError } from './common.js'
+
+function apiError(code: string, message: string) {
+  return { error: { code, message } }
+}
 
 export async function createHttpServer(
   options: {

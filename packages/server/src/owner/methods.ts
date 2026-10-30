@@ -1,5 +1,5 @@
 import type { OwnerApplicationServices } from './application-services.js'
-import type { OwnerAdmission, OwnerMethodRegistry } from './session-runtime.js'
+import type { OwnerMethodRegistry } from './session-runtime.js'
 
 export function createOwnerMethodRegistry(services: OwnerApplicationServices): OwnerMethodRegistry {
   return new Map([
@@ -11,80 +11,136 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'owner.bootstrap.create',
-      {
-        access: 'local' as const,
-        handle: async (params, context) => {
-          const result = await services.bootstrapCreate(context, asRecord(params))
-          await context.authenticate({
-            ...result.admission,
-            setupOnly: true,
-          } satisfies OwnerAdmission)
-          return { token: result.token, session: result.session, securitySetupRequired: true }
-        },
-      },
-    ],
-    [
-      'owner.session.open',
+      'owner.passkey.registration.options',
       {
         access: 'public' as const,
-        handle: async (params, context) => {
-          const result = await services.sessionOpen(asRecord(params), context)
-          if ('admission' in result)
-            await context.authenticate(result.admission satisfies OwnerAdmission)
-          if ('pendingTwoFactor' in result) return result
-          return { token: result.token, session: result.session }
-        },
+        handle: (params, context) => services.passkeyRegisterOptions(context, asRecord(params)),
       },
     ],
     [
-      'owner.login.verifyTotp',
-      {
-        access: 'public' as const,
-        handle: (params, context) => services.loginCandidateVerifyTotp(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.login.verifyRecoveryCode',
-      {
-        access: 'public' as const,
-        handle: (params, context) =>
-          services.loginCandidateVerifyRecoveryCode(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.login.rollback',
-      {
-        access: 'public' as const,
-        handle: (params, context) => services.ownerLoginRollback(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.loginQr.issue',
+      'owner.passkey.registration.verify',
       {
         access: 'authenticated' as const,
-        handle: (_params, context) => services.ownerLoginQrIssue(context),
+        handle: (params, context) => services.passkeyRegister(context, asRecord(params)),
       },
     ],
     [
-      'owner.loginQr.cancel',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.ownerLoginQrCancel(context),
-      },
-    ],
-    [
-      'owner.loginQr.status',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.ownerLoginQrStatus(context),
-      },
-    ],
-    [
-      'owner.loginQr.redeem',
+      'owner.passkey.authentication.options',
       {
         access: 'public' as const,
-        handle: (params, context) => services.ownerLoginQrRedeem(context, asRecord(params)),
+        handle: (_params, context) => services.passkeyAuthenticationOptions(context),
+      },
+    ],
+    [
+      'owner.passkey.authentication.verify',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.passkeyAuthenticate(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.recovery.login.reserve',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.recoveryLoginReserve(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.recovery.login.finish',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.recoveryLoginFinish(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.firstSession.redeem',
+      {
+        access: 'public' as const,
+        handle: (params, context) => services.firstSessionRedeem(context, asRecord(params)),
+      },
+    ],
+    [
+      'owner.recovery.generate',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.recoveryCodesGenerate(context),
+      },
+    ],
+    [
+      'owner.localEnrollment.issue',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.localEnrollmentTicketIssue(context),
+      },
+    ],
+    [
+      'owner.remoteSessions.revokeAll',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.remoteSessionsRevokeAll(context),
+      },
+    ],
+    [
+      'owner.bootstrap.issue',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.bootstrapGrantIssue(context),
+      },
+    ],
+    [
+      'owner.security.status',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.ownerSecurityStatus(context),
+      },
+    ],
+    [
+      'remote.devices.list',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.remoteDevices(context),
+      },
+    ],
+    [
+      'remote.devices.revoke',
+      {
+        access: 'authenticated' as const,
+        handle: (params, context) => services.remoteDeviceRevoke(context, asRecord(params)),
+      },
+    ],
+    [
+      'remote.devices.revokeAll',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.remoteDevicesRevokeAll(context),
+      },
+    ],
+    [
+      'remote.trust.reset',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.remoteTrustReset(context),
+      },
+    ],
+    [
+      'remote.loginQr.issue',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.remoteLoginQrIssue(context),
+      },
+    ],
+    [
+      'remote.loginQr.status',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.remoteLoginQrStatus(context),
+      },
+    ],
+    [
+      'remote.loginQr.cancel',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.remoteLoginQrCancel(context),
       },
     ],
     [
@@ -362,55 +418,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'local' as const,
         handle: (_params, context) => services.ownerSecurityStatus(context),
-      },
-    ],
-    [
-      'owner.security.totp.enable',
-      {
-        access: 'local' as const,
-        handle: (params, context) => services.ownerTotpEnable(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.security.totp.setup',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.ownerTotpEnable(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.security.totp.verify',
-      {
-        access: 'public' as const,
-        handle: (params, context) => services.ownerTotpVerify(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.security.recovery.generate',
-      {
-        access: 'local' as const,
-        handle: (params, context) => services.ownerRecoveryGenerate(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.security.recovery.rotate',
-      {
-        access: 'local' as const,
-        handle: (params, context) => services.ownerRecoveryGenerate(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.security.recovery.acknowledge',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.ownerRecoveryAcknowledge(context),
-      },
-    ],
-    [
-      'owner.security.recovery.verify',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.ownerRecoveryVerify(context, asRecord(params)),
       },
     ],
   ])

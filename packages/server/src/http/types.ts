@@ -1,4 +1,3 @@
-import type { Auth } from '../auth.js'
 import type { ServerConfig } from '../config.js'
 import type { NativeCodexMessage } from '../codex/native-protocol.js'
 import type { ThreadRuntimeStatus } from '../codex/event-hub.js'
@@ -87,7 +86,8 @@ export type CodexBridge = {
 }
 
 export type AppDependencies = {
-  auth: Auth
+  ownerId: string
+  database?: import('../database.js').Database
   workspace: WorkspaceService & { hasOwner?: () => Promise<boolean> }
   codex: CodexBridge
   remote?: OwnerConnector

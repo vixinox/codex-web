@@ -1,155 +1,99 @@
 import {
   createDeviceKey,
   loadDeviceKey,
+  restoreDeviceKey,
   saveRemoteOwnerSession,
   setPairedDevice,
   setRemoteTarget,
-  restoreDeviceKey,
 } from './device-key-store'
 import { createRelayOwnerSocket } from './relay-owner-socket'
 import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
-import type { LoginQrPayload } from '@/app/owner/owner-management-model'
+import type { FirstSessionPayload } from '@/app/owner/owner-management-model'
 
 export type AdmissionConnection = {
   request<T = unknown>(method: string, params?: unknown): Promise<T>
   close(reason?: string): void
 }
 
-export type RemoteLoginCredentials = {
-  email: string
-  password: string
-}
-
-export type PendingTwoFactor = {
-  challengeId: string
-  expiresAt: string
-}
-
-export type LoginCandidateSession = { pendingTwoFactor: PendingTwoFactor }
-
 export type RemoteLoginResult = {
   ownerId: string
   sessionToken: string
   expiresAt: string
-  rollbackToken: string
-}
-
-export type PairedAdmission = {
   deviceId: string
-  clientToken: string
-  trustEpoch: number
-  ownerId: string
 }
 
-export async function openLoginCandidateSession(
-  connection: AdmissionConnection,
-  credentials: RemoteLoginCredentials,
-): Promise<LoginCandidateSession> {
-  const result = await connection.request<{ pendingTwoFactor?: PendingTwoFactor }>(
-    'owner.session.open',
-    credentials,
-  )
-  if (!result.pendingTwoFactor)
-    throw new Error('Owner authentication did not require a second factor.')
-  return { pendingTwoFactor: result.pendingTwoFactor }
-}
-
-export async function completeLoginCandidateTwoFactor(
-  connection: AdmissionConnection,
-  challenge: PendingTwoFactor,
-  factor: { kind: 'totp' | 'recovery'; code: string },
-): Promise<RemoteLoginResult & PairedAdmission> {
-  const method =
-    factor.kind === 'totp' ? 'owner.login.verifyTotp' : 'owner.login.verifyRecoveryCode'
-  const result = await connection.request<RemoteLoginResult & PairedAdmission>(method, {
-    challengeId: challenge.challengeId,
-    code: factor.code,
-  })
-  if (
-    typeof result.ownerId !== 'string' ||
-    typeof result.sessionToken !== 'string' ||
-    typeof result.expiresAt !== 'string' ||
-    typeof result.rollbackToken !== 'string' ||
-    typeof result.deviceId !== 'string' ||
-    typeof result.clientToken !== 'string' ||
-    !Number.isSafeInteger(result.trustEpoch)
-  )
-    throw new Error('Owner authentication did not complete.')
-  return result
-}
-
-export async function loginToRemoteOwner(input: {
-  relayUrl: string
-  ownerCode: string
-  nodeId: string
-  trustEpoch: number
-  expectedFingerprint: string
-  credentials: RemoteLoginCredentials
-  factor: { kind: 'totp' | 'recovery'; code: string }
-}): Promise<RemoteLoginResult> {
-  const previousRecord = await loadDeviceKey()
-  if (!previousRecord) await createDeviceKey()
+export async function redeemFirstSession(payload: FirstSessionPayload): Promise<RemoteLoginResult> {
+  const previous = await loadDeviceKey()
+  if (!previous) await createDeviceKey()
   const device = await loadDeviceKey()
   if (!device) throw new Error('Unable to create a remote device key.')
-
-  const socket = createRelayOwnerSocket(input.relayUrl, {
-    nodeId: input.nodeId,
-    trustEpoch: input.trustEpoch,
+  const socket = createRelayOwnerSocket(payload.relayUrl, {
+    nodeId: payload.nodeId,
+    trustEpoch: payload.trustEpoch,
     clientToken: '',
     publicKey: device.publicKey,
     privateKey: device.privateKey,
-    loginOwnerCode: input.ownerCode,
-    expectedOwnerFingerprint: input.expectedFingerprint,
+    firstSessionOwnerCode: payload.ownerCode,
+    firstSessionGrant: payload.grant,
+    firstSessionFingerprint: payload.ownerPublicKeyVerificationKey,
+    expectedOwnerFingerprint: payload.ownerPublicKeyFingerprint,
   })
-  const connection = createOwnerRuntime(() => socket)
-  let rollbackToken: string | undefined
-  let pairedRuntime: ReturnType<typeof createOwnerRuntime> | undefined
+  const runtime = createOwnerRuntime(() => socket)
   try {
-    await connection.connect({
-      url: input.relayUrl,
-      clientId: 'owner-remote-login',
+    await runtime.connect({
+      url: payload.relayUrl,
+      clientId: 'owner-first-session',
       capabilities: ['owner'],
     })
-    const opened = await openLoginCandidateSession(connection, input.credentials)
-    if (!('pendingTwoFactor' in opened))
-      throw new Error('Owner authentication did not require a second factor.')
-    const authentication = await completeLoginCandidateTwoFactor(
-      connection,
-      opened.pendingTwoFactor,
-      input.factor,
+    const result = await runtime.request<{
+      ownerId: string
+      sessionToken: string
+      expiresAt: string
+      deviceId: string
+      clientToken: string
+      trustEpoch: number
+    }>('owner.firstSession.redeem', { grant: payload.grant })
+    if (
+      typeof result.ownerId !== 'string' ||
+      typeof result.sessionToken !== 'string' ||
+      typeof result.expiresAt !== 'string' ||
+      typeof result.deviceId !== 'string' ||
+      typeof result.clientToken !== 'string' ||
+      !Number.isSafeInteger(result.trustEpoch)
     )
-    rollbackToken = authentication.rollbackToken
+      throw new Error('First-session grant was rejected.')
     await setPairedDevice({
-      deviceId: authentication.deviceId,
-      pairedClientToken: authentication.clientToken,
-      trustEpoch: authentication.trustEpoch,
-      nodeId: input.nodeId,
-      relayUrl: input.relayUrl,
+      deviceId: result.deviceId,
+      pairedClientToken: result.clientToken,
+      trustEpoch: result.trustEpoch,
+      nodeId: payload.nodeId,
+      relayUrl: payload.relayUrl,
     })
-    pairedRuntime = await connectPairedOwner({
-      relayUrl: input.relayUrl,
-      ownerCode: input.ownerCode,
-      nodeId: input.nodeId,
-      ownerId: authentication.ownerId,
-      sessionToken: authentication.sessionToken,
-      expiresAt: authentication.expiresAt,
-      trustEpoch: authentication.trustEpoch,
+    await saveRemoteOwnerSession({
+      token: result.sessionToken,
+      expiresAt: result.expiresAt,
+      relayUrl: payload.relayUrl,
+      ownerCode: payload.ownerCode,
+      nodeId: payload.nodeId,
+      deviceId: result.deviceId,
+      ownerId: result.ownerId,
     })
     await setRemoteTarget({
-      nodeId: input.nodeId,
-      relayUrl: input.relayUrl,
-      ownerCode: input.ownerCode,
+      nodeId: payload.nodeId,
+      relayUrl: payload.relayUrl,
+      ownerCode: payload.ownerCode,
     })
-    pairedRuntime.close('remote login complete')
-    return authentication
+    return {
+      ownerId: result.ownerId,
+      sessionToken: result.sessionToken,
+      expiresAt: result.expiresAt,
+      deviceId: result.deviceId,
+    }
   } catch (error) {
-    pairedRuntime?.close('remote login failed')
-    if (rollbackToken)
-      await connection.request('owner.login.rollback', { rollbackToken }).catch(() => undefined)
-    await restoreDeviceKey(previousRecord).catch(() => undefined)
+    await restoreDeviceKey(previous).catch(() => undefined)
     throw error
   } finally {
-    connection.close('remote login complete')
+    runtime.close('first-session complete')
   }
 }
 
@@ -158,7 +102,7 @@ export async function inspectRemoteOwnerFingerprint(input: {
   ownerCode: string
   nodeId: string
   trustEpoch?: number
-}): Promise<string> {
+}) {
   const record = await loadDeviceKey()
   if (!record) await createDeviceKey()
   const device = await loadDeviceKey()
@@ -171,155 +115,158 @@ export async function inspectRemoteOwnerFingerprint(input: {
     publicKey: device.publicKey,
     privateKey: device.privateKey,
     loginOwnerCode: input.ownerCode,
-    onOwnerFingerprint: (fingerprint) => {
-      observed = fingerprint
+    onOwnerFingerprint: (value) => {
+      observed = value
     },
-  })
-  const connection = createOwnerRuntime(() => socket)
-  try {
-    await connection.connect({ url: input.relayUrl, clientId: 'owner-fingerprint-check' })
-    if (!observed) throw new Error('Owner fingerprint is unavailable.')
-    return observed
-  } finally {
-    connection.close('fingerprint checked')
-  }
-}
-
-export async function redeemLoginQr(payload: LoginQrPayload): Promise<RemoteLoginResult> {
-  const fingerprint = await fingerprintOwnerKey(payload.ownerPublicKey)
-  if (fingerprint !== payload.ownerPublicKeyFingerprint)
-    throw new Error('Login QR Owner fingerprint is invalid.')
-  const previousRecord = await loadDeviceKey()
-  const record = previousRecord
-  if (!record) await createDeviceKey()
-  const device = await loadDeviceKey()
-  if (!device) throw new Error('Unable to create a remote device key.')
-  const socket = createRelayOwnerSocket(payload.relayUrl, {
-    nodeId: payload.nodeId,
-    trustEpoch: payload.trustEpoch,
-    clientToken: '',
-    publicKey: device.publicKey,
-    privateKey: device.privateKey,
-    loginOwnerCode: payload.ownerCode,
-    expectedOwnerFingerprint: payload.ownerPublicKeyFingerprint,
-  })
-  const connection = createOwnerRuntime(() => socket)
-  let rollbackToken: string | undefined
-  let pairedRuntime: ReturnType<typeof createOwnerRuntime> | undefined
-  try {
-    await connection.connect({ url: payload.relayUrl, clientId: 'owner-remote-qr-login' })
-    const result = await connection.request<{
-      ownerId: string
-      sessionToken: string
-      expiresAt: string
-      deviceId: string
-      clientToken: string
-      trustEpoch: number
-      rollbackToken: string
-    }>('owner.loginQr.redeem', { capability: payload.capability })
-    if (
-      typeof result.ownerId !== 'string' ||
-      typeof result.sessionToken !== 'string' ||
-      typeof result.expiresAt !== 'string' ||
-      typeof result.deviceId !== 'string' ||
-      typeof result.clientToken !== 'string' ||
-      !Number.isSafeInteger(result.trustEpoch) ||
-      typeof result.rollbackToken !== 'string'
-    )
-      throw new Error('Owner QR login did not complete.')
-    rollbackToken = result.rollbackToken
-    await setPairedDevice({
-      deviceId: result.deviceId,
-      pairedClientToken: result.clientToken,
-      trustEpoch: result.trustEpoch,
-      nodeId: payload.nodeId,
-      relayUrl: payload.relayUrl,
-    })
-    pairedRuntime = await connectPairedOwner({
-      relayUrl: payload.relayUrl,
-      ownerCode: payload.ownerCode,
-      nodeId: payload.nodeId,
-      ownerId: result.ownerId,
-      sessionToken: result.sessionToken,
-      expiresAt: result.expiresAt,
-      trustEpoch: result.trustEpoch,
-    })
-    await setRemoteTarget({
-      nodeId: payload.nodeId,
-      relayUrl: payload.relayUrl,
-      ownerCode: payload.ownerCode,
-    })
-    pairedRuntime.close('QR login complete')
-    return {
-      ownerId: result.ownerId,
-      sessionToken: result.sessionToken,
-      expiresAt: result.expiresAt,
-      rollbackToken: result.rollbackToken,
-    }
-  } catch (error) {
-    pairedRuntime?.close('QR login failed')
-    if (rollbackToken)
-      await connection.request('owner.login.rollback', { rollbackToken }).catch(() => undefined)
-    await restoreDeviceKey(previousRecord).catch(() => undefined)
-    throw error
-  } finally {
-    connection.close('QR login complete')
-  }
-}
-
-async function connectPairedOwner(input: {
-  relayUrl: string
-  ownerCode: string
-  nodeId: string
-  ownerId: string
-  sessionToken: string
-  expiresAt: string
-  trustEpoch: number
-}) {
-  const record = await loadDeviceKey()
-  if (!record?.deviceId || !record.pairedClientToken)
-    throw new Error('Paired device credentials are unavailable.')
-  const socket = createRelayOwnerSocket(input.relayUrl, {
-    nodeId: input.nodeId,
-    trustEpoch: input.trustEpoch,
-    clientToken: record.pairedClientToken,
-    deviceId: record.deviceId,
-    publicKey: record.publicKey,
-    privateKey: record.privateKey,
   })
   const runtime = createOwnerRuntime(() => socket)
   try {
     await runtime.connect({
       url: input.relayUrl,
-      clientId: 'owner-remote-app',
-      capabilities: ['owner', 'remote-administration'],
-      sessionToken: input.sessionToken,
+      clientId: 'owner-fingerprint-check',
+      capabilities: ['owner'],
     })
-    if (!runtime.authenticated) throw new Error('Paired Owner admission was rejected.')
-    await saveRemoteOwnerSession({
-      token: input.sessionToken,
-      expiresAt: input.expiresAt,
-      relayUrl: input.relayUrl,
-      ownerCode: input.ownerCode,
-      nodeId: input.nodeId,
-      deviceId: record.deviceId,
-      ownerId: input.ownerId,
-    })
-    return runtime
-  } catch (error) {
-    runtime.close('paired admission failed')
-    throw error
+    if (!observed) throw new Error('Owner fingerprint is unavailable.')
+    return observed
+  } finally {
+    runtime.close('fingerprint checked')
   }
 }
 
-async function fingerprintOwnerKey(serializedPublicKey: string) {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(serializedPublicKey),
+export async function authenticateWithPasskey(
+  connection: AdmissionConnection,
+  originProfile: 'local' | 'remote',
+) {
+  const options = await connection.request<{
+    challengeId: string
+    options: PublicKeyCredentialRequestOptionsJSON
+  }>('owner.passkey.authentication.options')
+  const credential = await navigator.credentials.get({
+    publicKey: browserRequestOptions(options.options),
+  })
+  if (!(credential instanceof PublicKeyCredential))
+    throw new Error('Passkey authentication was cancelled.')
+  const response = credentialToJson(credential)
+  const result = await connection.request<{ token: string; expiresAt: string; ownerId?: string }>(
+    'owner.passkey.authentication.verify',
+    { challengeId: options.challengeId, response },
   )
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/u, '')
-    .slice(0, 16)
+  return { ...result, originProfile }
+}
+
+export async function authenticateWithRecoveryCode(connection: AdmissionConnection, code: string) {
+  const reserved = await connection.request<{
+    reservationId: string
+    registration: { challengeId: string; options: PublicKeyCredentialCreationOptionsJSON }
+  }>('owner.recovery.login.reserve', { code })
+  if (
+    !reserved?.reservationId ||
+    !reserved.registration?.challengeId ||
+    !reserved.registration.options
+  )
+    throw new Error('Recovery code could not be reserved.')
+  const credential = await navigator.credentials.create({
+    publicKey: browserCreationOptions(reserved.registration.options),
+  })
+  if (!(credential instanceof PublicKeyCredential))
+    throw new Error('Passkey registration was cancelled. The recovery code remains available.')
+  const result = await connection.request<{
+    ownerId: string
+    sessionToken: string
+    expiresAt: string
+    deviceId: string
+    clientToken: string
+    trustEpoch: number
+    recoveryCodes: string[]
+  }>('owner.recovery.login.finish', {
+    reservationId: reserved.reservationId,
+    challengeId: reserved.registration.challengeId,
+    response: registrationToJson(credential),
+  })
+  if (
+    typeof result.ownerId !== 'string' ||
+    typeof result.sessionToken !== 'string' ||
+    typeof result.deviceId !== 'string' ||
+    typeof result.clientToken !== 'string' ||
+    !Number.isSafeInteger(result.trustEpoch) ||
+    !Array.isArray(result.recoveryCodes)
+  )
+    throw new Error('Recovery sign-in returned an invalid session.')
+  return result
+}
+
+function browserRequestOptions(
+  options: PublicKeyCredentialRequestOptionsJSON,
+): PublicKeyCredentialRequestOptions {
+  return {
+    ...options,
+    challenge: fromBase64Url(options.challenge),
+    allowCredentials: options.allowCredentials?.map((item) => ({
+      type: 'public-key' as const,
+      id: fromBase64Url(item.id),
+      transports: item.transports?.filter(isAuthenticatorTransport),
+    })),
+  } as unknown as PublicKeyCredentialRequestOptions
+}
+
+function browserCreationOptions(
+  options: PublicKeyCredentialCreationOptionsJSON,
+): PublicKeyCredentialCreationOptions {
+  return {
+    ...options,
+    challenge: fromBase64Url(options.challenge),
+    user: { ...options.user, id: fromBase64Url(options.user.id) },
+    excludeCredentials: options.excludeCredentials?.map((item) => ({
+      type: 'public-key' as const,
+      id: fromBase64Url(item.id),
+      transports: item.transports?.filter(isAuthenticatorTransport),
+    })),
+  } as unknown as PublicKeyCredentialCreationOptions
+}
+
+function isAuthenticatorTransport(value: string): value is AuthenticatorTransport {
+  return ['ble', 'hybrid', 'internal', 'nfc', 'usb'].includes(value)
+}
+
+function fromBase64Url(value: string) {
+  const normalized = value.replace(/-/gu, '+').replace(/_/gu, '/')
+  const binary = atob(normalized + '='.repeat((4 - (normalized.length % 4)) % 4))
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+}
+
+function credentialToJson(credential: PublicKeyCredential) {
+  const response = credential.response as AuthenticatorAssertionResponse
+  return {
+    id: credential.id,
+    rawId: toBase64Url(new Uint8Array(credential.rawId)),
+    type: credential.type,
+    response: {
+      authenticatorData: toBase64Url(new Uint8Array(response.authenticatorData)),
+      clientDataJSON: toBase64Url(new Uint8Array(response.clientDataJSON)),
+      signature: toBase64Url(new Uint8Array(response.signature)),
+      userHandle: response.userHandle ? toBase64Url(new Uint8Array(response.userHandle)) : null,
+    },
+    clientExtensionResults: credential.getClientExtensionResults(),
+  }
+}
+
+function registrationToJson(credential: PublicKeyCredential) {
+  const response = credential.response as AuthenticatorAttestationResponse
+  return {
+    id: credential.id,
+    rawId: toBase64Url(new Uint8Array(credential.rawId)),
+    type: credential.type,
+    response: {
+      attestationObject: toBase64Url(new Uint8Array(response.attestationObject)),
+      clientDataJSON: toBase64Url(new Uint8Array(response.clientDataJSON)),
+      transports: response.getTransports?.() ?? [],
+    },
+    clientExtensionResults: credential.getClientExtensionResults(),
+  }
+}
+
+function toBase64Url(bytes: Uint8Array) {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')
 }

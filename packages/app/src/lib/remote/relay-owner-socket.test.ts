@@ -34,9 +34,12 @@ class FakeWebSocket extends EventTarget {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('relay login fingerprint gate', () => {
-  it.each([undefined, 'unconfirmed-fingerprint'])(
+  it.each([
+    [undefined, undefined],
+    ['unconfirmed-fingerprint', 'expected-other-fingerprint'],
+  ])(
     'closes before releasing queued login factors when the Owner fingerprint is %s',
-    async (expectedOwnerFingerprint) => {
+    async (expectedOwnerFingerprint, actualFingerprint) => {
       const sockets: FakeWebSocket[] = []
       vi.stubGlobal(
         'WebSocket',
@@ -78,7 +81,10 @@ describe('relay login fingerprint gate', () => {
             version: RELAY_PROTOCOL_VERSION,
             nodeId: 'owner-node',
             trustEpoch: 3,
-            ownerPublicKey: 'owner-public-key',
+            ownerPublicKey:
+              expectedOwnerFingerprint === 'unconfirmed-fingerprint'
+                ? 'different-owner-key'
+                : 'owner-public-key',
             clientPublicKey: 'client-public-key',
           }),
         }),

@@ -26,7 +26,7 @@ export type RelaySession = {
   trustEpoch: number
   role: ConnectionRole
   socket: RelaySocket
-  admission?: 'paired' | 'login'
+  admission?: 'paired' | 'login' | 'first_session'
   deviceId?: string
   ownerCode?: string
   rateTokens: number
@@ -79,7 +79,7 @@ export class RelayRouter {
   }
 
   attach(attachment: RelayAttachFrame, socket: RelaySocket): RelayAttachResult {
-    if (attachment.role === 'client' && attachment.admission === 'login')
+    if (attachment.role === 'client' && (attachment.admission === 'login' || attachment.admission === 'first_session'))
       return this.attachLoginCandidate(attachment, socket)
     const trustEpoch = attachment.trustEpoch
     if (
@@ -289,8 +289,8 @@ export class RelayRouter {
       version: 1,
       nodeId: client.nodeId,
       connectionId: client.connectionId,
-      ...(client.admission === 'login'
-        ? { admission: 'login' as const, ownerCode: client.ownerCode! }
+      ...(client.admission === 'login' || client.admission === 'first_session'
+        ? { admission: client.admission, ownerCode: client.ownerCode! }
         : { deviceId: client.deviceId! }),
     }
     owner.socket.send(encodeFrame(frame))
@@ -346,7 +346,7 @@ export class RelayRouter {
   }
 
   private attachLoginCandidate(
-    attachment: Extract<RelayAttachFrame, { role: 'client'; admission: 'login' }>,
+    attachment: Extract<RelayAttachFrame, { role: 'client'; admission: 'login' | 'first_session' }>,
     socket: RelaySocket,
   ): RelayAttachResult {
     if (
@@ -371,7 +371,7 @@ export class RelayRouter {
       trustEpoch: node.trustEpoch,
       role: 'client',
       socket,
-      admission: 'login',
+      admission: attachment.admission,
       ownerCode: attachment.ownerCode,
       rateTokens: this.options.messagesPerSecond ?? DEFAULT_MESSAGES_PER_SECOND,
       lastRateUpdate: Date.now(),

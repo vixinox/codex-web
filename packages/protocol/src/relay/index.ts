@@ -37,10 +37,22 @@ export type RelayLoginClientAttachFrame = {
   ownerCode: string
 }
 
+export type RelayFirstSessionClientAttachFrame = {
+  type: 'relay.attach'
+  version: typeof RELAY_PROTOCOL_VERSION
+  role: 'client'
+  admission: 'first_session'
+  connectionId: string
+  ownerCode: string
+  grant: string
+}
+
+
 export type RelayAttachFrame =
   | RelayOwnerAttachFrame
   | RelayPairedClientAttachFrame
   | RelayLoginClientAttachFrame
+  | RelayFirstSessionClientAttachFrame
 
 export type RelayReadyFrame = {
   type: 'relay.ready'
@@ -63,7 +75,7 @@ export type RelayPairedClientConnectedFrame = RelayClientConnectedBase & {
 }
 
 export type RelayLoginClientConnectedFrame = RelayClientConnectedBase & {
-  admission: 'login'
+  admission: 'login' | 'first_session'
   ownerCode: string
   deviceId?: never
 }
@@ -167,12 +179,15 @@ export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAtta
     frame.type === 'relay.attach' &&
     frame.version === RELAY_PROTOCOL_VERSION &&
     frame.role === 'client' &&
-    frame.admission === 'login'
+    (frame.admission === 'login' || frame.admission === 'first_session')
   )
     return (
-      hasOnlyKeys(frame, ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode']) &&
+      hasOnlyKeys(frame, frame.admission === 'login'
+        ? ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode']
+        : ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode', 'grant']) &&
       isRouteIdentifier(frame.connectionId) &&
-      isOwnerCode(frame.ownerCode)
+      isOwnerCode(frame.ownerCode) &&
+      (frame.admission === 'login' || (typeof frame.grant === 'string' && frame.grant.length >= 32 && frame.grant.length <= 512))
     )
   if (!frame || frame.type !== 'relay.attach' || frame.version !== RELAY_PROTOCOL_VERSION)
     return false

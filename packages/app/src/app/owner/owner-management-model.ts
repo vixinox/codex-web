@@ -5,44 +5,58 @@ export type OwnerDevice = {
 }
 
 export type OwnerManagementSnapshot = {
-  totpEnabled: boolean
+  remotePasskeyAvailable: boolean
+  localPasskeyAvailable: boolean
   recoveryCodesAvailable: boolean
-  initialized: boolean
   devices: OwnerDevice[]
 }
 
-export type LoginQrPayload = {
+export type FirstSessionPayload = {
   version: 1
+  type: 'first_session'
   relayUrl: string
   ownerCode: string
   nodeId: string
   trustEpoch: number
   ownerPublicKey: string
   ownerPublicKeyFingerprint: string
-  capability: string
+  ownerPublicKeyVerificationKey: string
+  grant: string
+  expiresAt: string
 }
 
-export type IssuedLoginQr = { payload: LoginQrPayload; expiresAt: string }
+export type IssuedFirstSession = { payload: FirstSessionPayload }
+
+export type ManagementQr = {
+  capability: string
+  ownerId: string
+  nodeId: string
+  trustEpoch: number
+  expiresAt: string
+}
 
 export type OwnerManagementClient = {
   getSnapshot(): Promise<OwnerManagementSnapshot>
-  setupTotp(password: string): Promise<{ totpURI?: string }>
-  verifyTotp(code: string): Promise<{ recoveryCodes: string[] }>
-  generateRecoveryCodes(password?: string): Promise<{ recoveryCodes: string[] }>
-  acknowledgeRecoveryCodes(): Promise<void>
+  registerPasskey(ticket?: string): Promise<void>
+  generateRecoveryCodes(): Promise<string[]>
+  issueLocalEnrollmentTicket(): Promise<{ ticket: string; origin: string; expiresAt: string }>
   revokeDevice(deviceId: string): Promise<void>
+  revokeAllSessions(): Promise<void>
+  revokeAllDevices(): Promise<void>
   resetTrust(): Promise<void>
-  issueLoginQr(): Promise<IssuedLoginQr>
-  cancelLoginQr(): Promise<{ cancelled: boolean }>
-  loginQrStatus(): Promise<{
-    state: 'active' | 'none' | 'consumed' | 'expired' | 'cancelled' | 'restarted'
-    expiresAt?: string
-  }>
+  issueFirstSession(): Promise<IssuedFirstSession>
+  issueManagementQr(): Promise<ManagementQr>
+  cancelManagementQr(): Promise<boolean>
   close(): void
 }
 
 export function emptyOwnerManagementSnapshot(): OwnerManagementSnapshot {
-  return { totpEnabled: false, recoveryCodesAvailable: false, initialized: false, devices: [] }
+  return {
+    remotePasskeyAvailable: false,
+    localPasskeyAvailable: false,
+    recoveryCodesAvailable: false,
+    devices: [],
+  }
 }
 
 export function formatDeviceDate(value: string | null) {

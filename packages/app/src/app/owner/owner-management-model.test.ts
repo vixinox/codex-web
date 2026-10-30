@@ -4,9 +4,9 @@ import { emptyOwnerManagementSnapshot, formatDeviceDate } from './owner-manageme
 describe('owner management model', () => {
   it('starts with an explicit empty safe state', () => {
     expect(emptyOwnerManagementSnapshot()).toEqual({
-      totpEnabled: false,
+      remotePasskeyAvailable: false,
+      localPasskeyAvailable: false,
       recoveryCodesAvailable: false,
-      initialized: false,
       devices: [],
     })
   })

@@ -14,8 +14,7 @@ function isProtectedRequest(input: RequestInfo | URL) {
   }
 
   if (url.origin !== window.location.origin) return false
-  if (!PROTECTED_PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))) return false
-  return !url.pathname.startsWith('/api/auth/')
+  return PROTECTED_PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))
 }
 
 export function installAuthExpiryInterceptor() {

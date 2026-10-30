@@ -22,7 +22,7 @@ export class SqliteEventStore {
     for (const row of rows.reverse()) {
       const projected = projectNativeMessage(row.message)
       if (!projected.ok) continue
-      const list = events[row.userId] ?? (events[row.userId] = [])
+      const list = events[row.ownerId] ?? (events[row.ownerId] = [])
       list.push({ id: row.id, message: projected.value })
       nextId = Math.max(nextId, row.id + 1)
     }
@@ -38,7 +38,7 @@ export class SqliteEventStore {
     const rows = await this.db
       .select()
       .from(codexEvent)
-      .where(and(eq(codexEvent.userId, userId), eq(codexEvent.threadId, threadId)))
+      .where(and(eq(codexEvent.ownerId, userId), eq(codexEvent.threadId, threadId)))
       .orderBy(desc(codexEvent.id))
       .limit(THREAD_EVENT_LIMIT)
     return rows.reverse().flatMap((row) => {
@@ -53,7 +53,7 @@ export class SqliteEventStore {
     const threadId = messageThreadId(projected.value)
     await this.db.insert(codexEvent).values({
       id: event.id,
-      userId,
+      ownerId: userId,
       threadId,
       message: projected.value,
     })
@@ -67,11 +67,11 @@ export class SqliteEventStore {
       .where(
         filterThreadId
           ? and(
-              eq(codexEvent.userId, userId),
+              eq(codexEvent.ownerId, userId),
               eq(codexEvent.threadId, filterThreadId),
               gt(codexEvent.id, afterId),
             )
-          : and(eq(codexEvent.userId, userId), gt(codexEvent.id, afterId)),
+          : and(eq(codexEvent.ownerId, userId), gt(codexEvent.id, afterId)),
       )
       .orderBy(asc(codexEvent.id))
       .limit(500)
@@ -86,7 +86,7 @@ export class SqliteEventStore {
       const [result] = await this.db
         .select({ count: count(), earliestId: min(codexEvent.id) })
         .from(codexEvent)
-        .where(and(eq(codexEvent.userId, userId), eq(codexEvent.threadId, filterThreadId)))
+        .where(and(eq(codexEvent.ownerId, userId), eq(codexEvent.threadId, filterThreadId)))
       return (
         Number(result?.count ?? 0) >= THREAD_EVENT_LIMIT &&
         result?.earliestId !== null &&
@@ -98,7 +98,7 @@ export class SqliteEventStore {
     const threads = await this.db
       .select({ threadId: codexEvent.threadId, count: count(), earliestId: min(codexEvent.id) })
       .from(codexEvent)
-      .where(and(eq(codexEvent.userId, userId), isNotNull(codexEvent.threadId)))
+      .where(and(eq(codexEvent.ownerId, userId), isNotNull(codexEvent.threadId)))
       .groupBy(codexEvent.threadId)
     return threads.some(
       (thread) =>
@@ -110,19 +110,19 @@ export class SqliteEventStore {
 
   async retainPerThread(limit = THREAD_EVENT_LIMIT) {
     const threads = await this.db
-      .select({ userId: codexEvent.userId, threadId: codexEvent.threadId })
+      .select({ ownerId: codexEvent.ownerId, threadId: codexEvent.threadId })
       .from(codexEvent)
       .where(isNotNull(codexEvent.threadId))
-      .groupBy(codexEvent.userId, codexEvent.threadId)
+      .groupBy(codexEvent.ownerId, codexEvent.threadId)
     for (const thread of threads)
-      if (thread.threadId) await this.retainThread(thread.userId, thread.threadId, limit)
+      if (thread.threadId) await this.retainThread(thread.ownerId, thread.threadId, limit)
   }
 
   private async retainThread(userId: string, threadId: string, limit = THREAD_EVENT_LIMIT) {
     const cutoff = await this.db
       .select({ id: codexEvent.id })
       .from(codexEvent)
-      .where(and(eq(codexEvent.userId, userId), eq(codexEvent.threadId, threadId)))
+      .where(and(eq(codexEvent.ownerId, userId), eq(codexEvent.threadId, threadId)))
       .orderBy(desc(codexEvent.id))
       .offset(limit)
       .limit(1)
@@ -132,7 +132,7 @@ export class SqliteEventStore {
         .delete(codexEvent)
         .where(
           and(
-            eq(codexEvent.userId, userId),
+            eq(codexEvent.ownerId, userId),
             eq(codexEvent.threadId, threadId),
             lte(codexEvent.id, id),
           ),

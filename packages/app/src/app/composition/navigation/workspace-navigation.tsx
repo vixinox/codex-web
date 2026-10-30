@@ -2,7 +2,7 @@ import { useLocation, useNavigate } from 'react-router'
 import * as React from 'react'
 import { PanelLeft } from 'lucide-react'
 
-import { signOut } from '@/lib/auth/auth-client'
+import { clearLocalOwnerSession } from '@/lib/auth/auth-client'
 import { clearRemoteOwnerSession } from '@/lib/remote/device-key-store'
 import type { WorkspaceRouteController } from '@/app/composition/routes/use-workspace-route-controller'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
@@ -114,7 +114,7 @@ export function WorkspaceNavigation({
     onOpenNewChat: () => route.openNewChat(),
     onSignOut: async () => {
       await clearRemoteOwnerSession().catch(() => undefined)
-      await signOut()
+      clearLocalOwnerSession()
       void navigate('/login', { replace: true })
     },
     onSelectThread: actions.selectThread,

@@ -5,10 +5,8 @@ import { and, asc, eq, isNull } from 'drizzle-orm'
 
 import {
   credential,
-  ownerSecurityState,
+  owner,
   project,
-  twoFactor as twoFactorTable,
-  user,
 } from './db/schema.js'
 import type { ServerConfig } from './config.js'
 import type { Database } from './database.js'
@@ -31,53 +29,15 @@ export function createWorkspaceService(
 ) {
   return {
     async hasOwner() {
-      const [owner] = await db.select({ id: user.id }).from(user).limit(1)
-      return Boolean(owner)
+      const [existing] = await db.select({ id: owner.id }).from(owner).limit(1)
+      return Boolean(existing)
     },
-    async isOwnerSecurityInitialized(ownerId: string) {
-      const [state] = await db
-        .select({ acknowledgedAt: ownerSecurityState.recoveryCodesAcknowledgedAt })
-        .from(ownerSecurityState)
-        .where(eq(ownerSecurityState.ownerId, ownerId))
-      return Boolean(state?.acknowledgedAt)
-    },
-    async acknowledgeOwnerRecoveryCodes(ownerId: string) {
-      const [owner] = await db
-        .select({ twoFactorEnabled: user.twoFactorEnabled })
-        .from(user)
-        .where(eq(user.id, ownerId))
-      if (!owner?.twoFactorEnabled) return false
-      const acknowledgedAt = new Date()
-      await db
-        .insert(ownerSecurityState)
-        .values({ ownerId, recoveryCodesAcknowledgedAt: acknowledgedAt })
-        .onConflictDoUpdate({
-          target: ownerSecurityState.ownerId,
-          set: { recoveryCodesAcknowledgedAt: acknowledgedAt },
-        })
-      return true
-    },
-    async clearOwnerSecurityInitialization(ownerId: string) {
-      await db.delete(ownerSecurityState).where(eq(ownerSecurityState.ownerId, ownerId))
-    },
-    async listRecoveryCodes(ownerId: string) {
-      const [twoFactor] = await db
-        .select({ backupCodes: twoFactorTable.backupCodes })
-        .from(twoFactorTable)
-        .where(eq(twoFactorTable.userId, ownerId))
-      return twoFactor?.backupCodes ?? null
-    },
-    async replaceRecoveryCodes(ownerId: string, backupCodes: string) {
-      const updated = await db
-        .update(twoFactorTable)
-        .set({ backupCodes })
-        .where(eq(twoFactorTable.userId, ownerId))
-        .returning({ id: twoFactorTable.id })
-      return updated.length > 0
+    async createOwner(ownerId: string) {
+      await db.insert(owner).values({ id: ownerId, runtimeInitializedAt: new Date() })
     },
     async getOnlyOwnerId() {
-      const [owner] = await db.select({ id: user.id }).from(user).limit(1)
-      return owner?.id ?? null
+      const [existing] = await db.select({ id: owner.id }).from(owner).limit(1)
+      return existing?.id ?? null
     },
     getUserRoot(userId: string) {
       return userRoot(config, userId)
@@ -91,19 +51,19 @@ export function createWorkspaceService(
           updatedAt: project.updatedAt,
         })
         .from(project)
-        .where(eq(project.userId, userId))
+        .where(eq(project.ownerId, userId))
     },
     async listProjectLocations(userId: string) {
       return db
         .select({ id: project.id, path: project.path })
         .from(project)
-        .where(eq(project.userId, userId))
+        .where(eq(project.ownerId, userId))
     },
     async getProject(userId: string, projectId: string) {
       const [record] = await db
         .select({ id: project.id, path: project.path, name: project.name })
         .from(project)
-        .where(and(eq(project.id, projectId), eq(project.userId, userId)))
+        .where(and(eq(project.id, projectId), eq(project.ownerId, userId)))
       return record
     },
     async createProject(userId: string, rawName: string) {
@@ -113,7 +73,7 @@ export function createWorkspaceService(
       const [existing] = await db
         .select({ id: project.id })
         .from(project)
-        .where(and(eq(project.userId, userId), eq(project.name, name)))
+        .where(and(eq(project.ownerId, userId), eq(project.name, name)))
       if (existing) throw new ProjectConflictError()
       await mkdir(root, { recursive: true })
       try {
@@ -135,7 +95,7 @@ export function createWorkspaceService(
         const id = randomUUID()
         const [created] = await db
           .insert(project)
-          .values({ id, userId, name, path: projectPath })
+          .values({ id, ownerId: userId, name, path: projectPath })
           .returning({
             id: project.id,
             name: project.name,
@@ -157,12 +117,12 @@ export function createWorkspaceService(
       const [existing] = await db
         .select({ id: project.id })
         .from(project)
-        .where(and(eq(project.userId, userId), eq(project.name, name)))
+        .where(and(eq(project.ownerId, userId), eq(project.name, name)))
       if (existing && existing.id !== projectId) throw new ProjectConflictError()
       const [updated] = await db
         .update(project)
         .set({ name, updatedAt: new Date() })
-        .where(and(eq(project.userId, userId), eq(project.id, projectId)))
+        .where(and(eq(project.ownerId, userId), eq(project.id, projectId)))
         .returning({
           id: project.id,
           name: project.name,
@@ -174,7 +134,7 @@ export function createWorkspaceService(
     async deleteProject(userId: string, projectId: string) {
       const [deleted] = await db
         .delete(project)
-        .where(and(eq(project.userId, userId), eq(project.id, projectId)))
+        .where(and(eq(project.ownerId, userId), eq(project.id, projectId)))
         .returning({ id: project.id })
       return Boolean(deleted)
     },
@@ -188,7 +148,7 @@ export function createWorkspaceService(
           updatedAt: credential.updatedAt,
         })
         .from(credential)
-        .where(eq(credential.userId, userId))
+        .where(eq(credential.ownerId, userId))
         .orderBy(asc(credential.createdAt), asc(credential.id))
     },
     async getCredential(userId: string, credentialId: string) {
@@ -200,7 +160,7 @@ export function createWorkspaceService(
           encryptedApiKey: credential.encryptedApiKey,
         })
         .from(credential)
-        .where(and(eq(credential.id, credentialId), eq(credential.userId, userId)))
+        .where(and(eq(credential.id, credentialId), eq(credential.ownerId, userId)))
       if (!record) return undefined
       return {
         ...record,
@@ -233,7 +193,7 @@ export function createWorkspaceService(
         .insert(credential)
         .values({
           id,
-          userId,
+          ownerId: userId,
           provider,
           baseUrl,
           encryptedApiKey: encryptSecret(input.apiKey, config.credentialEncryptionKey),
@@ -245,69 +205,69 @@ export function createWorkspaceService(
           createdAt: credential.createdAt,
           updatedAt: credential.updatedAt,
         })
-      const [owner] = await db
-        .select({ currentCredentialId: user.currentCredentialId })
-        .from(user)
-        .where(eq(user.id, userId))
-      if (!owner?.currentCredentialId) {
+      const [ownerRecord] = await db
+        .select({ currentCredentialId: owner.currentCredentialId })
+        .from(owner)
+        .where(eq(owner.id, userId))
+      if (!ownerRecord?.currentCredentialId) {
         const [fallback] = await db
           .select({ id: credential.id })
           .from(credential)
-          .where(eq(credential.userId, userId))
+          .where(eq(credential.ownerId, userId))
           .orderBy(asc(credential.createdAt), asc(credential.id))
           .limit(1)
         await db
-          .update(user)
+          .update(owner)
           .set({ currentCredentialId: fallback?.id ?? saved.id })
-          .where(and(eq(user.id, userId), isNull(user.currentCredentialId)))
+          .where(and(eq(owner.id, userId), isNull(owner.currentCredentialId)))
       }
       return saved
     },
     async getCurrentCredentialId(userId: string): Promise<string | null> {
-      const [owner] = await db
-        .select({ currentCredentialId: user.currentCredentialId })
-        .from(user)
-        .where(eq(user.id, userId))
-      if (owner?.currentCredentialId) {
-        const current = await this.getCredential(userId, owner.currentCredentialId)
+      const [ownerRecord] = await db
+        .select({ currentCredentialId: owner.currentCredentialId })
+        .from(owner)
+        .where(eq(owner.id, userId))
+      if (ownerRecord?.currentCredentialId) {
+        const current = await this.getCredential(userId, ownerRecord.currentCredentialId)
         if (current) return current.id
       }
       const [fallback] = await db
         .select({ id: credential.id })
         .from(credential)
-        .where(eq(credential.userId, userId))
+        .where(eq(credential.ownerId, userId))
         .orderBy(asc(credential.createdAt), asc(credential.id))
         .limit(1)
       const currentCredentialId = fallback?.id ?? null
-      await db.update(user).set({ currentCredentialId }).where(eq(user.id, userId))
+      await db.update(owner).set({ currentCredentialId }).where(eq(owner.id, userId))
       return currentCredentialId
     },
     async setCurrentCredentialId(userId: string, credentialId: string) {
       if (!(await this.getCredential(userId, credentialId))) return false
       const [updated] = await db
-        .update(user)
+        .update(owner)
         .set({ currentCredentialId: credentialId })
-        .where(eq(user.id, userId))
-        .returning({ id: user.id })
+        .where(eq(owner.id, userId))
+        .returning({ id: owner.id })
       return Boolean(updated)
     },
     async deleteCredential(userId: string, id: string) {
       const currentCredentialId = await this.getCurrentCredentialId(userId)
       const [deleted] = await db
         .delete(credential)
-        .where(and(eq(credential.userId, userId), eq(credential.id, id)))
+        .where(and(eq(credential.ownerId, userId), eq(credential.id, id)))
         .returning({ id: credential.id })
       if (deleted?.id && currentCredentialId === deleted.id) {
         const [fallback] = await db
           .select({ id: credential.id })
           .from(credential)
-          .where(eq(credential.userId, userId))
+          .where(eq(credential.ownerId, userId))
           .orderBy(asc(credential.createdAt), asc(credential.id))
           .limit(1)
         await db
-          .update(user)
+          .update(owner)
           .set({ currentCredentialId: fallback?.id ?? null })
-          .where(eq(user.id, userId))
+          .where(eq(owner.id, userId))
       }
       return Boolean(deleted)
     },

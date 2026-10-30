@@ -1,17 +1,18 @@
 import 'dotenv/config'
 
-import { createAuth } from '../auth.js'
 import { loadServerConfig } from '../config.js'
 import { CodexManager } from '../codex/manager.js'
 import { SqliteEventStore } from '../codex/event-store.js'
 import { CodexRuntimeManager } from '../codex/runtime-manager.js'
-import { createDatabase } from '../database.js'
+import { createDatabase, prepareOwnerDatabase } from '../database.js'
 import { log, safeError } from '../logger.js'
 import { createWorkspaceService } from '../workspace.js'
 import { OwnerConnector } from '../remote/connector.js'
 import { RemoteTrustStore } from '../remote/trust-store.js'
 import { buildOwnerServer } from './app.js'
 import { acquireOwnerInstanceLock } from './instance-lock.js'
+import { ensureOwnerInitialized } from './owner-initialization.js'
+import { renderTerminal } from '@vincentkoc/qrcode-tui'
 
 const config = loadServerConfig()
 let db: ReturnType<typeof createDatabase>['db']
@@ -21,9 +22,11 @@ let instanceLock: Awaited<ReturnType<typeof acquireOwnerInstanceLock>> | undefin
 
 try {
   instanceLock = await acquireOwnerInstanceLock(config.dataRoot)
+  prepareOwnerDatabase(config)
   ;({ db, driver } = createDatabase(config))
   driver.prepare('SELECT 1').get()
   const workspace = createWorkspaceService(config, db)
+  const ownerId = await ensureOwnerInitialized(workspace)
   const runtime = new CodexRuntimeManager(config)
   await runtime.ensureRuntime()
   const codex = new CodexManager(config, workspace, undefined, runtime)
@@ -34,7 +37,8 @@ try {
   const connector = new OwnerConnector(config, new RemoteTrustStore(config.dataRoot))
   remote = connector
   const app = await buildOwnerServer(config, {
-    auth: createAuth(config, db),
+    ownerId,
+    database: db,
     workspace,
     codex,
     remote: connector,
@@ -61,6 +65,13 @@ try {
   await connector.start()
   await app.listen({ host: config.host, port: config.port })
   log.success(`Owner server listening at http://${config.host}:${config.port}`)
+  const bootstrap = await app.ownerServices.startupBootstrapPayload()
+  if (bootstrap) {
+    const payload = JSON.stringify(bootstrap.payload)
+    const url = `https://codex.vixinox.com/app/first-session?payload=${encodeURIComponent(payload)}`
+    process.stdout.write(`First remote session (expires at ${bootstrap.expiresAt}):\n${url}\n`)
+    if (process.stdout.isTTY) process.stdout.write(await renderTerminal(url, { small: true }))
+  }
 } catch (error) {
   log.error(`Owner server failed to start: ${safeError(error)}`)
   try {

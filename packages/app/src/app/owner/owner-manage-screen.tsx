@@ -1,121 +1,46 @@
 import { useCallback, useEffect, useState } from 'react'
 import QRCode from 'qrcode'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
-import { Copy } from 'lucide-react'
+import { Copy, KeyRound, RefreshCw } from 'lucide-react'
 import {
   emptyOwnerManagementSnapshot,
   formatDeviceDate,
+  type FirstSessionPayload,
+  type ManagementQr,
   type OwnerManagementClient,
-  type IssuedLoginQr,
 } from './owner-management-model'
 
 export function OwnerManageScreen({ client }: { client: OwnerManagementClient }) {
   const [snapshot, setSnapshot] = useState(emptyOwnerManagementSnapshot)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [status, setStatus] = useState<
-    'loading' | 'ready' | 'offline' | 'session_expired' | 'failed'
-  >('loading')
-  const [totpPassword, setTotpPassword] = useState('')
-  const [totpCode, setTotpCode] = useState('')
-  const [recoveryPassword, setRecoveryPassword] = useState('')
-  const [totpUri, setTotpUri] = useState<string | null>(null)
-  const [totpQrCode, setTotpQrCode] = useState<string | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
-  const [codesAcknowledged, setCodesAcknowledged] = useState(false)
-  const [loginQr, setLoginQr] = useState<IssuedLoginQr | null>(null)
-  const [loginQrImage, setLoginQrImage] = useState<string | null>(null)
-  const [loginQrRemaining, setLoginQrRemaining] = useState(0)
-  const [loginQrState, setLoginQrState] = useState<
-    'none' | 'active' | 'consumed' | 'expired' | 'cancelled' | 'restarted' | 'failed'
-  >('none')
+  const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false)
+  const [firstSession, setFirstSession] = useState<FirstSessionPayload | null>(null)
+  const [firstSessionImage, setFirstSessionImage] = useState<string | null>(null)
+  const [managementQr, setManagementQr] = useState<ManagementQr | null>(null)
+  const [managementQrImage, setManagementQrImage] = useState<string | null>(null)
+  const [enrollment, setEnrollment] = useState<{
+    ticket: string
+    origin: string
+    expiresAt: string
+  } | null>(null)
+
   const refresh = useCallback(async () => {
     setError(null)
-    setStatus('loading')
     try {
       setSnapshot(await client.getSnapshot())
-      setStatus('ready')
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'Unable to load security state'
-      setError(message)
-      setStatus(
-        message.includes('UNAUTHORIZED')
-          ? 'session_expired'
-          : message.includes('closed') || message.includes('failed')
-            ? 'offline'
-            : 'failed',
-      )
+      setError(cause instanceof Error ? cause.message : 'Unable to load Owner security state')
     }
   }, [client])
+
   useEffect(() => {
     void refresh()
   }, [refresh])
-  useEffect(() => {
-    let active = true
-    void client
-      .loginQrStatus()
-      .then((result) => {
-        if (!active) return undefined
-        if (result.state !== 'none') {
-          setLoginQrState(result.state)
-          return undefined
-        }
-        const oldExpiry = Number(sessionStorage.getItem('owner-login-qr-expires-at'))
-        if (oldExpiry > Date.now()) setLoginQrState('restarted')
-        sessionStorage.removeItem('owner-login-qr-expires-at')
-        return undefined
-      })
-      .catch(() => undefined)
-    return () => {
-      active = false
-    }
-  }, [client])
-  useEffect(() => {
-    if (!loginQr) return undefined
-    let active = true
-    const expiresAt = Date.parse(loginQr.expiresAt)
-    const update = () => {
-      if (!active) return
-      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
-      setLoginQrRemaining(remaining)
-      if (!remaining) {
-        setLoginQrState('expired')
-        setLoginQr(null)
-        setLoginQrImage(null)
-        sessionStorage.removeItem('owner-login-qr-expires-at')
-      }
-    }
-    update()
-    const timer = window.setInterval(update, 1000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [loginQr])
-  useEffect(() => {
-    if (!loginQr) return undefined
-    let active = true
-    const check = async () => {
-      try {
-        const result = await client.loginQrStatus()
-        if (!active || result.state === 'active') return
-        setLoginQrState(result.state === 'none' ? 'restarted' : result.state)
-        setLoginQr(null)
-        setLoginQrImage(null)
-        sessionStorage.removeItem('owner-login-qr-expires-at')
-      } catch {
-        // Transport status is presented by the shared management state above.
-      }
-    }
-    const timer = window.setInterval(() => void check(), 3000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [client, loginQr])
+
   const act = async (key: string, operation: () => Promise<void>) => {
     setBusy(key)
     setError(null)
@@ -124,27 +49,18 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
       await refresh()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Operation failed')
-      setStatus('failed')
     } finally {
       setBusy(null)
     }
   }
+
   return (
     <main className="min-h-svh bg-background p-6 text-foreground md:p-10">
-      <div className="mx-auto flex max-w-3xl flex-col gap-6">
+      <div className="mx-auto max-w-3xl space-y-6">
         <header>
-          <p className="text-sm text-muted-foreground">Owner security</p>
-          <h1 className="text-2xl font-semibold">Manage trusted browsers</h1>
+          <p className="text-sm text-muted-foreground">Owner</p>
+          <h1 className="text-2xl font-semibold">Security and devices</h1>
         </header>
-        {status === 'loading' ? (
-          <p className="text-sm text-muted-foreground">Loading security state...</p>
-        ) : null}
-        {status === 'offline' ? (
-          <p className="text-sm text-muted-foreground">Owner connection is offline.</p>
-        ) : null}
-        {status === 'session_expired' ? (
-          <p className="text-sm text-destructive">Owner session expired. Sign in again.</p>
-        ) : null}
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -152,213 +68,126 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
         ) : null}
         <Card>
           <CardHeader>
-            <CardTitle>One-time device login</CardTitle>
+            <CardTitle>Passkeys</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Anyone who scans this QR can sign in to this Owner for five minutes. Treat it as a
-              temporary login credential.
-            </p>
-            {loginQr && loginQrImage ? (
-              <div className="flex flex-wrap items-start gap-4">
-                <img
-                  src={loginQrImage}
-                  alt="One-time Owner login QR code"
-                  className="size-56 bg-white p-2"
-                />
-                <div className="space-y-2 text-sm">
-                  <p role="status">
-                    Active · {Math.floor(loginQrRemaining / 60)}:
-                    {String(loginQrRemaining % 60).padStart(2, '0')} remaining
-                  </p>
-                  <p>
-                    Owner {loginQr.payload.ownerCode} · {loginQr.payload.nodeId}
-                  </p>
-                  <p className="break-all text-xs text-muted-foreground">
-                    Owner key fingerprint: {loginQr.payload.ownerPublicKeyFingerprint}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      void navigator.clipboard.writeText(loginQr.payload.ownerPublicKeyFingerprint)
-                    }
-                  >
-                    <Copy className="size-4" /> Copy fingerprint
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={busy === 'login-qr-cancel'}
-                    onClick={() =>
-                      void act('login-qr-cancel', async () => {
-                        await client.cancelLoginQr()
-                        setLoginQr(null)
-                        setLoginQrImage(null)
-                        setLoginQrState('cancelled')
-                        sessionStorage.removeItem('owner-login-qr-expires-at')
-                      })
-                    }
-                  >
-                    Cancel QR
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {!loginQr ? (
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between gap-4 border-b pb-3">
+              <span>Remote origin · codex.vixinox.com</span>
+              <Badge variant={snapshot.remotePasskeyAvailable ? 'default' : 'secondary'}>
+                {snapshot.remotePasskeyAvailable ? 'Configured' : 'Not configured'}
+              </Badge>
+            </div>
+            {!snapshot.remotePasskeyAvailable ? (
               <Button
-                type="button"
-                disabled={busy === 'login-qr-issue'}
-                onClick={() =>
-                  void act('login-qr-issue', async () => {
-                    try {
-                      const issued = await client.issueLoginQr()
-                      const image = await QRCode.toDataURL(JSON.stringify(issued.payload), {
-                        margin: 2,
-                        width: 280,
-                        errorCorrectionLevel: 'Q',
-                      })
-                      setLoginQr(issued)
-                      setLoginQrImage(image)
-                      setLoginQrState('active')
-                      sessionStorage.setItem(
-                        'owner-login-qr-expires-at',
-                        String(Date.parse(issued.expiresAt)),
-                      )
-                    } catch (cause) {
-                      await client.cancelLoginQr().catch(() => undefined)
-                      setLoginQrState('failed')
-                      sessionStorage.removeItem('owner-login-qr-expires-at')
-                      throw cause
-                    }
-                  })
-                }
+                disabled={busy === 'remote-passkey'}
+                onClick={() => void act('remote-passkey', () => client.registerPasskey())}
               >
-                Generate login QR
+                <KeyRound className="size-4" /> Register remote Passkey
               </Button>
             ) : null}
-            {!loginQr && loginQrState !== 'none' ? (
-              <p role="status" className="text-xs text-muted-foreground">
-                {loginQrState === 'expired'
-                  ? 'QR expired.'
-                  : loginQrState === 'cancelled'
-                    ? 'QR cancelled.'
-                    : loginQrState === 'consumed'
-                      ? 'QR used.'
-                      : loginQrState === 'restarted'
-                        ? 'QR invalidated after Owner restart.'
-                        : loginQrState === 'failed'
-                          ? 'QR could not be issued. Try again.'
-                          : ''}
-              </p>
+            <div className="flex items-center justify-between gap-4 border-b pb-3">
+              <span>Local origin · localhost</span>
+              <Badge variant={snapshot.localPasskeyAvailable ? 'default' : 'secondary'}>
+                {snapshot.localPasskeyAvailable ? 'Configured' : 'Not configured'}
+              </Badge>
+            </div>
+            <Button
+              variant="outline"
+              disabled={busy === 'local-ticket'}
+              onClick={() =>
+                void act('local-ticket', async () =>
+                  setEnrollment(await client.issueLocalEnrollmentTicket()),
+                )
+              }
+            >
+              Issue localhost enrollment ticket
+            </Button>
+            {enrollment ? (
+              <div className="space-y-2 border-l-2 border-border pl-3 text-sm">
+                <p>Open {enrollment.origin} to register a local-only Passkey.</p>
+                <code className="block break-all text-xs">{enrollment.ticket}</code>
+                <p className="text-xs text-muted-foreground">
+                  Expires {new Date(enrollment.expiresAt).toLocaleTimeString()}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    void act('local-passkey', async () => {
+                      await client.registerPasskey(enrollment.ticket)
+                      setEnrollment(null)
+                      await refresh()
+                    })
+                  }
+                >
+                  Register local Passkey in this browser
+                </Button>
+              </div>
             ) : null}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Two-factor authentication</CardTitle>
+            <CardTitle>Management QR request</CardTitle>
           </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <span>{snapshot.totpEnabled ? 'TOTP is enabled' : 'TOTP is not configured'}</span>
-            <Badge variant={snapshot.totpEnabled ? 'default' : 'secondary'}>
-              {snapshot.totpEnabled ? 'Enabled' : 'Setup required'}
-            </Badge>
-          </CardContent>
-          <CardContent className="space-y-3 border-t pt-4">
-            <form
-              className="flex flex-wrap gap-2"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void act('totp-setup', async () => {
-                  const result = await client.setupTotp(totpPassword)
-                  setTotpUri(result.totpURI ?? null)
-                  setTotpQrCode(
-                    result.totpURI
-                      ? await QRCode.toDataURL(result.totpURI, {
-                          margin: 2,
-                          width: 240,
-                          errorCorrectionLevel: 'M',
-                        })
-                      : null,
-                  )
-                  setTotpPassword('')
-                })
-              }}
-            >
-              <Input
-                type="password"
-                value={totpPassword}
-                onChange={(event) => setTotpPassword(event.target.value)}
-                placeholder="Owner password"
-                aria-label="Owner password"
-                disabled={snapshot.totpEnabled || busy === 'totp-setup'}
-              />
-              <Button
-                type="submit"
-                disabled={snapshot.totpEnabled || !totpPassword || busy === 'totp-setup'}
-              >
-                Set up TOTP
-              </Button>
-            </form>
-            {totpUri ? (
-              <div className="space-y-3 rounded-md border p-4">
-                <div className="flex flex-wrap items-start gap-4">
-                  {totpQrCode ? (
-                    <img
-                      src={totpQrCode}
-                      alt="Scan this QR code with your authenticator app"
-                      className="size-60 rounded bg-white p-2"
-                    />
-                  ) : null}
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <p className="text-sm font-medium">Scan with your authenticator app</p>
-                    <p className="text-xs text-muted-foreground">
-                      If scanning is unavailable, copy the setup URI into your authenticator app.
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void navigator.clipboard.writeText(totpUri)}
-                      >
-                        Copy setup URI
-                      </Button>
-                    </div>
-                    <code className="block max-h-20 overflow-auto break-all text-xs text-muted-foreground">
-                      {totpUri}
-                    </code>
-                  </div>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Create a five-minute, single-use request reference. It does not create a session by
+              itself.
+            </p>
+            {managementQr && managementQrImage ? (
+              <div className="flex flex-wrap items-start gap-4">
+                <img
+                  src={managementQrImage}
+                  alt="Management QR request"
+                  className="size-56 bg-white p-2"
+                />
+                <div className="space-y-2 text-sm">
+                  <p>Expires {new Date(managementQr.expiresAt).toLocaleTimeString()}</p>
+                  <code className="block max-w-sm break-all text-xs">
+                    {managementQr.capability}
+                  </code>
+                  <Button
+                    variant="outline"
+                    disabled={busy === 'management-qr-cancel'}
+                    onClick={() =>
+                      void act('management-qr-cancel', async () => {
+                        await client.cancelManagementQr()
+                        setManagementQr(null)
+                        setManagementQrImage(null)
+                      })
+                    }
+                  >
+                    Cancel request
+                  </Button>
                 </div>
               </div>
-            ) : null}
-            {totpUri && !snapshot.totpEnabled ? (
-              <form
-                className="flex flex-wrap gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  void act('totp-verify', async () => {
-                    const result = await client.verifyTotp(totpCode)
-                    setRecoveryCodes(result.recoveryCodes)
-                    setCodesAcknowledged(false)
-                    setTotpCode('')
+            ) : (
+              <Button
+                disabled={busy === 'management-qr'}
+                onClick={() =>
+                  void act('management-qr', async () => {
+                    const issued = await client.issueManagementQr()
+                    setManagementQr(issued)
+                    setManagementQrImage(
+                      await QRCode.toDataURL(
+                        JSON.stringify({
+                          version: 1,
+                          type: 'management_request',
+                          capability: issued.capability,
+                          ownerId: issued.ownerId,
+                          nodeId: issued.nodeId,
+                          trustEpoch: issued.trustEpoch,
+                          expiresAt: issued.expiresAt,
+                        }),
+                        { margin: 2, width: 280, errorCorrectionLevel: 'Q' },
+                      ),
+                    )
                   })
-                }}
+                }
               >
-                <Input
-                  inputMode="numeric"
-                  value={totpCode}
-                  onChange={(event) => setTotpCode(event.target.value)}
-                  placeholder="Authenticator code"
-                  aria-label="Authenticator code"
-                  disabled={busy === 'totp-verify'}
-                />
-                <Button type="submit" disabled={!totpCode || busy === 'totp-verify'}>
-                  Verify TOTP
-                </Button>
-              </form>
-            ) : null}
+                Generate management QR
+              </Button>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -366,78 +195,125 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
             <CardTitle>Recovery codes</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <form
-              className="flex flex-wrap gap-2"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void act('recovery-rotate', async () => {
-                  const result = await client.generateRecoveryCodes(recoveryPassword || undefined)
-                  setRecoveryCodes(result.recoveryCodes)
-                  setCodesAcknowledged(false)
-                  setRecoveryPassword('')
+            <p className="text-sm text-muted-foreground">
+              {snapshot.recoveryCodesAvailable
+                ? 'A recovery batch is configured.'
+                : 'No recovery path is configured.'}
+            </p>
+            <Button
+              variant="outline"
+              disabled={busy === 'recovery'}
+              onClick={() =>
+                void act('recovery', async () => {
+                  setRecoveryCodes(await client.generateRecoveryCodes())
+                  setRecoveryAcknowledged(false)
                 })
-              }}
+              }
             >
-              <Input
-                type="password"
-                value={recoveryPassword}
-                onChange={(event) => setRecoveryPassword(event.target.value)}
-                placeholder="Owner password"
-                aria-label="Owner password"
-                disabled={!snapshot.totpEnabled || busy === 'recovery-rotate'}
-              />
-              <Button type="submit" disabled={!snapshot.totpEnabled || busy === 'recovery-rotate'}>
-                Generate or rotate
-              </Button>
-            </form>
-            {snapshot.recoveryCodesAvailable ? (
-              <p className="text-sm text-muted-foreground">Recovery codes are configured.</p>
-            ) : null}
+              <RefreshCw className="size-4" /> Generate recovery batch
+            </Button>
             {recoveryCodes ? (
-              <div className="space-y-3 rounded-md border p-3">
-                <pre className="grid grid-cols-2 gap-1 text-sm">{recoveryCodes.join('\n')}</pre>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={codesAcknowledged}
-                    onChange={(event) => setCodesAcknowledged(event.target.checked)}
-                  />
-                  I saved these codes
-                </label>
-                {codesAcknowledged ? (
-                  <p className="text-xs text-muted-foreground">Codes will not be shown again.</p>
-                ) : null}
+              <div className="space-y-3 border-t pt-3">
+                <pre className="grid grid-cols-2 gap-2 whitespace-pre-wrap break-all text-sm">
+                  {recoveryCodes.join('\n')}
+                </pre>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => void navigator.clipboard.writeText(recoveryCodes.join('\n'))}
+                  >
+                    <Copy className="size-4" /> Copy codes
+                  </Button>
+                  <Button
+                    disabled={recoveryAcknowledged}
+                    onClick={() => {
+                      setRecoveryAcknowledged(true)
+                      setRecoveryCodes(null)
+                    }}
+                  >
+                    I saved these codes
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Codes are shown once. Generating a new batch invalidates the previous one.
+                </p>
               </div>
-            ) : null}
-            {recoveryCodes && !snapshot.totpEnabled ? (
-              <Button
-                type="button"
-                disabled={!codesAcknowledged || busy !== null}
-                onClick={() => {
-                  void act('security-initialized', async () => {
-                    await client.acknowledgeRecoveryCodes()
-                    setRecoveryCodes(null)
-                    setCodesAcknowledged(false)
-                    await refresh()
-                  })
-                }}
-              >
-                Finish security setup
-              </Button>
             ) : null}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Trusted devices</CardTitle>
+            <CardTitle>First remote session</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {snapshot.devices.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No trusted devices.</p>
+            <p className="text-sm text-muted-foreground">
+              Use a one-time bootstrap URL or QR to connect the first remote device.
+            </p>
+            {firstSession && firstSessionImage ? (
+              <div className="flex flex-wrap items-start gap-4">
+                <img
+                  src={firstSessionImage}
+                  alt="First-session QR code"
+                  className="size-56 bg-white p-2"
+                />
+                <div className="space-y-2 text-sm">
+                  <p>Expires {new Date(firstSession.expiresAt).toLocaleTimeString()}</p>
+                  <p>Owner code {firstSession.ownerCode}</p>
+                  <p className="break-all text-xs">
+                    Fingerprint {firstSession.ownerPublicKeyFingerprint}
+                  </p>
+                  <code className="block max-w-sm break-all text-xs">
+                    {buildFirstSessionUrl(firstSession)}
+                  </code>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      void navigator.clipboard.writeText(buildFirstSessionUrl(firstSession))
+                    }
+                  >
+                    <Copy className="size-4" /> Copy URL
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setFirstSession(null)
+                      setFirstSessionImage(null)
+                    }}
+                  >
+                    Close
+                  </Button>
+                </div>
+              </div>
             ) : (
+              <Button
+                disabled={busy === 'first-session'}
+                onClick={() =>
+                  void act('first-session', async () => {
+                    const issued = await client.issueFirstSession()
+                    const image = await QRCode.toDataURL(JSON.stringify(issued.payload), {
+                      margin: 2,
+                      width: 280,
+                      errorCorrectionLevel: 'Q',
+                    })
+                    setFirstSession(issued.payload)
+                    setFirstSessionImage(image)
+                  })
+                }
+              >
+                Generate bootstrap QR
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Remote devices</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {snapshot.devices.length ? (
               snapshot.devices.map((device) => (
                 <div
-                  className="flex flex-wrap items-center justify-between gap-3 border-b pb-3 last:border-0"
+                  className="flex items-center justify-between gap-3 border-b pb-3 last:border-0"
                   key={device.id}
                 >
                   <div>
@@ -456,17 +332,49 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                   </Button>
                 </div>
               ))
+            ) : (
+              <p className="text-sm text-muted-foreground">No remote devices.</p>
             )}
-            <Button
-              variant="destructive"
-              disabled={busy === 'reset'}
-              onClick={() => void act('reset', () => client.resetTrust())}
-            >
-              Reset all trust
-            </Button>
+            <div className="flex flex-wrap gap-2 border-t pt-3">
+              <Button
+                variant="outline"
+                disabled={busy === 'revoke-all'}
+                onClick={() => void act('revoke-all', () => client.revokeAllSessions())}
+              >
+                Revoke all remote sessions
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy === 'revoke-devices'}
+                onClick={() => void act('revoke-devices', () => client.revokeAllDevices())}
+              >
+                Revoke all devices
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={busy === 'trust-reset'}
+                onClick={() => void act('trust-reset', () => client.resetTrust())}
+              >
+                Reset remote trust
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
     </main>
   )
+}
+
+function buildFirstSessionUrl(payload: FirstSessionPayload) {
+  const url = new URL('https://codex.vixinox.com/first-session')
+  url.searchParams.set('relayUrl', payload.relayUrl)
+  url.searchParams.set('ownerCode', payload.ownerCode)
+  url.searchParams.set('nodeId', payload.nodeId)
+  url.searchParams.set('trustEpoch', String(payload.trustEpoch))
+  url.searchParams.set('ownerPublicKey', payload.ownerPublicKey)
+  url.searchParams.set('fingerprint', payload.ownerPublicKeyFingerprint)
+  url.searchParams.set('ownerPublicKey', payload.ownerPublicKeyVerificationKey)
+  url.searchParams.set('grant', payload.grant)
+  url.searchParams.set('expiresAt', payload.expiresAt)
+  return url.toString()
 }

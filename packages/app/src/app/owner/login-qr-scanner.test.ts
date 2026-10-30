@@ -8,12 +8,15 @@ const validPayload = {
   nodeId: 'owner-node',
   trustEpoch: 2,
   ownerPublicKey: '{"kty":"EC"}',
+  ownerPublicKeyVerificationKey: '{"kty":"EC"}',
   ownerPublicKeyFingerprint: 'abcdefghijklmnop',
-  capability: 'x'.repeat(32),
+  type: 'first_session',
+  grant: 'x'.repeat(32),
+  expiresAt: '2026-10-30T12:05:00.000Z',
 }
 
 describe('login QR payload', () => {
-  it('parses the supported bounded capability payload', () => {
+  it('parses the supported first-session payload', () => {
     expect(parseLoginQrPayload(JSON.stringify(validPayload))).toEqual(validPayload)
   })
 
@@ -22,9 +25,15 @@ describe('login QR payload', () => {
     { ...validPayload, ownerCode: 'not-a-code' },
     { ...validPayload, ownerPublicKeyFingerprint: 'too-short' },
     { ...validPayload, extra: 'unexpected' },
-    { ...validPayload, capability: 'short' },
+    { ...validPayload, grant: 'short' },
   ])('rejects invalid or unexpected QR fields', (payload) => {
     expect(() => parseLoginQrPayload(JSON.stringify(payload))).toThrow()
+  })
+
+  it('parses the official first-session URL', () => {
+    const url = new URL('https://codex.vixinox.com/app/first-session')
+    url.searchParams.set('payload', JSON.stringify(validPayload))
+    expect(parseLoginQrPayload(url.toString())).toEqual(validPayload)
   })
 
   it.each(['', 'not an image payload', '{broken', JSON.stringify({ type: 'other' })])(

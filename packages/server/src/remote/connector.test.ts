@@ -379,7 +379,7 @@ test('admits a registered device, confirms the session key, and carries Owner fr
   })
 })
 
-test('authenticates a login candidate over E2EE, blocks pre-auth business access, and resumes paired', async () => {
+test('rejects legacy password and TOTP login methods for an E2EE candidate', async () => {
   await withHarness(async (harness) => {
     const { socket, connector, clientKeys, clientKey, submittedFactors } = harness
     const confirmation = (
@@ -423,9 +423,7 @@ test('authenticates a login candidate over E2EE, blocks pre-auth business access
     ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'login-open')
     if (challenge?.owner?.type !== 'response')
       throw new Error('Expected a login challenge response.')
-    assert.deepEqual(challenge.owner.result, {
-      pendingTwoFactor: { challengeId: 'candidate-challenge', expiresAt: 'later' },
-    })
+    assert.equal((challenge.owner.error as { code?: string } | undefined)?.code, 'UNAUTHORIZED')
 
     await sendClientFrame(
       harness,
@@ -445,88 +443,21 @@ test('authenticates a login candidate over E2EE, blocks pre-auth business access
     if (denied?.owner?.type !== 'response') throw new Error('Expected a business denial response.')
     assert.equal(denied.owner.error?.code, 'UNAUTHORIZED')
 
-    await sendClientFrame(
-      harness,
-      {
-        type: 'request',
-        requestId: 'login-factor',
-        method: 'owner.login.verifyTotp',
-        params: { challengeId: 'candidate-challenge', code: '123456' },
-      },
-      4,
-    )
+    assert.deepEqual(submittedFactors, [])
+    assert.deepEqual(await connector.listDevices(), [])
+    await sendClientFrame(harness, {
+      type: 'request',
+      requestId: 'legacy-totp',
+      method: 'owner.login.verifyTotp',
+      params: { challengeId: 'candidate-challenge', code: '123456' },
+    }, 4)
     await waitFor(
       () => encryptedSequences(socket, 'client-connection').length === 5,
-      'the paired credentials response',
+      'legacy TOTP RPC rejection',
     )
-    const pairedResult = (
-      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
-    ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'login-factor')
-    if (pairedResult?.owner?.type !== 'response')
-      throw new Error('Expected a paired credentials response.')
-    const credentials = pairedResult.owner.result as {
-      deviceId: string
-      clientToken: string
-      sessionToken: string
-    }
-    assert.deepEqual(submittedFactors, ['owner-password', '123456'])
-    assert.equal(credentials.sessionToken, SESSION_TOKEN)
-    assert.equal((await connector.listDevices())[0]?.id, credentials.deviceId)
-
-    socket.deliver(
-      encodeRelayFrame({
-        type: 'relay.client.disconnected',
-        version: RELAY_PROTOCOL_VERSION,
-        nodeId: harness.nodeId,
-        connectionId: 'client-connection',
-      }),
-    )
-    socket.deliver(
-      encodeRelayFrame({
-        type: 'relay.client.connected',
-        version: RELAY_PROTOCOL_VERSION,
-        nodeId: harness.nodeId,
-        connectionId: 'paired-reconnect',
-        deviceId: credentials.deviceId,
-      }),
-    )
-    socket.deliver(
-      forward(
-        'paired-reconnect',
-        encodeRelayFrame({
-          type: 'handshake',
-          version: RELAY_PROTOCOL_VERSION,
-          nodeId: harness.nodeId,
-          clientPublicKey: clientKeys.publicKey,
-          trustEpoch: harness.trustEpoch,
-        }),
-      ),
-    )
-    await waitFor(
-      () => sentPayloads(socket, 'paired-reconnect').some((frame) => frame.type === 'encrypted'),
-      'the paired reconnect key confirmation',
-    )
-    socket.deliver(
-      forward(
-        'paired-reconnect',
-        encodeRelayFrame(
-          await encryptPayload(
-            clientKey,
-            encodeOwnerFrame(helloFrame(credentials.sessionToken)),
-            1,
-          ),
-        ),
-      ),
-    )
-    await waitFor(
-      () => encryptedSequences(socket, 'paired-reconnect').length === 2,
-      'the resumed paired Owner session',
-    )
-    const ready = (
-      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'paired-reconnect'))
-    ).find((frame) => frame.owner?.type === 'ready')
-    if (ready?.owner?.type !== 'ready') throw new Error('Expected paired Owner ready.')
-    assert.equal(ready.owner.authenticated, true)
+    const legacy = (await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection')))
+      .find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'legacy-totp')
+    assert.equal(legacy?.owner?.type === 'response' && legacy.owner.error?.code, 'UNAUTHORIZED')
   }, true)
 })
 

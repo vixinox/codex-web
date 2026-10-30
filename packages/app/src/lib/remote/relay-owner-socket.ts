@@ -15,6 +15,10 @@ export type RelayTarget = {
   publicKey: string
   privateKey: CryptoKey
   loginOwnerCode?: string
+  firstSessionOwnerCode?: string
+  firstSessionGrant?: string
+  /** For an explicitly confirmed bootstrap, the QR payload carries the key fingerprint. */
+  firstSessionFingerprint?: string
   expectedOwnerFingerprint?: string
   onOwnerFingerprint?: (fingerprint: string) => void
 }
@@ -54,13 +58,19 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
       nodeId: target.nodeId,
       role: 'client' as const,
       connectionId: crypto.randomUUID(),
-      ...(target.loginOwnerCode
-        ? { admission: 'login' as const, ownerCode: target.loginOwnerCode }
-        : {
-            clientToken: target.clientToken,
-            trustEpoch: target.trustEpoch,
-            deviceId: target.deviceId!,
-          }),
+      ...(target.firstSessionOwnerCode && target.firstSessionGrant
+        ? {
+            admission: 'first_session' as const,
+            ownerCode: target.firstSessionOwnerCode,
+            grant: target.firstSessionGrant,
+          }
+        : target.loginOwnerCode
+          ? { admission: 'login' as const, ownerCode: target.loginOwnerCode }
+          : {
+              clientToken: target.clientToken,
+              trustEpoch: target.trustEpoch,
+              deviceId: target.deviceId!,
+            }),
     } as RelayAttachFrame
     originalSend(encodeFrame(frame))
   })
@@ -101,8 +111,17 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
       void fingerprint(payload.ownerPublicKey)
         .then((actual) => {
           target.onOwnerFingerprint?.(actual)
-          if (target.loginOwnerCode && !target.expectedOwnerFingerprint)
+          if (
+            (target.loginOwnerCode || target.firstSessionOwnerCode) &&
+            !target.expectedOwnerFingerprint &&
+            !target.firstSessionFingerprint
+          )
             throw new Error('Verify the Owner fingerprint before signing in.')
+          if (
+            target.firstSessionOwnerCode &&
+            target.firstSessionFingerprint !== payload.ownerPublicKey
+          )
+            throw new Error('Owner fingerprint does not match the first-session grant.')
           if (target.expectedOwnerFingerprint && actual !== target.expectedOwnerFingerprint)
             throw new Error('Owner fingerprint mismatch. Verify the Owner before signing in.')
         })

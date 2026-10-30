@@ -26,22 +26,21 @@ describe('auth expiry interceptor', () => {
     window.removeEventListener(AUTH_EXPIRED_EVENT, expired)
   })
 
-  it.each([
-    '/api/auth/sign-in/email',
-    '/api/auth/get-session',
-    'https://other.example/api/projects',
-  ])('does not report unauthorized responses from %s', async (path) => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))
-    vi.stubGlobal('fetch', fetchMock)
-    const expired = vi.fn()
-    window.addEventListener(AUTH_EXPIRED_EVENT, expired)
-    restore = installAuthExpiryInterceptor()
+  it.each(['/assets/app.js', 'https://other.example/api/projects'])(
+    'does not report unauthorized responses from %s',
+    async (path) => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))
+      vi.stubGlobal('fetch', fetchMock)
+      const expired = vi.fn()
+      window.addEventListener(AUTH_EXPIRED_EVENT, expired)
+      restore = installAuthExpiryInterceptor()
 
-    await window.fetch(path)
+      await window.fetch(path)
 
-    expect(expired).not.toHaveBeenCalled()
-    window.removeEventListener(AUTH_EXPIRED_EVENT, expired)
-  })
+      expect(expired).not.toHaveBeenCalled()
+      window.removeEventListener(AUTH_EXPIRED_EVENT, expired)
+    },
+  )
 
   it('does not wrap fetch more than once and restores the original fetch', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))

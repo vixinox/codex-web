@@ -1,65 +1,71 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  completeLoginCandidateTwoFactor,
-  openLoginCandidateSession,
-  type AdmissionConnection,
-} from './admission'
+import { authenticateWithRecoveryCode } from './admission'
 
-function connectionWith(responses: unknown[]): AdmissionConnection & {
-  request: ReturnType<typeof vi.fn>
-} {
-  const request = vi.fn(async () => responses.shift())
-  return { request, close: vi.fn() }
-}
-
-describe('remote login candidate', () => {
-  it('requires a pending second-factor challenge before submitting any factor', async () => {
-    const connection = connectionWith([{ sessionToken: 'unexpected' }])
-
-    await expect(
-      openLoginCandidateSession(connection, {
-        email: 'owner@example.com',
-        password: 'password',
-      }),
-    ).rejects.toThrow('Owner authentication did not require a second factor.')
-    expect(connection.request).toHaveBeenCalledTimes(1)
-  })
-
-  it.each([
-    ['totp', 'owner.login.verifyTotp'],
-    ['recovery', 'owner.login.verifyRecoveryCode'],
-  ] as const)('submits a %s factor only against the candidate challenge', async (kind, method) => {
-    const connection = connectionWith([
-      {
-        ownerId: 'owner-1',
-        sessionToken: 'session-1',
-        expiresAt: '2030-01-01T00:00:00.000Z',
-        rollbackToken: 'rollback-1',
-        deviceId: 'device-1',
-        clientToken: 'client-1',
-        trustEpoch: 4,
+describe('remote recovery admission', () => {
+  it('reserves the code, registers a new credential, then finishes the recovery session', async () => {
+    const credential = {
+      id: 'credential-id',
+      rawId: Uint8Array.from([1, 2, 3]).buffer,
+      type: 'public-key',
+      response: {
+        attestationObject: Uint8Array.from([4, 5]).buffer,
+        clientDataJSON: Uint8Array.from([6, 7]).buffer,
+        getTransports: () => ['internal'],
       },
-    ])
-    const challenge = { challengeId: 'challenge-1', expiresAt: '2030-01-01T00:05:00.000Z' }
-
-    await expect(
-      completeLoginCandidateTwoFactor(connection, challenge, { kind, code: 'factor-code' }),
-    ).resolves.toMatchObject({ sessionToken: 'session-1', deviceId: 'device-1' })
-    expect(connection.request).toHaveBeenCalledWith(method, {
-      challengeId: challenge.challengeId,
-      code: 'factor-code',
+      getClientExtensionResults: () => ({}),
+    }
+    class FakePublicKeyCredential {
+      constructor() {
+        Object.assign(this, credential)
+      }
+    }
+    vi.stubGlobal('PublicKeyCredential', FakePublicKeyCredential)
+    vi.stubGlobal('navigator', {
+      credentials: { create: vi.fn().mockResolvedValue(new FakePublicKeyCredential()) },
     })
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        reservationId: 'reservation',
+        registration: {
+          challengeId: 'challenge',
+          options: {
+            challenge: 'AQID',
+            user: { id: 'BAUG', name: 'Owner', displayName: 'Owner' },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        ownerId: 'owner',
+        sessionToken: 'token',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        deviceId: 'device',
+        clientToken: 'paired',
+        trustEpoch: 3,
+        recoveryCodes: ['new-code'],
+      })
+    const result = await authenticateWithRecoveryCode({ request, close: vi.fn() }, 'one-time-code')
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      'owner.recovery.login.reserve',
+      'owner.recovery.login.finish',
+    ])
+    expect(request.mock.calls[0]?.[1]).toEqual({ code: 'one-time-code' })
+    expect(result.ownerId).toBe('owner')
   })
 
-  it('fails closed when factor verification does not return paired credentials and a session', async () => {
-    const connection = connectionWith([{}])
-
-    await expect(
-      completeLoginCandidateTwoFactor(
-        connection,
-        { challengeId: 'challenge-1', expiresAt: '' },
-        { kind: 'totp', code: '123456' },
-      ),
-    ).rejects.toThrow('Owner authentication did not complete.')
+  it('does not finish if the user cancels passkey registration', async () => {
+    vi.stubGlobal('PublicKeyCredential', class {})
+    vi.stubGlobal('navigator', { credentials: { create: vi.fn().mockResolvedValue(null) } })
+    const request = vi.fn().mockResolvedValue({
+      reservationId: 'reservation',
+      registration: {
+        challengeId: 'challenge',
+        options: { challenge: 'AQID', user: { id: 'BAUG' } },
+      },
+    })
+    await expect(authenticateWithRecoveryCode({ request, close: vi.fn() }, 'code')).rejects.toThrow(
+      'Passkey registration was cancelled',
+    )
+    expect(request).toHaveBeenCalledTimes(1)
   })
 })

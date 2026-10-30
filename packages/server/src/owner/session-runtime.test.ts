@@ -219,7 +219,7 @@ test('keeps an encrypted login candidate limited to authentication methods', asy
   assert.equal(businessCalls, 0)
 })
 
-test('keeps an uninitialized local Owner session limited to security setup methods', async () => {
+test('rejects invalid session resumption before accessing Owner methods', async () => {
   const transport = new FakeTransport()
   let businessCalls = 0
   createRuntime(
@@ -232,11 +232,7 @@ test('keeps an uninitialized local Owner session limited to security setup metho
       ['projects.list', { access: 'authenticated' as const, handle: () => ++businessCalls }],
     ]),
     {
-      resumeSession: async () => ({
-        ownerId: 'owner-1',
-        sessionId: 'setup-session',
-        setupOnly: true,
-      }),
+      resumeSession: async () => null,
     },
   )
   transport.receive({

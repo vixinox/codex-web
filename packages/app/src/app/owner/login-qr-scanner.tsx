@@ -3,12 +3,17 @@ import { BrowserQRCodeReader } from '@zxing/browser'
 import { Camera, ImageUp, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import type { LoginQrPayload } from './owner-management-model'
+import type { FirstSessionPayload } from './owner-management-model'
 
-export function parseLoginQrPayload(raw: string): LoginQrPayload {
+export function parseLoginQrPayload(raw: string): FirstSessionPayload {
   let value: unknown
   try {
-    value = JSON.parse(raw)
+    if (raw.startsWith('https://codex.vixinox.com/app/first-session?')) {
+      const url = new URL(raw)
+      const payload = url.searchParams.get('payload')
+      if (!payload) throw new Error('missing payload')
+      value = JSON.parse(payload)
+    } else value = JSON.parse(raw)
   } catch {
     throw new Error('This is not a valid Owner login QR.')
   }
@@ -22,7 +27,10 @@ export function parseLoginQrPayload(raw: string): LoginQrPayload {
     'trustEpoch',
     'ownerPublicKey',
     'ownerPublicKeyFingerprint',
-    'capability',
+    'ownerPublicKeyVerificationKey',
+    'type',
+    'grant',
+    'expiresAt',
   ])
   let relay: URL | null = null
   try {
@@ -41,13 +49,22 @@ export function parseLoginQrPayload(raw: string): LoginQrPayload {
     payload.nodeId.length === 0 ||
     !Number.isSafeInteger(payload.trustEpoch) ||
     typeof payload.ownerPublicKey !== 'string' ||
+    typeof payload.ownerPublicKeyVerificationKey !== 'string' ||
     !/^[A-Za-z0-9_-]{16}$/u.test(String(payload.ownerPublicKeyFingerprint)) ||
-    typeof payload.capability !== 'string' ||
-    payload.capability.length < 32 ||
-    payload.capability.length > 256
+    payload.type !== 'first_session' ||
+    typeof payload.grant !== 'string' ||
+    payload.grant.length < 32 ||
+    payload.grant.length > 256 ||
+    typeof payload.expiresAt !== 'string'
   )
     throw new Error('This is not a supported Owner login QR.')
-  return payload as LoginQrPayload
+  if (
+    typeof payload.expiresAt !== 'string' ||
+    !Number.isFinite(Date.parse(payload.expiresAt)) ||
+    Date.parse(payload.expiresAt) <= Date.now()
+  )
+    throw new Error('This first-session QR has expired.')
+  return payload as FirstSessionPayload
 }
 
 async function decodeImage(file: File) {
@@ -66,7 +83,7 @@ export function LoginQrScanner({
   onRedeem,
   onClose,
 }: {
-  onRedeem: (payload: LoginQrPayload) => Promise<void>
+  onRedeem: (payload: FirstSessionPayload) => Promise<void>
   onClose: () => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -121,7 +138,7 @@ export function LoginQrScanner({
     }
   }, [mode])
 
-  const redeem = async (payload: LoginQrPayload) => {
+  const redeem = async (payload: FirstSessionPayload) => {
     setBusy(true)
     setError(null)
     try {

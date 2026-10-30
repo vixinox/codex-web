@@ -1,4 +1,3 @@
-import { createAuth } from '../auth.js'
 import type { ServerConfig } from '../config.js'
 import { CodexManager } from '../codex/manager.js'
 import { CodexRuntimeManager } from '../codex/runtime-manager.js'
@@ -9,6 +8,33 @@ import { createWorkspaceService } from '../workspace.js'
 import { createOwnerApplicationServices } from './application-services.js'
 import { acquireOwnerInstanceLock } from './instance-lock.js'
 import { createOwnerMethodRegistry } from './methods.js'
+import { ownerIpcEndpoint, retryOwnerIpc, sendOwnerIpcRequest } from './ipc.js'
+import {
+  OWNER_CLI_IPC_COMMANDS,
+  requiresRelayConnection,
+  requiresRemoteServices,
+  type OwnerCliCommand,
+} from './cli.js'
+import { OwnerInstanceAlreadyRunningError } from './instance-lock.js'
+
+type AdaptiveRuntime = {
+  services: {
+    localManagement: {
+      authStatus(): Promise<unknown>
+      bootstrapRotate(): Promise<unknown>
+      bootstrapRecover(): Promise<unknown>
+      rotateRecoveryCodes(): Promise<unknown>
+      revokeAllSessions(): Promise<unknown>
+      listDevices(): Promise<unknown>
+      revokeAllDevices(): Promise<unknown>
+      revokeDevice(deviceId: string): Promise<unknown>
+      ownerCodeShow(): Promise<unknown>
+      ownerCodeRotate(): Promise<unknown>
+      trustReset(): Promise<unknown>
+    }
+  }
+  close(): Promise<void>
+}
 
 export async function createOwnerCliRuntime(
   config: ServerConfig,
@@ -16,6 +42,16 @@ export async function createOwnerCliRuntime(
   connectRelay = false,
 ) {
   const lock = await acquireOwnerInstanceLock(config.dataRoot)
+  void connectRelay
+  return createOwnerCliRuntimeUnlocked(config, { kind: 'auth-status' }, lock, useRemoteServices)
+}
+
+async function createOwnerCliRuntimeUnlocked(
+  config: ServerConfig,
+  command: OwnerCliCommand,
+  lock: Awaited<ReturnType<typeof acquireOwnerInstanceLock>>,
+  useRemoteOverride = false,
+) {
   let driver: ReturnType<typeof createDatabase>['driver'] | undefined
   let remote: OwnerConnector | undefined
   let codex: CodexManager | undefined
@@ -24,16 +60,20 @@ export async function createOwnerCliRuntime(
     const database = createDatabase(config)
     driver = database.driver
     const workspace = createWorkspaceService(config, database.db)
+    let ownerId = await workspace.getOnlyOwnerId()
+    if (!ownerId) {
+      ownerId = crypto.randomUUID()
+      await workspace.createOwner(ownerId)
+    }
     const runtime = new CodexRuntimeManager(config)
     codex = new CodexManager(config, workspace, undefined, runtime)
-    const connector = useRemoteServices
-      ? new OwnerConnector(config, new RemoteTrustStore(config.dataRoot))
-      : undefined
+    const connector =
+      useRemoteOverride || requiresRemoteServices(command)
+        ? new OwnerConnector(config, new RemoteTrustStore(config.dataRoot))
+        : undefined
     remote = connector
-    const auth = createAuth(config, database.db)
-    const localAuth = createAuth(config, database.db, { allowPasswordlessTwoFactor: true })
     const services = createOwnerApplicationServices(
-      { auth, localAuth, workspace, codex, remote, authSecret: config.authSecret },
+      { ownerId, database: database.db, workspace, codex, remote },
       {
         trustedOrigins: config.trustedOrigins,
         requireDangerousAccessConfirmation: config.requireDangerousAccessConfirmation,
@@ -44,7 +84,7 @@ export async function createOwnerCliRuntime(
       connector.configureRemoteSessions(createOwnerMethodRegistry(services), (token, transport) =>
         services.resumeSession(token, transport),
       )
-      if (connectRelay) {
+      if (requiresRelayConnection(command)) {
         await connector.start()
         await connector.waitUntilConnected()
       }
@@ -81,4 +121,53 @@ export async function createOwnerCliRuntime(
     }
     throw error
   }
+}
+
+export async function createAdaptiveOwnerCliRuntime(
+  config: ServerConfig,
+  command: OwnerCliCommand,
+): Promise<AdaptiveRuntime> {
+  const endpoint = ownerIpcEndpoint(config.dataRoot)
+  try {
+    await sendOwnerIpcRequest(endpoint, 'owner.ready', undefined, 200)
+    return ipcRuntime(endpoint, command)
+  } catch {
+    let lock: Awaited<ReturnType<typeof acquireOwnerInstanceLock>>
+    try {
+      lock = await acquireOwnerInstanceLock(config.dataRoot)
+    } catch (error) {
+      if (!(error instanceof OwnerInstanceAlreadyRunningError)) throw error
+      await retryOwnerIpc(() => sendOwnerIpcRequest(endpoint, 'owner.ready', undefined, 1_000))
+      return ipcRuntime(endpoint, command)
+    }
+    return (await createOwnerCliRuntimeUnlocked(
+      config,
+      command,
+      lock,
+    )) as unknown as AdaptiveRuntime
+  }
+}
+
+function ipcRuntime(endpoint: string, command: OwnerCliCommand) {
+  const ipcCommand = OWNER_CLI_IPC_COMMANDS[command.kind]
+  const request = () => sendOwnerIpcRequest(endpoint, ipcCommand, commandParams(command))
+  const localManagement = {
+    authStatus: () => sendOwnerIpcRequest(endpoint, 'auth.status'),
+    bootstrapRotate: () => request(),
+    bootstrapRecover: () => request(),
+    rotateRecoveryCodes: () => request(),
+    revokeAllSessions: () => request(),
+    listDevices: () => request(),
+    revokeAllDevices: () => request(),
+    revokeDevice: (deviceId: string) =>
+      sendOwnerIpcRequest(endpoint, 'devices.revoke', { deviceId }),
+    ownerCodeShow: () => request(),
+    ownerCodeRotate: () => request(),
+    trustReset: () => request(),
+  }
+  return { services: { localManagement }, async close() {} }
+}
+
+function commandParams(command: OwnerCliCommand): unknown {
+  return command.kind === 'devices-revoke' ? { deviceId: command.deviceId } : undefined
 }

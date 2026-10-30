@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { WebSocket } from '@fastify/websocket'
 
 import type { ServerConfig } from '../config.js'
-import { createOwnerApplicationServices, withAuthSecret } from './application-services.js'
+import { createOwnerApplicationServices } from './application-services.js'
 import type { OwnerApplicationServices } from './application-services.js'
 import { createOwnerMethodRegistry } from './methods.js'
 import type { AppDependencies } from '../http/types.js'
@@ -28,7 +28,7 @@ export async function registerOwnerWebSocket(
 
   const services =
     providedServices ??
-    createOwnerApplicationServices(withAuthSecret(dependencies, config), {
+    createOwnerApplicationServices(dependencies, {
       trustedOrigins: config.trustedOrigins,
       requireDangerousAccessConfirmation: config.requireDangerousAccessConfirmation,
       remoteRelayUrl: config.remoteRelayUrl,
@@ -45,7 +45,7 @@ export async function registerOwnerWebSocket(
       return
     }
 
-    const transport = createFastifyTransport(socket, origin)
+    const transport = createFastifyTransport(socket, origin, request.query)
     const runtime = new OwnerSessionRuntime(transport, registry, {
       connectionId: crypto.randomUUID(),
       capabilities: ['owner', 'credentials', 'projects', 'codex'],
@@ -55,10 +55,12 @@ export async function registerOwnerWebSocket(
   })
 }
 
-function createFastifyTransport(socket: WebSocket, origin: string): OwnerTransport {
+function createFastifyTransport(socket: WebSocket, origin: string, query: unknown): OwnerTransport {
+  const enrollmentTicket = readEnrollmentTicket(query)
   return {
     kind: 'local',
     origin,
+    ...(enrollmentTicket ? { enrollmentTicket } : {}),
     send(frame) {
       if (socket.readyState !== socket.OPEN) return
       socket.send(frame, { binary: frame instanceof Uint8Array })
@@ -81,6 +83,12 @@ function createFastifyTransport(socket: WebSocket, origin: string): OwnerTranspo
       return () => socket.off('close', onClose)
     },
   }
+}
+
+function readEnrollmentTicket(query: unknown) {
+  if (!query || typeof query !== 'object' || !('ticket' in query)) return undefined
+  const ticket = (query as { ticket?: unknown }).ticket
+  return typeof ticket === 'string' && /^[A-Za-z0-9_-]{32,128}$/u.test(ticket) ? ticket : undefined
 }
 
 function toBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {

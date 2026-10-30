@@ -416,14 +416,14 @@ export class OwnerConnector {
     }
     if (frame.type === 'relay.client.connected') {
       const deviceId = frame.deviceId
-      const loginCandidate = frame.admission === 'login'
+      const loginCandidate = frame.admission === 'login' || frame.admission === 'first_session'
       if (!deviceId && !loginCandidate) {
         // Relay admission always carries the device binding; without it the Owner cannot tell
         // which paired device owns this connection.
         this.socket?.close?.(1008, 'invalid_client_binding')
         return
       }
-      this.connectedClientIds.set(frame.connectionId, deviceId ?? 'login')
+      this.connectedClientIds.set(frame.connectionId, deviceId ?? frame.admission)
       this.connections.set(frame.connectionId, { phase: 'awaiting_handshake' })
       return
     }
@@ -465,7 +465,8 @@ export class OwnerConnector {
     const identity = await this.trust.identity()
     const attachedDeviceId = this.connectedClientIds.get(connectionId)
     const deviceId = await this.trust.deviceId(frame.clientPublicKey)
-    const loginCandidate = attachedDeviceId === 'login'
+    const firstSessionCandidate = attachedDeviceId === 'first_session'
+    const loginCandidate = attachedDeviceId === 'login' || firstSessionCandidate
     if (
       frame.nodeId !== identity.nodeId ||
       frame.trustEpoch !== identity.trustEpoch ||
@@ -494,12 +495,13 @@ export class OwnerConnector {
     }
     if (this.connections.get(connectionId)?.phase !== 'handshaking') return
     const transport = new VirtualOwnerTransport(
-      deviceId ?? 'login',
+      deviceId ?? (firstSessionCandidate ? 'first_session' : 'login'),
       (ownerFrame) => void this.sendEncrypted(connectionId, ownerFrame),
       (code, reason) => this.teardownConnection(connectionId, reason, code),
     )
     if (loginCandidate) {
       transport.loginCandidate = true
+      transport.firstSessionCandidate = firstSessionCandidate
       transport.clientPublicKey = frame.clientPublicKey
       transport.promote = (promotedDeviceId) => {
         transport.pairedDeviceId = promotedDeviceId
@@ -515,7 +517,7 @@ export class OwnerConnector {
       lastReceiveSequence: 0,
       sendSequence: 0,
       publicKey: frame.clientPublicKey,
-      deviceId: deviceId ?? 'login',
+      deviceId: deviceId ?? (firstSessionCandidate ? 'first_session' : 'login'),
       transport,
       runtime,
       createdAt: Date.now(),

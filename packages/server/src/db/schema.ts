@@ -1,120 +1,114 @@
-import { relations } from 'drizzle-orm/_relations'
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 const timestamp = (name: string) => integer(name, { mode: 'timestamp' })
 
-export const user = sqliteTable('user', {
+export const owner = sqliteTable('owner', {
   id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  emailVerified: integer('email_verified', { mode: 'boolean' }).default(false).notNull(),
-  image: text('image'),
+  createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
+  runtimeInitializedAt: timestamp('runtime_initialized_at'),
+  remotePasskeyConfiguredAt: timestamp('remote_passkey_configured_at'),
+  localPasskeyConfiguredAt: timestamp('local_passkey_configured_at'),
+  recoveryConfiguredAt: timestamp('recovery_configured_at'),
   currentCredentialId: text('current_credential_id'),
-  createdAt: timestamp('created_at')
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: timestamp('updated_at')
-    .notNull()
-    .$defaultFn(() => new Date()),
-  twoFactorEnabled: integer('two_factor_enabled', { mode: 'boolean' }).default(false).notNull(),
 })
 
-export const twoFactor = sqliteTable('twoFactor', {
+export const passkeyCredential = sqliteTable(
+  'passkey_credential',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
+    credentialId: text('credential_id').notNull().unique(),
+    publicKey: text('public_key').notNull(),
+    counter: integer('counter').notNull().default(0),
+    transports: text('transports', { mode: 'json' }).$type<string[]>().notNull(),
+    origin: text('origin').notNull(),
+    rpId: text('rp_id').notNull(),
+    createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
+    lastUsedAt: timestamp('last_used_at'),
+  },
+  (table) => [index('passkey_credential_owner_origin_idx').on(table.ownerId, table.origin)],
+)
+
+export const recoveryCode = sqliteTable(
+  'recovery_code',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    batchId: text('batch_id').notNull(),
+    reservedAt: timestamp('reserved_at'),
+    consumedAt: timestamp('consumed_at'),
+    createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index('recovery_code_owner_batch_idx').on(table.ownerId, table.batchId)],
+)
+
+export const localEnrollmentTicket = sqliteTable('local_enrollment_ticket', {
   id: text('id').primaryKey(),
-  secret: text('secret').notNull(),
-  backupCodes: text('backup_codes').notNull(),
-  userId: text('user_id')
-    .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  verified: integer('verified', { mode: 'boolean' }).default(true).notNull(),
-  failedVerificationCount: integer('failed_verification_count').default(0).notNull(),
-  lockedUntil: timestamp('locked_until'),
+  ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  rpId: text('rp_id').notNull(),
+  purpose: text('purpose').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  consumedAt: timestamp('consumed_at'),
 })
 
-export const session = sqliteTable(
-  'session',
+export const remoteDevice = sqliteTable(
+  'remote_device',
   {
     id: text('id').primaryKey(),
-    expiresAt: timestamp('expires_at').notNull(),
-    token: text('token').notNull().unique(),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: timestamp('updated_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
-    ipAddress: text('ip_address'),
-    userAgent: text('user_agent'),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
+    publicKey: text('public_key').notNull().unique(),
+    label: text('label'),
+    createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
+    lastSeenAt: timestamp('last_seen_at'),
+    revokedAt: timestamp('revoked_at'),
   },
-  (table) => [index('session_userId_idx').on(table.userId)],
+  (table) => [index('remote_device_owner_idx').on(table.ownerId)],
 )
 
-export const account = sqliteTable(
-  'account',
+export const ownerSession = sqliteTable(
+  'owner_session',
   {
     id: text('id').primaryKey(),
-    accountId: text('account_id').notNull(),
-    providerId: text('provider_id').notNull(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    accessToken: text('access_token'),
-    refreshToken: text('refresh_token'),
-    idToken: text('id_token'),
-    accessTokenExpiresAt: timestamp('access_token_expires_at'),
-    refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
-    scope: text('scope'),
-    password: text('password'),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: timestamp('updated_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
+    ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
+    deviceId: text('device_id').references(() => remoteDevice.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    trustEpoch: integer('trust_epoch').notNull(),
+    createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
+    lastUsedAt: timestamp('last_used_at').notNull().$defaultFn(() => new Date()),
+    expiresAt: timestamp('expires_at').notNull(),
+    absoluteExpiresAt: timestamp('absolute_expires_at').notNull(),
+    revokedAt: timestamp('revoked_at'),
   },
-  (table) => [index('account_userId_idx').on(table.userId)],
+  (table) => [index('owner_session_owner_device_idx').on(table.ownerId, table.deviceId)],
 )
 
-export const verification = sqliteTable(
-  'verification',
+export const authThrottle = sqliteTable(
+  'auth_throttle',
   {
     id: text('id').primaryKey(),
-    identifier: text('identifier').notNull(),
-    value: text('value').notNull(),
-    expiresAt: timestamp('expires_at').notNull(),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: timestamp('updated_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
+    scopeHash: text('scope_hash').notNull().unique(),
+    failures: integer('failures').notNull().default(0),
+    lockedUntil: timestamp('locked_until'),
+    updatedAt: timestamp('updated_at').notNull().$defaultFn(() => new Date()),
   },
-  (table) => [index('verification_identifier_idx').on(table.identifier)],
 )
 
 export const project = sqliteTable(
   'project',
   {
     id: text('id').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     path: text('path').notNull(),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: timestamp('updated_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
+    createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp('updated_at').notNull().$defaultFn(() => new Date()),
   },
   (table) => [
-    index('project_userId_idx').on(table.userId),
-    uniqueIndex('project_userId_name_unique').on(table.userId, table.name),
-    uniqueIndex('project_userId_path_unique').on(table.userId, table.path),
+    index('project_owner_idx').on(table.ownerId),
+    uniqueIndex('project_owner_name_unique').on(table.ownerId, table.name),
+    uniqueIndex('project_owner_path_unique').on(table.ownerId, table.path),
   ],
 )
 
@@ -122,74 +116,41 @@ export const credential = sqliteTable(
   'credential',
   {
     id: text('id').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
     provider: text('provider').notNull(),
     baseUrl: text('base_url').notNull(),
     encryptedApiKey: text('encrypted_api_key').notNull(),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: timestamp('updated_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
+    createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp('updated_at').notNull().$defaultFn(() => new Date()),
   },
-  (table) => [index('credential_userId_idx').on(table.userId)],
+  (table) => [index('credential_owner_idx').on(table.ownerId)],
 )
 
 export const codexEvent = sqliteTable(
   'codex_event',
   {
     id: integer('id').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    ownerId: text('owner_id').notNull().references(() => owner.id, { onDelete: 'cascade' }),
     threadId: text('thread_id'),
     message: text('message', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
+    createdAt: timestamp('created_at').notNull().$defaultFn(() => new Date()),
   },
   (table) => [
-    index('codex_event_user_id_idx').on(table.userId),
-    index('codex_event_user_id_id_idx').on(table.userId, table.id),
-    index('codex_event_user_id_thread_id_id_idx').on(table.userId, table.threadId, table.id),
+    index('codex_event_owner_idx').on(table.ownerId),
+    index('codex_event_owner_id_idx').on(table.ownerId, table.id),
+    index('codex_event_owner_thread_id_idx').on(table.ownerId, table.threadId, table.id),
   ],
 )
 
-export const ownerSecurityState = sqliteTable('owner_security_state', {
-  ownerId: text('owner_id')
-    .primaryKey()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  recoveryCodesAcknowledgedAt: timestamp('recovery_codes_acknowledged_at'),
-})
-
 export const schema = {
-  user,
-  twoFactor,
-  session,
-  account,
-  verification,
+  owner,
+  passkeyCredential,
+  recoveryCode,
+  localEnrollmentTicket,
+  remoteDevice,
+  ownerSession,
+  authThrottle,
   project,
   credential,
   codexEvent,
-  ownerSecurityState,
 }
-
-export const userRelations = relations(user, ({ many }) => ({
-  sessions: many(session),
-  accounts: many(account),
-}))
-export const sessionRelations = relations(session, ({ one }) => ({
-  user: one(user, { fields: [session.userId], references: [user.id] }),
-}))
-export const accountRelations = relations(account, ({ one }) => ({
-  user: one(user, { fields: [account.userId], references: [user.id] }),
-}))
-export const projectRelations = relations(project, ({ one }) => ({
-  user: one(user, { fields: [project.userId], references: [user.id] }),
-}))
-export const credentialRelations = relations(credential, ({ one }) => ({
-  user: one(user, { fields: [credential.userId], references: [user.id] }),
-}))

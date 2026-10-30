@@ -1,7 +1,7 @@
 {
   "name": "@codex-web/server",
-  "private": true,
   "version": "0.0.1",
+  "private": true,
   "type": "module",
   "scripts": {
     "start": "node scripts/run-with-env.mjs tsx src/owner/server.ts",
@@ -10,14 +10,15 @@
     "test:integration": "tsx --test src/**/*.integration.ts",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:reset": "node scripts/run-with-env.mjs tsx scripts/reset-local-database.ts",
-    "account:create": "node scripts/run-with-env.mjs tsx scripts/create-account.ts",
-    "owner:manage": "node scripts/run-with-env.mjs tsx scripts/owner-cli.ts"
+    "manage": "node scripts/run-with-env.mjs tsx scripts/owner-cli.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.1",
     "@codex-web/protocol": "workspace:*",
     "@fastify/sensible": "^6.0.5",
     "@fastify/websocket": "^11.3.4",
-    "better-auth": "^1.7.4",
+    "@simplewebauthn/server": "14.0.3",
+    "@vincentkoc/qrcode-tui": "^0.2.1",
     "better-sqlite3": "^13.0.3",
     "dotenv": "^17.4.2",
     "drizzle-orm": "1.0.0-rc.4",
