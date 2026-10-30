@@ -22,7 +22,7 @@ Remote Client -> Relay -> Owner RelayTransport -> Owner Gateway
 
 ## 职责边界
 
-- **App**：提供本地工作台、官方远程入口、Passkey/recovery 登录、设备密钥存储和 `/owner/manage` 管理页。页面只使用 UI-facing model，不接触私钥、宿主路径、API key 或原始 runtime payload。
+- **App**：提供本地工作台、官方远程入口、Passkey/recovery 登录、设备密钥存储和 `/app/settings/connection` 管理页。页面只使用 UI-facing model，不接触私钥、宿主路径、API key 或原始 runtime payload。
 - **Owner Gateway / Server**：负责 Owner-only Passkey/recovery/session、资源归属、Application Services、Owner WebSocket、RelayTransport、trust store 和安全 DTO。身份、授权、设备身份和业务权限以 Owner 的验证结果为准。
 - **Application Services**：是 Owner session、Credential、Project、Thread/Turn、事件、登录 QR、设备登记/撤销和 trust reset 的业务入口，不依赖 Fastify request/reply、Relay socket 或具体数据库类型。
 - **Relay**：只处理经过 admission 验证的 Owner/client attach、路由、替换、断开、重连和 opaque encrypted payload，不建立账户体系或业务持久化。
@@ -33,11 +33,11 @@ Remote Client -> Relay -> Owner RelayTransport -> Owner Gateway
 
 ## Owner 身份与远程接入
 
-Owner 是单一本地身份，不需要用户名、邮箱、密码或 TOTP 即可启动。WebAuthn 远程 profile 固定为 `https://codex.vixinox.com` / `codex.vixinox.com`，本地 profile 固定为 `http://localhost:5173` / `localhost`，不能跨 profile 使用。Owner-code 是 Relay 范围内 9 位在线路由标识，不承担授权。Relay 仅在内存中维护 Owner-code 在线映射；远程 Passkey/recovery 使用 `admission: 'login'`，首次 bootstrap 使用单独的 `first_session` admission。
+Owner 是单一本地身份，不需要用户名、邮箱、密码或 TOTP 即可启动。WebAuthn 远程 profile 使用经过校验的 `CODEX_APP_ORIGIN` / `CODEX_APP_RP_ID`，本地 profile 固定为 `http://localhost:5173` / `localhost`，不能跨 profile 使用。Owner-code 是 Relay 范围内 9 位在线路由标识，不承担授权。Relay 仅在内存中维护 Owner-code 在线映射；远程 Passkey/recovery 使用 `admission: 'login'`，首次 bootstrap 使用单独的 `bootstrap_reference` admission。
 
 Owner-code 可由已认证的本机管理页查看或轮换。在线冲突会拒绝注册；Relay 不持久化目录，离线 Owner 不保留号码预约。
 
-首次远程接入通过 Owner 监听就绪后输出的一次性 five-minute first-session grant。兑换前校验 Owner 公钥 fingerprint，grant 与 Owner、node、trust epoch 和远程 origin 绑定；兑换创建唯一首台设备/session，不注册 Passkey，也不授予设备管理或 trust-reset 权限。普通管理 QR 是短时单次 request reference，不独立创建 session。内存 grant 在 Owner 重启后失效。
+首次远程接入通过 Owner 监听就绪后输出的一次性 five-minute bootstrap reference。Relay 只在 Owner 在线时维护 reference-to-node 路由；grant 和授权材料留在 Owner 的受保护交换中。兑换前校验 Owner、node、trust epoch、origin 和首次 E2EE client key；兑换创建唯一首台设备/session，不注册 Passkey，也不授予设备管理或 trust-reset 权限。普通管理 QR 是短时单次 request reference，不独立创建 session。内存 grant 在 Owner 重启后失效。
 
 远程 Passkey 可用于后续登录；十个高熵 recovery code 只持久化哈希、单次消费。Recovery 必须完成新 Passkey 注册、轮换整批 recovery code 并撤销既有远程 session。Session token 仅返回一次，数据库存哈希；会话受 30 天 idle / 90 天 absolute TTL、device revocation 和 trust epoch 约束。
 
@@ -71,7 +71,7 @@ E2EE 派生上下文绑定协议版本、node、trust epoch、双方公钥和连
 
 已知限制和后续工作：
 
-- CLI 在 Owner 运行时走 allowlisted 本机 IPC，Owner 停止时才获取 instance lock 并启动短生命周期 runtime；IPC Windows named-pipe 同用户 ACL 仍需平台实现与验证。
+- CLI 在 Owner 运行时走 allowlisted 本机 IPC，Owner 停止时才获取 instance lock 并启动短生命周期 runtime。当前部署模型限定为单个本地操作系统用户；不额外承诺共享 Windows 主机上的自定义 named-pipe ACL 隔离。
 - Relay/Vite/Owner 的真实浏览器链路尚未手工验收。须覆盖首次 grant 单次兑换、指纹拒绝、Passkey/recovery、QR 扫码和上传、session 恢复、注销、撤销、trust reset、Owner/Relay 重启与离线重连。
 - Chat、Workspace、Settings 的全量 Owner WS 迁移不属于本远程入口基线。
 

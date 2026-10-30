@@ -3,68 +3,34 @@ import { BrowserQRCodeReader } from '@zxing/browser'
 import { Camera, ImageUp, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { remoteRelayUrl } from '@/lib/remote/relay-profile'
 import type { FirstSessionPayload } from './owner-management-model'
 
 export function parseLoginQrPayload(raw: string): FirstSessionPayload {
-  let value: unknown
+  const value = raw.trim()
+  if (!value) throw new Error('This is not a valid Owner login QR.')
+  let url: URL
   try {
-    if (raw.startsWith('https://codex.vixinox.com/app/first-session?')) {
-      const url = new URL(raw)
-      const payload = url.searchParams.get('payload')
-      if (!payload) throw new Error('missing payload')
-      value = JSON.parse(payload)
-    } else value = JSON.parse(raw)
+    url = new URL(value)
   } catch {
     throw new Error('This is not a valid Owner login QR.')
   }
-  if (!value || typeof value !== 'object') throw new Error('This is not an Owner login QR.')
-  const payload = value as Record<string, unknown>
-  const allowedKeys = new Set([
-    'version',
-    'relayUrl',
-    'ownerCode',
-    'nodeId',
-    'trustEpoch',
-    'ownerPublicKey',
-    'ownerPublicKeyFingerprint',
-    'ownerPublicKeyVerificationKey',
-    'type',
-    'grant',
-    'expiresAt',
-  ])
-  let relay: URL | null = null
-  try {
-    relay = new URL(String(payload.relayUrl))
-  } catch {
-    relay = null
-  }
-  if (
-    Object.keys(payload).some((key) => !allowedKeys.has(key)) ||
-    payload.version !== 1 ||
-    typeof payload.relayUrl !== 'string' ||
-    !relay ||
-    !['wss:', 'ws:'].includes(relay.protocol) ||
-    !/^\d{9}$/u.test(String(payload.ownerCode)) ||
-    typeof payload.nodeId !== 'string' ||
-    payload.nodeId.length === 0 ||
-    !Number.isSafeInteger(payload.trustEpoch) ||
-    typeof payload.ownerPublicKey !== 'string' ||
-    typeof payload.ownerPublicKeyVerificationKey !== 'string' ||
-    !/^[A-Za-z0-9_-]{16}$/u.test(String(payload.ownerPublicKeyFingerprint)) ||
-    payload.type !== 'first_session' ||
-    typeof payload.grant !== 'string' ||
-    payload.grant.length < 32 ||
-    payload.grant.length > 256 ||
-    typeof payload.expiresAt !== 'string'
-  )
+  if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/app/first-session')
     throw new Error('This is not a supported Owner login QR.')
-  if (
-    typeof payload.expiresAt !== 'string' ||
-    !Number.isFinite(Date.parse(payload.expiresAt)) ||
-    Date.parse(payload.expiresAt) <= Date.now()
-  )
-    throw new Error('This first-session QR has expired.')
-  return payload as FirstSessionPayload
+  if (typeof window !== 'undefined' && url.origin !== window.location.origin)
+    throw new Error('This QR belongs to a different App origin.')
+  if ([...url.searchParams.keys()].some((key) => key !== 'ref'))
+    throw new Error('This is not a supported Owner login QR.')
+  const reference = url.searchParams.get('ref')
+  if (!reference || !/^[A-Za-z0-9_-]{16,256}$/u.test(reference))
+    throw new Error('This is not a supported Owner login QR.')
+  let relayUrl: string
+  try {
+    relayUrl = remoteRelayUrl()
+  } catch {
+    throw new Error('Remote Relay URL is not configured.')
+  }
+  return { version: 1, type: 'first_session', reference, relayUrl, expiresAt: '' }
 }
 
 async function decodeImage(file: File) {

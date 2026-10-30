@@ -134,8 +134,10 @@ export function WorkspaceNavigation({
   const content = route.settingsActive ? (
     <SettingsSidebar
       archivedActive={route.archivedChatsActive}
+      connectionActive={route.connectionActive}
       onBack={route.openApp}
       onGeneral={route.openSettings}
+      onConnection={route.openConnection}
       onArchived={route.openArchivedChats}
     />
   ) : (

@@ -20,7 +20,11 @@ export type RemoteLoginResult = {
   sessionToken: string
   expiresAt: string
   deviceId: string
+  ownerCode: string
+  nodeId: string
 }
+
+const FIRST_SESSION_CONNECT_TIMEOUT_MS = 10_000
 
 export async function redeemFirstSession(payload: FirstSessionPayload): Promise<RemoteLoginResult> {
   const previous = await loadDeviceKey()
@@ -28,23 +32,31 @@ export async function redeemFirstSession(payload: FirstSessionPayload): Promise<
   const device = await loadDeviceKey()
   if (!device) throw new Error('Unable to create a remote device key.')
   const socket = createRelayOwnerSocket(payload.relayUrl, {
-    nodeId: payload.nodeId,
-    trustEpoch: payload.trustEpoch,
     clientToken: '',
     publicKey: device.publicKey,
     privateKey: device.privateKey,
-    firstSessionOwnerCode: payload.ownerCode,
-    firstSessionGrant: payload.grant,
-    firstSessionFingerprint: payload.ownerPublicKeyVerificationKey,
-    expectedOwnerFingerprint: payload.ownerPublicKeyFingerprint,
+    bootstrapReference: payload.reference,
   })
   const runtime = createOwnerRuntime(() => socket)
   try {
-    await runtime.connect({
-      url: payload.relayUrl,
-      clientId: 'owner-first-session',
-      capabilities: ['owner'],
-    })
+    let connectTimer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        runtime.connect({
+          url: payload.relayUrl,
+          clientId: 'owner-first-session',
+          capabilities: ['owner'],
+        }),
+        new Promise<never>((_, reject) => {
+          connectTimer = setTimeout(() => {
+            runtime.close('first-session connect timeout')
+            reject(new Error('FIRST_SESSION_CONNECTION_TIMEOUT'))
+          }, FIRST_SESSION_CONNECT_TIMEOUT_MS)
+        }),
+      ])
+    } finally {
+      if (connectTimer) clearTimeout(connectTimer)
+    }
     const result = await runtime.request<{
       ownerId: string
       sessionToken: string
@@ -52,42 +64,49 @@ export async function redeemFirstSession(payload: FirstSessionPayload): Promise<
       deviceId: string
       clientToken: string
       trustEpoch: number
-    }>('owner.firstSession.redeem', { grant: payload.grant })
+      ownerCode: string
+      ownerNodeId: string
+    }>('owner.firstSession.redeem', { reference: payload.reference }, { timeoutMs: 10_000 })
     if (
       typeof result.ownerId !== 'string' ||
       typeof result.sessionToken !== 'string' ||
       typeof result.expiresAt !== 'string' ||
       typeof result.deviceId !== 'string' ||
       typeof result.clientToken !== 'string' ||
-      !Number.isSafeInteger(result.trustEpoch)
+      !Number.isSafeInteger(result.trustEpoch) ||
+      !/^\d{9}$/u.test(result.ownerCode) ||
+      typeof result.ownerNodeId !== 'string' ||
+      result.ownerNodeId.length === 0
     )
       throw new Error('First-session grant was rejected.')
     await setPairedDevice({
       deviceId: result.deviceId,
       pairedClientToken: result.clientToken,
       trustEpoch: result.trustEpoch,
-      nodeId: payload.nodeId,
+      nodeId: result.ownerNodeId,
       relayUrl: payload.relayUrl,
     })
     await saveRemoteOwnerSession({
       token: result.sessionToken,
       expiresAt: result.expiresAt,
       relayUrl: payload.relayUrl,
-      ownerCode: payload.ownerCode,
-      nodeId: payload.nodeId,
+      ownerCode: result.ownerCode,
+      nodeId: result.ownerNodeId,
       deviceId: result.deviceId,
       ownerId: result.ownerId,
     })
     await setRemoteTarget({
-      nodeId: payload.nodeId,
+      nodeId: result.ownerNodeId,
       relayUrl: payload.relayUrl,
-      ownerCode: payload.ownerCode,
+      ownerCode: result.ownerCode,
     })
     return {
       ownerId: result.ownerId,
       sessionToken: result.sessionToken,
       expiresAt: result.expiresAt,
       deviceId: result.deviceId,
+      ownerCode: result.ownerCode,
+      nodeId: result.ownerNodeId,
     }
   } catch (error) {
     await restoreDeviceKey(previous).catch(() => undefined)

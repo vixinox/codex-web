@@ -14,25 +14,50 @@ export type OwnerManagementSnapshot = {
 export type FirstSessionPayload = {
   version: 1
   type: 'first_session'
+  reference: string
+  /** Relay URL comes from the trusted application profile, never from QR contents. */
   relayUrl: string
-  ownerCode: string
-  nodeId: string
-  trustEpoch: number
-  ownerPublicKey: string
-  ownerPublicKeyFingerprint: string
-  ownerPublicKeyVerificationKey: string
-  grant: string
   expiresAt: string
 }
 
 export type IssuedFirstSession = { payload: FirstSessionPayload }
 
 export type ManagementQr = {
-  capability: string
-  ownerId: string
-  nodeId: string
-  trustEpoch: number
+  reference: string
   expiresAt: string
+}
+
+export type ManagementQrPayload = {
+  version: 1
+  type: 'management_request'
+  reference: string
+  expiresAt: string
+}
+
+export function parseManagementQrPayload(raw: string): ManagementQrPayload {
+  let value: unknown
+  try {
+    value = JSON.parse(raw.trim())
+  } catch {
+    throw new Error('This is not a valid management QR.')
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('This is not a valid management QR.')
+  const payload = value as Record<string, unknown>
+  if (
+    Object.keys(payload).some(
+      (key) => !['version', 'type', 'reference', 'expiresAt'].includes(key),
+    ) ||
+    payload.version !== 1 ||
+    payload.type !== 'management_request' ||
+    typeof payload.reference !== 'string' ||
+    !/^[A-Za-z0-9_-]{16,256}$/u.test(payload.reference) ||
+    typeof payload.expiresAt !== 'string' ||
+    !Number.isFinite(Date.parse(payload.expiresAt)) ||
+    Date.parse(payload.expiresAt) <= Date.now()
+  )
+    throw new Error('This management QR is invalid or expired.')
+  return payload as ManagementQrPayload
 }
 
 export type OwnerManagementClient = {
@@ -47,6 +72,9 @@ export type OwnerManagementClient = {
   issueFirstSession(): Promise<IssuedFirstSession>
   issueManagementQr(): Promise<ManagementQr>
   cancelManagementQr(): Promise<boolean>
+  consumeManagementQr(
+    reference: string,
+  ): Promise<{ consumed: true; ownerId: string; nodeId: string; trustEpoch: number }>
   close(): void
 }
 

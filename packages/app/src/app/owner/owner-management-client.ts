@@ -4,6 +4,7 @@ import type {
   OwnerManagementClient,
   OwnerManagementSnapshot,
 } from './owner-management-model'
+import { remoteRelayUrl } from '@/lib/remote/relay-profile'
 
 type OwnerRpc = {
   request(method: string, params?: Record<string, unknown>): Promise<unknown>
@@ -89,39 +90,45 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
     },
     async issueFirstSession() {
       const value = (await rpc.request('owner.bootstrap.issue')) as Record<string, unknown>
-      const payload = value.payload as Partial<FirstSessionPayload> | undefined
+      const source =
+        value.payload && typeof value.payload === 'object'
+          ? (value.payload as Record<string, unknown>)
+          : value
+      const payload = source as Partial<FirstSessionPayload>
       if (
-        !payload ||
         payload.version !== 1 ||
         payload.type !== 'first_session' ||
-        typeof payload.relayUrl !== 'string' ||
-        !/^\d{9}$/u.test(payload.ownerCode ?? '') ||
-        typeof payload.nodeId !== 'string' ||
-        !Number.isSafeInteger(payload.trustEpoch) ||
-        typeof payload.ownerPublicKey !== 'string' ||
-        typeof payload.ownerPublicKeyVerificationKey !== 'string' ||
-        typeof payload.ownerPublicKeyFingerprint !== 'string' ||
-        typeof payload.grant !== 'string' ||
+        typeof payload.reference !== 'string' ||
+        !/^[A-Za-z0-9_-]{16,256}$/u.test(payload.reference) ||
         typeof payload.expiresAt !== 'string'
       )
         throw new Error('Invalid first-session response')
-      return { payload: payload as FirstSessionPayload } satisfies IssuedFirstSession
+      return {
+        payload: {
+          version: 1,
+          type: 'first_session',
+          reference: payload.reference,
+          relayUrl: remoteRelayUrl(),
+          expiresAt: payload.expiresAt,
+        },
+      } satisfies IssuedFirstSession
     },
     async issueManagementQr() {
       const value = (await rpc.request('remote.loginQr.issue')) as Record<string, unknown>
+      const reference =
+        typeof value.reference === 'string'
+          ? value.reference
+          : typeof value.capability === 'string'
+            ? value.capability
+            : null
       if (
-        typeof value.capability !== 'string' ||
-        typeof value.ownerId !== 'string' ||
-        typeof value.nodeId !== 'string' ||
-        !Number.isSafeInteger(value.trustEpoch) ||
+        !reference ||
+        !/^[A-Za-z0-9_-]{16,256}$/u.test(reference) ||
         typeof value.expiresAt !== 'string'
       )
         throw new Error('Invalid management QR response')
       return {
-        capability: value.capability,
-        ownerId: value.ownerId,
-        nodeId: value.nodeId,
-        trustEpoch: value.trustEpoch as number,
+        reference,
         expiresAt: value.expiresAt,
       }
     },
@@ -129,6 +136,27 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
       const value = (await rpc.request('remote.loginQr.cancel')) as Record<string, unknown>
       if (typeof value.cancelled !== 'boolean') throw new Error('Invalid management QR response')
       return value.cancelled
+    },
+    async consumeManagementQr(reference) {
+      if (!/^[A-Za-z0-9_-]{16,256}$/u.test(reference))
+        throw new Error('Invalid management QR reference')
+      const value = (await rpc.request('remote.loginQr.consume', { reference })) as Record<
+        string,
+        unknown
+      >
+      if (
+        value.consumed !== true ||
+        typeof value.ownerId !== 'string' ||
+        typeof value.nodeId !== 'string' ||
+        !Number.isSafeInteger(value.trustEpoch)
+      )
+        throw new Error('Invalid management QR consumption response')
+      return {
+        consumed: true as const,
+        ownerId: value.ownerId,
+        nodeId: value.nodeId,
+        trustEpoch: value.trustEpoch as number,
+      }
     },
     close() {
       rpc.close()

@@ -47,12 +47,16 @@ class FakeSocket {
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
   closed = false
+  closeCode?: number
+  closeReason?: string
   send(data: string) {
     this.sent.push(data)
   }
-  close() {
+  close(code?: number, reason?: string) {
     if (this.closed) return
     this.closed = true
+    this.closeCode = code
+    this.closeReason = reason
     this.onclose?.()
   }
   deliver(frame: string) {
@@ -124,6 +128,16 @@ function methodRegistry(connector: OwnerConnector, submittedFactors: string[]) {
   const methods: [string, OwnerMethodDefinition][] = [
     ['owner.status', { access: 'authenticated', handle: () => ({ status: 'ready' }) }],
     [
+      'owner.transport.binding',
+      {
+        access: 'authenticated',
+        handle: (_params, context) => ({
+          kind: context.transport.kind,
+          clientPublicKey: context.transport.clientPublicKey,
+        }),
+      },
+    ],
+    [
       'owner.session.open',
       {
         access: 'public',
@@ -147,6 +161,25 @@ function methodRegistry(connector: OwnerConnector, submittedFactors: string[]) {
           )
             throw new Error('Candidate challenge mismatch')
           submittedFactors.push(String((params as { code?: unknown }).code))
+          const publicKey = context.transport.clientPublicKey
+          if (!publicKey || !context.transport.promote) throw new Error('Candidate key missing')
+          const { deviceId } = await connector.trust.trustPeerWithStatus(publicKey)
+          const clientToken = await connector.createPairedClientToken(deviceId)
+          await context.authenticate({
+            ownerId: 'owner-1',
+            sessionId: 'session-1',
+            sessionToken: SESSION_TOKEN,
+          })
+          context.transport.promote(deviceId, clientToken)
+          return { ownerId: 'owner-1', sessionToken: SESSION_TOKEN, deviceId, clientToken }
+        },
+      },
+    ],
+    [
+      'owner.passkey.authentication.verify',
+      {
+        access: 'public',
+        handle: async (_params, context) => {
           const publicKey = context.transport.clientPublicKey
           if (!publicKey || !context.transport.promote) throw new Error('Candidate key missing')
           const { deviceId } = await connector.trust.trustPeerWithStatus(publicKey)
@@ -363,6 +396,25 @@ test('admits a registered device, confirms the session key, and carries Owner fr
     if (response?.owner?.type !== 'response') throw new Error('Expected an owner response frame.')
     assert.deepEqual(response.owner.result, { status: 'ready' })
 
+    await sendClientFrame(
+      harness,
+      { type: 'request', requestId: 'binding-1', method: 'owner.transport.binding' },
+      3,
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 4,
+      'the transport binding response',
+    )
+    const bindingResponse = (
+      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
+    ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'binding-1')
+    if (bindingResponse?.owner?.type !== 'response')
+      throw new Error('Expected a transport binding response.')
+    assert.deepEqual(bindingResponse.owner.result, {
+      kind: 'relay',
+      clientPublicKey: clientKeys.publicKey,
+    })
+
     const devices = await connector.listDevices()
     assert.equal(devices.length, 1)
     assert.equal(devices[0]!.id, harness.deviceId)
@@ -445,19 +497,71 @@ test('rejects legacy password and TOTP login methods for an E2EE candidate', asy
 
     assert.deepEqual(submittedFactors, [])
     assert.deepEqual(await connector.listDevices(), [])
-    await sendClientFrame(harness, {
-      type: 'request',
-      requestId: 'legacy-totp',
-      method: 'owner.login.verifyTotp',
-      params: { challengeId: 'candidate-challenge', code: '123456' },
-    }, 4)
+    await sendClientFrame(
+      harness,
+      {
+        type: 'request',
+        requestId: 'legacy-totp',
+        method: 'owner.login.verifyTotp',
+        params: { challengeId: 'candidate-challenge', code: '123456' },
+      },
+      4,
+    )
     await waitFor(
       () => encryptedSequences(socket, 'client-connection').length === 5,
       'legacy TOTP RPC rejection',
     )
-    const legacy = (await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection')))
-      .find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'legacy-totp')
+    const legacy = (
+      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
+    ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'legacy-totp')
     assert.equal(legacy?.owner?.type === 'response' && legacy.owner.error?.code, 'UNAUTHORIZED')
+  }, true)
+})
+
+test('flushes a promoted response before closing the remote candidate', async () => {
+  await withHarness(async (harness) => {
+    const { socket, clientKey } = harness
+
+    await sendClientFrame(harness, helloFrame(), 1)
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 2,
+      'the login candidate to receive ready',
+    )
+    await sendClientFrame(
+      harness,
+      {
+        type: 'request',
+        requestId: 'open-1',
+        method: 'owner.session.open',
+        params: { password: 'ignored' },
+      },
+      2,
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 3,
+      'the login challenge response',
+    )
+    await sendClientFrame(
+      harness,
+      {
+        type: 'request',
+        requestId: 'verify-1',
+        method: 'owner.passkey.authentication.verify',
+      },
+      3,
+    )
+    await waitFor(
+      () => encryptedSequences(socket, 'client-connection').length === 5,
+      'the promoted response and close notification',
+    )
+
+    const frames = await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
+    const responseIndex = frames.findIndex(
+      (frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'verify-1',
+    )
+    const closeIndex = frames.findIndex((frame) => frame.relay?.type === 'connection.close')
+    assert.ok(responseIndex >= 0)
+    assert.ok(closeIndex > responseIndex)
   }, true)
 })
 
@@ -723,6 +827,8 @@ test('resetRemoteTrust closes live connections and rotates the trust epoch', asy
     // The relay link is recycled and re-attached under the rotated epoch, so the owner becomes
     // reachable again without a restart.
     await waitFor(() => socket.closed, 'the relay link to be closed by the reset')
+    assert.equal(socket.closeCode, 1000)
+    assert.equal(socket.closeReason, 'trust_reset')
     await waitFor(
       () => harness.sockets.length > 1,
       'the connector to dial the relay again after the reset',

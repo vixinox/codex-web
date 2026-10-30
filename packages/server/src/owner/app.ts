@@ -20,6 +20,8 @@ export async function buildOwnerServer(config: ServerConfig, dependencies: AppDe
     trustedOrigins: config.trustedOrigins,
     requireDangerousAccessConfirmation: config.requireDangerousAccessConfirmation,
     remoteRelayUrl: config.remoteRelayUrl,
+    appOrigin: config.appOrigin,
+    rpId: config.rpId,
   })
   const ipc = await startOwnerIpcServer(
     config.dataRoot,

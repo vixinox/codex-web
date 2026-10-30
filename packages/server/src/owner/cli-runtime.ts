@@ -78,6 +78,8 @@ async function createOwnerCliRuntimeUnlocked(
         trustedOrigins: config.trustedOrigins,
         requireDangerousAccessConfirmation: config.requireDangerousAccessConfirmation,
         remoteRelayUrl: config.remoteRelayUrl,
+        appOrigin: config.appOrigin,
+        rpId: config.rpId,
       },
     )
     if (connector) {
@@ -140,11 +142,7 @@ export async function createAdaptiveOwnerCliRuntime(
       await retryOwnerIpc(() => sendOwnerIpcRequest(endpoint, 'owner.ready', undefined, 1_000))
       return ipcRuntime(endpoint, command)
     }
-    return (await createOwnerCliRuntimeUnlocked(
-      config,
-      command,
-      lock,
-    )) as unknown as AdaptiveRuntime
+    return await createOwnerCliRuntimeUnlocked(config, command, lock)
   }
 }
 

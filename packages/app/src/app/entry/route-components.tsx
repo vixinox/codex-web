@@ -1,7 +1,9 @@
 import * as React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { Navigate, useLocation } from 'react-router'
+import { Loader2 } from 'lucide-react'
+import { Navigate, useLocation, useNavigate } from 'react-router'
 import { toast } from '@/components/ui/toast'
+import { Button } from '@/components/ui/button'
 import { readLocalOwnerSession } from '@/lib/auth/auth-client'
 import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
@@ -12,9 +14,28 @@ import { createOwnerManagementClient } from '@/app/owner/owner-management-client
 import { useOwnerRuntime } from '@/lib/owner-ws/use-owner-runtime'
 import { loadDeviceKey, loadRemoteOwnerSession } from '@/lib/remote/device-key-store'
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
+import { redeemFirstSession, type RemoteLoginResult } from '@/lib/remote/admission'
+import { remoteRelayUrl } from '@/lib/remote/relay-profile'
 import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
+import { isKnownAppRoute } from '@/app/composition/routes/route-model'
+import { MobileWorkspaceNavigation } from '@/app/composition/navigation/workspace-navigation'
+import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
+import { readWorkspaceSidebarWidth } from '@/app/workspace/sidebar/sidebar-storage'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
+
+const firstSessionAttempts = new Map<string, Promise<RemoteLoginResult>>()
+
+function redeemFirstSessionOnce(payload: Parameters<typeof redeemFirstSession>[0]) {
+  const existing = firstSessionAttempts.get(payload.reference)
+  if (existing) return existing
+  const attempt = redeemFirstSession(payload).catch((cause) => {
+    firstSessionAttempts.delete(payload.reference)
+    throw cause
+  })
+  firstSessionAttempts.set(payload.reference, attempt)
+  return attempt
+}
 
 export const startupPageEnabled = import.meta.env.VITE_ENABLE_STARTUP_PAGE === 'true'
 
@@ -71,6 +92,7 @@ export function CandidateRoute() {
     }
   }, [])
 
+  if (!isKnownAppRoute(location.pathname)) return <Navigate to="/app" replace />
   if (!remoteChecked) return pageFallback
   const stateOwnerId = (location.state as { remoteOwnerId?: unknown } | null)?.remoteOwnerId
   const localSession = readLocalOwnerSession()
@@ -122,6 +144,88 @@ export function AuthenticatedWorkspace({
 export function LoginRoute() {
   if (readLocalOwnerSession()) return <Navigate to="/app" replace />
   return <LoginScreen />
+}
+
+export function FirstSessionRoute() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [error, setError] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
+
+  useEffect(() => {
+    let active = true
+    const params = new URLSearchParams(location.search)
+    const reference = params.get('ref')
+    const hasUnexpectedParameter = [...params.keys()].some((key) => key !== 'ref')
+    if (hasUnexpectedParameter || !reference || !/^[A-Za-z0-9_-]{16,256}$/u.test(reference)) {
+      setError('This first-session link is invalid.')
+      return () => {
+        active = false
+      }
+    }
+
+    setError(null)
+    void (async () => {
+      try {
+        const result = await redeemFirstSessionOnce({
+          version: 1,
+          type: 'first_session',
+          reference,
+          relayUrl: remoteRelayUrl(),
+          expiresAt: '',
+        })
+        if (!active) return
+        await navigate('/app', {
+          replace: true,
+          state: { remoteOwnerId: result.ownerId, firstSession: true },
+        })
+      } catch (cause) {
+        if (!active) return
+        setError(cause instanceof Error ? cause.message : 'First-session connection failed.')
+      }
+    })()
+
+    return () => {
+      active = false
+    }
+  }, [location.search, navigate, retry])
+
+  return (
+    <main className="flex min-h-svh items-center justify-center bg-background px-4 py-8 text-foreground">
+      <div className="w-full max-w-md space-y-4 rounded-md border bg-card p-6 text-center shadow-sm">
+        {error ? (
+          <>
+            <h1 className="text-lg font-semibold">Unable to connect to Owner</h1>
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+            <div className="flex justify-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setError(null)
+                  setRetry((value) => value + 1)
+                }}
+              >
+                Try again
+              </Button>
+              <Button variant="ghost" onClick={() => void navigate('/login', { replace: true })}>
+                Open login
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3" role="status" aria-live="polite">
+            <Loader2 className="mx-auto size-6 animate-spin" aria-hidden="true" />
+            <h1 className="text-lg font-semibold">Connecting to Owner</h1>
+            <p className="text-sm text-muted-foreground">
+              This one-time link is being used to connect this device.
+            </p>
+          </div>
+        )}
+      </div>
+    </main>
+  )
 }
 
 export function OwnerManageRoute() {
@@ -258,4 +362,27 @@ export function OwnerManageRoute() {
     )
   if (!client) return pageFallback
   return <OwnerManageScreen client={client} />
+}
+
+export function ConnectionRoute() {
+  const navigate = useNavigate()
+  const sidebarWidth = readWorkspaceSidebarWidth()
+
+  return (
+    <div className="app-shell relative flex h-svh max-h-svh w-full touch-pan-x overflow-hidden overscroll-none bg-sidebar">
+      <MobileWorkspaceNavigation sidebarWidth={sidebarWidth}>
+        <SettingsSidebar
+          archivedActive={false}
+          connectionActive
+          onBack={() => void navigate('/app')}
+          onGeneral={() => void navigate('/app/settings')}
+          onConnection={() => undefined}
+          onArchived={() => void navigate('/app/settings/archived-chats')}
+        />
+      </MobileWorkspaceNavigation>
+      <main className="app-main min-h-0 min-w-0 flex-1 overflow-auto bg-app-surface">
+        <OwnerManageRoute />
+      </main>
+    </div>
+  )
 }

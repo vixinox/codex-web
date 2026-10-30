@@ -5,6 +5,7 @@ import {
   type OwnerErrorCode,
   type OwnerFrame,
 } from '@codex-web/protocol/owner'
+import { log } from '../logger.js'
 
 export type OwnerTransport = {
   kind: 'local' | 'relay'
@@ -13,6 +14,7 @@ export type OwnerTransport = {
   e2eeVerified?: boolean
   loginCandidate?: boolean
   firstSessionCandidate?: boolean
+  bootstrapReference?: string
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
   enrollmentTicket?: string
@@ -32,6 +34,7 @@ export class VirtualOwnerTransport implements OwnerTransport {
   promoted = false
   loginCandidate = false
   firstSessionCandidate = false
+  bootstrapReference?: string
   private readonly sendFrame: (frame: string | Uint8Array) => void
   private readonly closeTransport: (code?: number, reason?: string) => void
   private readonly messageListeners = new Set<(frame: string | Uint8Array) => void>()
@@ -282,6 +285,8 @@ export class OwnerSessionRuntime {
   }
 
   private async execute(requestId: string, methodName: string, params: unknown): Promise<void> {
+    if (this.transport.kind === 'relay' && methodName === 'owner.firstSession.redeem')
+      log.info('Remote first-session redeem request received')
     if (this.seenRequestIds.has(requestId)) {
       await this.respondError(requestId, {
         code: 'DUPLICATE_REQUEST_ID',
@@ -430,6 +435,12 @@ export class OwnerSessionRuntime {
       }
     } catch (error) {
       const safeError = projectError(error, state.abortCode)
+      if (this.transport.kind === 'relay' && methodName === 'owner.firstSession.redeem')
+        log.warn(`Remote first-session redeem request failed (${safeError.code})`)
+      if (methodName.startsWith('owner.passkey.'))
+        log.warn(
+          `Owner Passkey method failed (${methodName}, ${safeError.code}, ${this.transport.kind})`,
+        )
       await this.respondError(requestId, safeError)
     } finally {
       clearTimeout(timeout)
@@ -629,6 +640,12 @@ const SAFE_ERROR_MESSAGES: Record<OwnerErrorCode, string> = {
   HELLO_ALREADY_RECEIVED: 'Hello can only be sent once per connection.',
   UNAUTHORIZED: 'Authentication is required.',
   LOCAL_TRANSPORT_REQUIRED: 'This method is only available on a local connection.',
+  WEBAUTHN_ORIGIN_NOT_ALLOWED: 'Passkey registration is not available for this connection.',
+  PASSKEY_INVALID: 'Passkey verification failed.',
+  PASSKEY_REQUIRED: 'A Passkey is required.',
+  ENROLLMENT_TICKET_REQUIRED: 'A local enrollment ticket is required.',
+  ENROLLMENT_TICKET_INVALID: 'The local enrollment ticket is invalid or expired.',
+  CHALLENGE_EXPIRED: 'The Passkey challenge has expired.',
   DUPLICATE_REQUEST_ID: 'Request ID has already been used on this connection.',
   REQUEST_LIMIT_EXCEEDED: 'Too many requests are active on this connection.',
   REQUEST_TIMEOUT: 'Request timed out.',
@@ -656,6 +673,8 @@ const SAFE_ERROR_MESSAGES: Record<OwnerErrorCode, string> = {
   REMOTE_UNAVAILABLE: 'Remote administration is unavailable.',
   REMOTE_RELAY_REQUIRED: 'A relay URL is required for pairing.',
   DEVICE_NOT_FOUND: 'Paired device was not found.',
+  FIRST_SESSION_ALREADY_USED: 'This first-session link has already been used.',
+  FIRST_SESSION_GRANT_INVALID: 'This first-session link is invalid or expired.',
 }
 
 function isOwnerErrorCode(code: string): code is OwnerErrorCode {

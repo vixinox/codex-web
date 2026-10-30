@@ -4,6 +4,8 @@ import type { BunWebSocketHandler, BunWebSocketData } from 'hono/bun'
 import {
   encodeFrame,
   isRelayAttachFrame,
+  isRelayBootstrapReferenceRegisterFrame,
+  isRelayBootstrapReferenceUnregisterFrame,
   parseFrame,
   RELAY_PROTOCOL_VERSION,
 } from '@codex-web/protocol/relay'
@@ -16,6 +18,10 @@ import { RelayRouter, type RelaySocket } from './relay-router.js'
  */
 const ATTACH_REJECTED = 'attach_rejected'
 const encoder = new TextEncoder()
+
+function relayLog(message: string) {
+  console.error(`${new Date().toISOString()} [RELAY] ${message}`)
+}
 
 export function createRelayApp(
   router: RelayRouter,
@@ -97,11 +103,15 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
       if (!sessionId) {
         const frame = parseFrame(event.data)
         if (!isRelayAttachFrame(frame)) {
+          relayLog('Rejected client frame before attach')
           ws.close(1008, ATTACH_REJECTED)
           return
         }
         const result = router.attach(frame, socketFor(ws))
         if (!result.ok) {
+          relayLog(
+            `Attach rejected (${frame.role}:${frame.role === 'client' ? (frame.admission ?? 'paired') : 'owner'}; ${result.reason})`,
+          )
           ws.close(
             1008,
             frame.role === 'owner' && result.reason === 'owner_code_conflict'
@@ -111,6 +121,9 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
           return
         }
         sessionId = result.session.sessionId
+        relayLog(
+          `Attach accepted (${frame.role}:${frame.role === 'client' ? (frame.admission ?? 'paired') : 'owner'})`,
+        )
         ws.send(
           encodeFrame({
             type: 'relay.ready',
@@ -118,8 +131,25 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
             nodeId: result.session.nodeId,
             role: frame.role,
             connectionId: frame.connectionId,
+            trustEpoch: result.session.trustEpoch,
+            ownerPublicKey: result.session.ownerPublicKey,
           }),
         )
+        return
+      }
+      const control = parseFrame(event.data)
+      if (isRelayBootstrapReferenceRegisterFrame(control)) {
+        if (!router.registerBootstrapReference(sessionId, control)) {
+          relayLog('Bootstrap reference registration rejected')
+          ws.close(1008, 'invalid_bootstrap_reference')
+        } else relayLog('Bootstrap reference registered')
+        return
+      }
+      if (isRelayBootstrapReferenceUnregisterFrame(control)) {
+        if (!router.unregisterBootstrapReference(sessionId, control.reference)) {
+          relayLog('Bootstrap reference unregister rejected')
+          ws.close(1008, 'invalid_bootstrap_reference')
+        } else relayLog('Bootstrap reference unregistered')
         return
       }
       const session = router.getSession(sessionId)
@@ -136,9 +166,11 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
       return
     },
     onClose() {
+      relayLog('Relay WebSocket closed')
       if (sessionId) router.detach(sessionId)
     },
     onError() {
+      relayLog('Relay WebSocket error')
       if (sessionId) router.detach(sessionId)
     },
   }

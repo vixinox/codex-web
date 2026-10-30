@@ -144,6 +144,13 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
+      'remote.loginQr.consume',
+      {
+        access: 'authenticated' as const,
+        handle: (params, context) => services.remoteLoginQrConsume(context, asRecord(params)),
+      },
+    ],
+    [
       'owner.session.close',
       {
         access: 'authenticated' as const,
@@ -411,13 +418,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (params, context) => services.remoteDeviceRevoke(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.security.status',
-      {
-        access: 'local' as const,
-        handle: (_params, context) => services.ownerSecurityStatus(context),
       },
     ],
   ])

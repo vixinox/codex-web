@@ -11,6 +11,7 @@ import {
 export type WorkspaceRouteController = {
   settingsActive: boolean
   archivedChatsActive: boolean
+  connectionActive: boolean
   selection: ReturnType<typeof decodeThreadSelection>
   requestedProjectId: string | null
   pageTarget: ReturnType<typeof decodeThreadPageTarget>
@@ -18,6 +19,7 @@ export type WorkspaceRouteController = {
   newChatActive: boolean
   openApp: () => void
   openSettings: () => void
+  openConnection: () => void
   openArchivedChats: () => void
   openNewChat: (projectId?: string | null, replace?: boolean) => void
   navigateToThread: (projectId: string | null, threadId: string) => void
@@ -30,6 +32,7 @@ export function useWorkspaceRouteController(): WorkspaceRouteController {
   const navigate = useNavigate()
   const settingsActive = location.pathname.startsWith('/app/settings')
   const archivedChatsActive = location.pathname === '/app/settings/archived-chats'
+  const connectionActive = location.pathname === '/app/settings/connection'
   const selection = decodeThreadSelection(location.pathname)
   const requestedProjectId = new URLSearchParams(location.search).get('projectId')
   const pageTarget = decodeThreadPageTarget(location.pathname, location.search)
@@ -55,6 +58,7 @@ export function useWorkspaceRouteController(): WorkspaceRouteController {
     () => navigate('/app/settings/archived-chats'),
     [navigate],
   )
+  const openConnection = React.useCallback(() => navigate('/app/settings/connection'), [navigate])
   const openNewChat = React.useCallback(
     (projectId: string | null = null, replace = false) => {
       void navigate(appPathForNewChat(projectId), replace ? { replace: true } : undefined)
@@ -73,6 +77,7 @@ export function useWorkspaceRouteController(): WorkspaceRouteController {
   return {
     settingsActive,
     archivedChatsActive,
+    connectionActive,
     selection,
     requestedProjectId,
     pageTarget,
@@ -80,6 +85,7 @@ export function useWorkspaceRouteController(): WorkspaceRouteController {
     newChatActive,
     openApp,
     openSettings,
+    openConnection,
     openArchivedChats,
     openNewChat,
     navigateToThread,

@@ -2,37 +2,70 @@
 
 Updated: 2026-10-30
 
-This is the handoff checklist for the next implementation session. Resolve items in order unless a dependency requires otherwise.
+The implementation findings from the previous acceptance pass are resolved. The user can now begin live acceptance after running the documented services.
 
-## 1. Bootstrap URL is not local and is too large
+## Resolved implementation findings
 
-After `pnpm db:reset` and `pnpm server`, startup printed a URL beginning with `https://codex.vixinox.com/app/first-session?payload=...`. The local Relay address was embedded in the payload, but the App host was the production host. The payload also contained duplicated JSON JWK material, owner code, node identity, fingerprint, and grant, producing a long URL and oversized terminal QR.
+1. **Bootstrap URL and origin profile**
 
-Required fix: add validated `CODEX_APP_ORIGIN`, `CODEX_APP_RP_ID`, and `CODEX_REMOTE_RELAY_URL` profiles; use local defaults `http://localhost:5173` / `localhost` outside production; replace `payload=` with a five-minute single-use bootstrap reference; keep complete identity data inside the protected first-session exchange; make terminal and Web UI QR output encode only the short reference.
+   Startup now uses the validated `CODEX_APP_ORIGIN`, `CODEX_APP_RP_ID`, and `CODEX_REMOTE_RELAY_URL` profiles. Development defaults to `http://localhost:5173` / `localhost`; production requires an HTTPS origin and matching RP ID. The public URL is `/app/first-session?ref=...` and no longer carries Relay URL, owner code, grant, JWK, fingerprint, node identity, or other identity material.
 
-## 2. Reference-only routing needs a Relay seam
+2. **Reference-only Relay routing**
 
-The current Relay routes login candidates through `ownerCode → nodeId`. A URL containing only `ref` cannot find an Owner with the current protocol. Adding a client admission field without an Owner-to-Relay registration path is incomplete.
+   Owner registers the active reference after Relay readiness. Relay keeps an in-memory `reference → nodeId` mapping and removes it on replacement, cancellation, expiry, successful consumption, trust reset, disconnect, shutdown, and restart. The client uses `bootstrap_reference`; Owner performs the protected atomic validation and one-time consumption.
 
-Required fix: Owner registers the active bootstrap reference with Relay after listener readiness; Relay stores the reference-to-node mapping in memory only; Owner unregisters it on replacement, cancel, expiry, successful consumption, trust reset, shutdown, and restart; the client attaches with `bootstrap_reference`; Relay routes to the registered Owner; Owner atomically validates owner/node/trust epoch/origin/client key and returns the protected bootstrap response.
+3. **Terminal and Web UI QR size**
 
-Do not put `ownerCode`, grant, JWK JSON, or fingerprint into the public URL merely to avoid implementing this seam.
+   Terminal and Web UI QR output encode only the short reference. The Web UI display is capped at a compact size.
 
-## 3. Other known gaps
+4. **Ordinary management QR**
 
-- Windows named pipe same-user ACL is not implemented or verified.
-- Ordinary management QR has issue/status/cancel support, but its request-reference consumption path is not fully connected to a management operation.
-- `auth-domain` has SQLite coverage for recovery and device/session lifecycle; realistic database-backed WebAuthn assertion/registration coverage remains limited.
-- App suite has eight sidebar controller failures unrelated to the Owner remote-access files.
-- Browser and live Relay acceptance has not been run.
+   Management QR now carries only a short request reference. The authenticated `remote.loginQr.consume` operation is wired through the Owner service and App client, consumes the reference once, and does not create a session. It remains separate from first-session bootstrap.
 
-## Suggested first commands
+5. **App baseline**
+
+   The eight sidebar controller failures were fixed by preserving an explicit `projectId: null` for root-thread list requests. The full App test suite is green.
+
+6. **First-session deep-link redemption**
+
+   Opening a valid `/app/first-session?ref=...` URL now automatically redeems the one-time bootstrap reference and navigates to the workspace. The generic login page remains available as a fallback for local Passkey and remote credential-based login.
+
+7. **Windows IPC scope**
+
+   Custom same-user named-pipe ACL hardening is accepted as out of scope for the current single-user deployment model. The product keeps local-only IPC, a fixed command allowlist, strict request validation, and the Owner runtime boundary. Shared multi-user Windows hosts are outside the supported deployment boundary.
+
+8. **First-session loading state under React development mode**
+
+   The first-session route previously used a query-string ref to suppress duplicate effects. In React StrictMode, the first effect was cleaned up before its redemption completed and the replayed effect skipped the request, leaving the page permanently at `Connecting to Owner`. The route now relies on the reference-keyed single-flight redemption and lets the active effect publish the result. The App suite remains green after this change.
+
+9. **Promoted first-session response could race its close frame**
+
+   After creating the first remote device, the Owner promoted the transport and closed it immediately. E2EE response encryption and the close frame were independent asynchronous operations, so the browser could observe `Owner connection closed` before resolving `owner.firstSession.redeem`, even though the device and session had already been created. Remote encrypted sends are now serialized per connection and the promoted response is flushed before the close notification.
+
+10. **Trust reset used an invalid WebSocket close code**
+
+    Trust reset and Owner-code rotation used close code `1012`, which the active WebSocket API rejects as an invalid application close code. Both reconnect paths now use the valid normal close code `1000`; the application-level reason remains available in the encrypted/Relay close flow.
+
+## Remaining live acceptance
+
+The user should run:
+
+```text
+pnpm dev
+pnpm server
+pnpm relay
+```
+
+For a genuinely clean first-session run, reset the remote trust state when a previous device has already been paired; `pnpm db:reset` preserves `remote-trust.json` and does not by itself make first-session bootstrap claimable again. Then verify a clean bootstrap, direct first-session deep-link redemption without the generic login screen, QR scan/upload, first-session one-time consumption, paired resume, individual and all-device revoke, trust reset, Owner/Relay restart, reference expiry/replacement/cancel, and the local/remote WebAuthn origin separation.
+
+When diagnosing a live attempt, the Server logs Relay owner/client admission, E2EE handshake, first-session RPC, and rejection reason without printing references, tokens, or key material. The Relay logs attach acceptance/rejection and bootstrap reference registration. Restart `pnpm relay`, `pnpm server`, and `pnpm dev` after source or Vite environment changes so these diagnostics and browser-side `VITE_*` values are active.
+
+Automated checks to rerun before live acceptance:
 
 ```text
 pnpm --filter @codex-web/protocol test
 pnpm --filter @codex-web/relay test
 pnpm --filter @codex-web/server test
+pnpm --filter @codex-web/app test
 pnpm typecheck
 ```
-
-Then implement the reference registration protocol before changing the printed URL format.

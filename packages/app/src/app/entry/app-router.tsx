@@ -1,6 +1,8 @@
-import { Route, Routes } from 'react-router'
+import { Navigate, Route, Routes } from 'react-router'
 import {
   CandidateRoute,
+  ConnectionRoute,
+  FirstSessionRoute,
   LoginRoute,
   RootRoute,
   StartupRoute,
@@ -12,15 +14,16 @@ import {
   ServerErrorPage,
   ServiceUnavailablePage,
 } from '@/app/error-pages'
-import { OwnerManageRoute } from './route-components'
-
 export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<RootRoute />} />
       {startupPageEnabled ? <Route path="/startup" element={<StartupRoute />} /> : null}
       <Route path="/login" element={<LoginRoute />} />
-      <Route path="/owner/manage" element={<OwnerManageRoute />} />
+      <Route path="/app/first-session" element={<FirstSessionRoute />} />
+      <Route path="/app/settings/connection" element={<ConnectionRoute />} />
+      <Route path="/owner/manage" element={<Navigate to="/app/settings/connection" replace />} />
+      <Route path="/app/manage" element={<Navigate to="/app/settings/connection" replace />} />
       <Route path="/app/*" element={<CandidateRoute />} />
       <Route path="/403" element={<ForbiddenPage />} />
       <Route path="/500" element={<ServerErrorPage />} />

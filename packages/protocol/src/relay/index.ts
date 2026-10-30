@@ -37,6 +37,16 @@ export type RelayLoginClientAttachFrame = {
   ownerCode: string
 }
 
+export type RelayBootstrapReferenceClientAttachFrame = {
+  type: 'relay.attach'
+  version: typeof RELAY_PROTOCOL_VERSION
+  role: 'client'
+  admission: 'bootstrap_reference'
+  connectionId: string
+  /** Short-lived reference registered by the Owner for first-session routing. */
+  reference: string
+}
+
 export type RelayFirstSessionClientAttachFrame = {
   type: 'relay.attach'
   version: typeof RELAY_PROTOCOL_VERSION
@@ -47,12 +57,29 @@ export type RelayFirstSessionClientAttachFrame = {
   grant: string
 }
 
-
 export type RelayAttachFrame =
   | RelayOwnerAttachFrame
   | RelayPairedClientAttachFrame
   | RelayLoginClientAttachFrame
   | RelayFirstSessionClientAttachFrame
+  | RelayBootstrapReferenceClientAttachFrame
+
+export type RelayBootstrapReferenceRegisterFrame = {
+  type: 'relay.bootstrap.register'
+  version: typeof RELAY_PROTOCOL_VERSION
+  reference: string
+  expiresAt: number
+}
+
+export type RelayBootstrapReferenceUnregisterFrame = {
+  type: 'relay.bootstrap.unregister'
+  version: typeof RELAY_PROTOCOL_VERSION
+  reference?: string
+}
+
+export type RelayBootstrapReferenceFrame =
+  | RelayBootstrapReferenceRegisterFrame
+  | RelayBootstrapReferenceUnregisterFrame
 
 export type RelayReadyFrame = {
   type: 'relay.ready'
@@ -60,6 +87,10 @@ export type RelayReadyFrame = {
   nodeId: string
   role: ConnectionRole
   connectionId: string
+  /** Present for client attachments so a reference-only bootstrap can derive its session key. */
+  trustEpoch?: number
+  /** Owner public key needed by a reference-only client to derive the session context. */
+  ownerPublicKey?: string
 }
 
 type RelayClientConnectedBase = {
@@ -75,14 +106,31 @@ export type RelayPairedClientConnectedFrame = RelayClientConnectedBase & {
 }
 
 export type RelayLoginClientConnectedFrame = RelayClientConnectedBase & {
-  admission: 'login' | 'first_session'
+  admission: 'login'
   ownerCode: string
+  ownerPublicKey?: string
+  deviceId?: never
+}
+
+export type RelayFirstSessionClientConnectedFrame = RelayClientConnectedBase & {
+  admission: 'first_session'
+  ownerCode: string
+  ownerPublicKey?: string
+  deviceId?: never
+}
+
+export type RelayBootstrapReferenceClientConnectedFrame = RelayClientConnectedBase & {
+  admission: 'bootstrap_reference'
+  reference: string
+  ownerPublicKey: string
   deviceId?: never
 }
 
 export type RelayClientConnectedFrame =
   | RelayPairedClientConnectedFrame
   | RelayLoginClientConnectedFrame
+  | RelayFirstSessionClientConnectedFrame
+  | RelayBootstrapReferenceClientConnectedFrame
 
 export type RelayClientDisconnectedFrame = {
   type: 'relay.client.disconnected'
@@ -136,6 +184,7 @@ export type ConnectionCloseFrame = {
 
 export type RelayFrame =
   | RelayAttachFrame
+  | RelayBootstrapReferenceFrame
   | RelayReadyFrame
   | RelayClientConnectedFrame
   | RelayClientDisconnectedFrame
@@ -147,6 +196,8 @@ export type RelayFrame =
 
 const frameTypes = new Set<RelayFrame['type']>([
   'relay.attach',
+  'relay.bootstrap.register',
+  'relay.bootstrap.unregister',
   'relay.ready',
   'relay.client.connected',
   'relay.client.disconnected',
@@ -179,16 +230,39 @@ export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAtta
     frame.type === 'relay.attach' &&
     frame.version === RELAY_PROTOCOL_VERSION &&
     frame.role === 'client' &&
-    (frame.admission === 'login' || frame.admission === 'first_session')
+    (frame.admission === 'login' ||
+      frame.admission === 'first_session' ||
+      frame.admission === 'bootstrap_reference')
   )
-    return (
-      hasOnlyKeys(frame, frame.admission === 'login'
-        ? ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode']
-        : ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode', 'grant']) &&
-      isRouteIdentifier(frame.connectionId) &&
-      isOwnerCode(frame.ownerCode) &&
-      (frame.admission === 'login' || (typeof frame.grant === 'string' && frame.grant.length >= 32 && frame.grant.length <= 512))
-    )
+    return frame.admission === 'login'
+      ? hasOnlyKeys(frame, ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode']) &&
+          isRouteIdentifier(frame.connectionId) &&
+          isOwnerCode(frame.ownerCode)
+      : frame.admission === 'bootstrap_reference'
+        ? hasOnlyKeys(frame, [
+            'type',
+            'version',
+            'role',
+            'admission',
+            'connectionId',
+            'reference',
+          ]) &&
+          isRouteIdentifier(frame.connectionId) &&
+          isRouteIdentifier(frame.reference)
+        : hasOnlyKeys(frame, [
+            'type',
+            'version',
+            'role',
+            'admission',
+            'connectionId',
+            'ownerCode',
+            'grant',
+          ]) &&
+          isRouteIdentifier(frame.connectionId) &&
+          isOwnerCode(frame.ownerCode) &&
+          typeof frame.grant === 'string' &&
+          frame.grant.length >= 32 &&
+          frame.grant.length <= 512
   if (!frame || frame.type !== 'relay.attach' || frame.version !== RELAY_PROTOCOL_VERSION)
     return false
   if (
@@ -257,14 +331,98 @@ export function isRelayClientConnectedFrame(
 
   if ('admission' in frame && frame.admission === 'login')
     return (
-      hasOnlyKeys(frame, ['type', 'version', 'nodeId', 'connectionId', 'admission', 'ownerCode']) &&
-      isOwnerCode(frame.ownerCode)
+      (hasOnlyKeys(frame, [
+        'type',
+        'version',
+        'nodeId',
+        'connectionId',
+        'admission',
+        'ownerCode',
+      ]) ||
+        hasOnlyKeys(frame, [
+          'type',
+          'version',
+          'nodeId',
+          'connectionId',
+          'admission',
+          'ownerCode',
+          'ownerPublicKey',
+        ])) &&
+      isOwnerCode(frame.ownerCode) &&
+      (!('ownerPublicKey' in frame) ||
+        (typeof frame.ownerPublicKey === 'string' && frame.ownerPublicKey.length > 0))
+    )
+
+  if ('admission' in frame && frame.admission === 'first_session')
+    return (
+      (hasOnlyKeys(frame, [
+        'type',
+        'version',
+        'nodeId',
+        'connectionId',
+        'admission',
+        'ownerCode',
+      ]) ||
+        hasOnlyKeys(frame, [
+          'type',
+          'version',
+          'nodeId',
+          'connectionId',
+          'admission',
+          'ownerCode',
+          'ownerPublicKey',
+        ])) &&
+      isOwnerCode(frame.ownerCode) &&
+      (!('ownerPublicKey' in frame) ||
+        (typeof frame.ownerPublicKey === 'string' && frame.ownerPublicKey.length > 0))
+    )
+
+  if ('admission' in frame && frame.admission === 'bootstrap_reference')
+    return (
+      hasOnlyKeys(frame, [
+        'type',
+        'version',
+        'nodeId',
+        'connectionId',
+        'admission',
+        'reference',
+        'ownerPublicKey',
+      ]) &&
+      isRouteIdentifier(frame.reference) &&
+      typeof frame.ownerPublicKey === 'string' &&
+      frame.ownerPublicKey.length > 0
     )
 
   return (
     frame.admission === undefined &&
     hasOnlyKeys(frame, ['type', 'version', 'nodeId', 'connectionId', 'deviceId']) &&
     isRouteIdentifier(frame.deviceId)
+  )
+}
+
+export function isRelayBootstrapReferenceRegisterFrame(
+  frame: RelayFrame | null,
+): frame is RelayBootstrapReferenceRegisterFrame {
+  return Boolean(
+    frame &&
+    frame.type === 'relay.bootstrap.register' &&
+    frame.version === RELAY_PROTOCOL_VERSION &&
+    hasOnlyKeys(frame, ['type', 'version', 'reference', 'expiresAt']) &&
+    isRouteIdentifier(frame.reference) &&
+    Number.isSafeInteger(frame.expiresAt) &&
+    frame.expiresAt > Date.now(),
+  )
+}
+
+export function isRelayBootstrapReferenceUnregisterFrame(
+  frame: RelayFrame | null,
+): frame is RelayBootstrapReferenceUnregisterFrame {
+  return Boolean(
+    frame &&
+    frame.type === 'relay.bootstrap.unregister' &&
+    frame.version === RELAY_PROTOCOL_VERSION &&
+    hasOnlyKeys(frame, ['type', 'version', 'reference']) &&
+    (frame.reference === undefined || isRouteIdentifier(frame.reference)),
   )
 }
 

@@ -11,6 +11,7 @@ import {
   type ManagementQr,
   type OwnerManagementClient,
 } from './owner-management-model'
+import { buildFirstSessionUrl } from '@/lib/remote/relay-profile'
 
 export function OwnerManageScreen({ client }: { client: OwnerManagementClient }) {
   const [snapshot, setSnapshot] = useState(emptyOwnerManagementSnapshot)
@@ -72,7 +73,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between gap-4 border-b pb-3">
-              <span>Remote origin · codex.vixinox.com</span>
+              <span>Remote origin · configured deployment</span>
               <Badge variant={snapshot.remotePasskeyAvailable ? 'default' : 'secondary'}>
                 {snapshot.remotePasskeyAvailable ? 'Configured' : 'Not configured'}
               </Badge>
@@ -143,9 +144,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                 />
                 <div className="space-y-2 text-sm">
                   <p>Expires {new Date(managementQr.expiresAt).toLocaleTimeString()}</p>
-                  <code className="block max-w-sm break-all text-xs">
-                    {managementQr.capability}
-                  </code>
+                  <code className="block max-w-sm break-all text-xs">{managementQr.reference}</code>
                   <Button
                     variant="outline"
                     disabled={busy === 'management-qr-cancel'}
@@ -173,13 +172,10 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                         JSON.stringify({
                           version: 1,
                           type: 'management_request',
-                          capability: issued.capability,
-                          ownerId: issued.ownerId,
-                          nodeId: issued.nodeId,
-                          trustEpoch: issued.trustEpoch,
+                          reference: issued.reference,
                           expiresAt: issued.expiresAt,
                         }),
-                        { margin: 2, width: 280, errorCorrectionLevel: 'Q' },
+                        { margin: 2, width: 240, errorCorrectionLevel: 'Q' },
                       ),
                     )
                   })
@@ -258,17 +254,15 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                 />
                 <div className="space-y-2 text-sm">
                   <p>Expires {new Date(firstSession.expiresAt).toLocaleTimeString()}</p>
-                  <p>Owner code {firstSession.ownerCode}</p>
-                  <p className="break-all text-xs">
-                    Fingerprint {firstSession.ownerPublicKeyFingerprint}
-                  </p>
                   <code className="block max-w-sm break-all text-xs">
-                    {buildFirstSessionUrl(firstSession)}
+                    {buildFirstSessionUrl(firstSession.reference)}
                   </code>
                   <Button
                     variant="outline"
                     onClick={() =>
-                      void navigator.clipboard.writeText(buildFirstSessionUrl(firstSession))
+                      void navigator.clipboard.writeText(
+                        buildFirstSessionUrl(firstSession.reference),
+                      )
                     }
                   >
                     <Copy className="size-4" /> Copy URL
@@ -290,9 +284,10 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
                 onClick={() =>
                   void act('first-session', async () => {
                     const issued = await client.issueFirstSession()
-                    const image = await QRCode.toDataURL(JSON.stringify(issued.payload), {
+                    const url = buildFirstSessionUrl(issued.payload.reference)
+                    const image = await QRCode.toDataURL(url, {
                       margin: 2,
-                      width: 280,
+                      width: 240,
                       errorCorrectionLevel: 'Q',
                     })
                     setFirstSession(issued.payload)
@@ -363,18 +358,4 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
       </div>
     </main>
   )
-}
-
-function buildFirstSessionUrl(payload: FirstSessionPayload) {
-  const url = new URL('https://codex.vixinox.com/first-session')
-  url.searchParams.set('relayUrl', payload.relayUrl)
-  url.searchParams.set('ownerCode', payload.ownerCode)
-  url.searchParams.set('nodeId', payload.nodeId)
-  url.searchParams.set('trustEpoch', String(payload.trustEpoch))
-  url.searchParams.set('ownerPublicKey', payload.ownerPublicKey)
-  url.searchParams.set('fingerprint', payload.ownerPublicKeyFingerprint)
-  url.searchParams.set('ownerPublicKey', payload.ownerPublicKeyVerificationKey)
-  url.searchParams.set('grant', payload.grant)
-  url.searchParams.set('expiresAt', payload.expiresAt)
-  return url.toString()
 }

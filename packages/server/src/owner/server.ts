@@ -67,8 +67,8 @@ try {
   log.success(`Owner server listening at http://${config.host}:${config.port}`)
   const bootstrap = await app.ownerServices.startupBootstrapPayload()
   if (bootstrap) {
-    const payload = JSON.stringify(bootstrap.payload)
-    const url = `https://codex.vixinox.com/app/first-session?payload=${encodeURIComponent(payload)}`
+    const origin = bootstrap.appOrigin ?? config.appOrigin ?? 'http://localhost:5173'
+    const url = `${origin}/app/first-session?ref=${encodeURIComponent(bootstrap.reference)}`
     process.stdout.write(`First remote session (expires at ${bootstrap.expiresAt}):\n${url}\n`)
     if (process.stdout.isTTY) process.stdout.write(await renderTerminal(url, { small: true }))
   }

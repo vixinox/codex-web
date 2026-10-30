@@ -1,4 +1,5 @@
 import process from 'node:process'
+import { renderTerminal } from '@vincentkoc/qrcode-tui'
 import {
   cancel,
   confirm as clackConfirm,
@@ -260,6 +261,49 @@ function recoveryCodesFrom(value: unknown): string[] | null {
   return codes
 }
 
+type BootstrapIssueResult = {
+  reference: string
+  expiresAt: string
+  appOrigin?: string
+}
+
+function isBootstrapIssueResult(value: unknown): value is BootstrapIssueResult {
+  if (value === null || typeof value !== 'object') return false
+  return (
+    'reference' in value &&
+    typeof value.reference === 'string' &&
+    'expiresAt' in value &&
+    typeof value.expiresAt === 'string' &&
+    (!('appOrigin' in value) ||
+      value.appOrigin === undefined ||
+      typeof value.appOrigin === 'string')
+  )
+}
+
+function bootstrapUrl(result: BootstrapIssueResult) {
+  if (!/^[A-Za-z0-9_-]{16,256}$/u.test(result.reference))
+    throw new Error('Bootstrap reference is invalid.')
+  if (!result.appOrigin) throw new Error('Bootstrap app origin is unavailable.')
+  let origin: URL
+  try {
+    origin = new URL(result.appOrigin)
+  } catch {
+    throw new Error('Bootstrap app origin is invalid.')
+  }
+  if (!['http:', 'https:'].includes(origin.protocol))
+    throw new Error('Bootstrap app origin is invalid.')
+  const url = new URL('/app/first-session', origin)
+  url.searchParams.set('ref', result.reference)
+  return url.toString()
+}
+
+async function printBootstrapIssue(value: unknown, io: Pick<typeof process, 'stdout'>) {
+  if (!isBootstrapIssueResult(value)) throw new Error('Bootstrap issue response is invalid.')
+  const url = bootstrapUrl(value)
+  const qr = await renderTerminal(url, { small: true })
+  io.stdout.write(`First-session URL (expires at ${value.expiresAt}):\n${url}\n${qr}\n`)
+}
+
 export async function runOwnerCliCommand(
   command: OwnerCliCommand,
   services: {
@@ -321,16 +365,10 @@ export async function runOwnerCliCommand(
       )
       break
     case 'bootstrap-rotate':
-      if (
-        await confirm(
-          'Generate a new five-minute first-session URL? The previous one will stop working.',
-        )
+      await printBootstrapIssue(
+        await run('Generating first-session URL', () => services.localManagement.bootstrapRotate()),
+        io,
       )
-        print(
-          await run('Generating first-session URL', () =>
-            services.localManagement.bootstrapRotate(),
-          ),
-        )
       break
     case 'bootstrap-recover':
       if (await confirm('Revoke all remote sessions and issue a new first-session URL?'))

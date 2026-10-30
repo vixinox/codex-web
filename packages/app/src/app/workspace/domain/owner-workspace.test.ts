@@ -19,7 +19,7 @@ describe('ownerWorkspace list adapters', () => {
     ])
   })
 
-  it('maps paged Owner thread results and omits a null project scope', async () => {
+  it('maps paged Owner thread results and preserves an explicit root project scope', async () => {
     const request = vi.fn().mockResolvedValue({
       kind: 'ok',
       data: [{ id: 'thread-1', title: 'Chat', updatedAt: 123, projectId: null }],
@@ -33,6 +33,10 @@ describe('ownerWorkspace list adapters', () => {
     await expect(ownerWorkspace.threads.list(null, undefined, true)).resolves.toEqual([
       { id: 'thread-1', title: 'Chat', updatedAt: 123, projectId: null },
     ])
-    expect(request).toHaveBeenCalledWith('threads.list', { archived: true }, { signal: undefined })
+    expect(request).toHaveBeenCalledWith(
+      'threads.list',
+      { projectId: null, archived: true },
+      { signal: undefined },
+    )
   })
 })

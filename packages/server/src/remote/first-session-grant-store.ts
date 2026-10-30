@@ -4,11 +4,12 @@ export type FirstSessionGrantBinding = {
   ownerId: string
   nodeId: string
   trustEpoch: number
-  remoteOrigin: 'https://codex.vixinox.com'
+  remoteOrigin: string
 }
 
 type GrantEntry = FirstSessionGrantBinding & {
   grantHash: string
+  referenceHash: string
   expiresAt: number
   consumed: boolean
   clientPublicKey?: string
@@ -24,19 +25,27 @@ export class FirstSessionGrantStore {
 
   issue(binding: FirstSessionGrantBinding) {
     const grant = randomBytes(32).toString('base64url')
+    const reference = randomBytes(18).toString('base64url')
     const expiresAt = this.now() + 5 * 60_000
-    this.entry = { ...binding, grantHash: hash(grant), expiresAt, consumed: false }
-    return { grant, expiresAt }
+    this.entry = {
+      ...binding,
+      grantHash: hash(grant),
+      referenceHash: hash(reference),
+      expiresAt,
+      consumed: false,
+    }
+    return { grant, reference, expiresAt }
   }
 
   consume(
-    grant: string,
+    grantOrReference: string,
     binding: FirstSessionGrantBinding & { clientPublicKey: string },
   ) {
     const entry = this.entry
     if (!entry || entry.consumed || entry.expiresAt <= this.now()) return false
     if (
-      !equal(entry.grantHash, hash(grant)) ||
+      (!equal(entry.grantHash, hash(grantOrReference)) &&
+        !equal(entry.referenceHash, hash(grantOrReference))) ||
       entry.ownerId !== binding.ownerId ||
       entry.nodeId !== binding.nodeId ||
       entry.trustEpoch !== binding.trustEpoch ||

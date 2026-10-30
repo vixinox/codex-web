@@ -33,7 +33,7 @@
 - 官方远程客户端固定由 `https://codex.vixinox.com` 提供，Relay 固定使用 `relay.vixinox.com`；WebAuthn origin 为 `https://codex.vixinox.com`，RP ID 固定为 `codex.vixinox.com`。
 - 本机和远程分别注册独立 Passkey，各自绑定本机与官方远程 origin；本机 origin/RP ID 仍需固定。
 - 本机 WebAuthn 默认采用当前本机 Web UI origin `http://localhost:5173` / RP ID `localhost`；服务端按完整 origin 白名单校验，浏览器不得用 IP 别名访问本机登录页。
-- 首次远程 Passkey 登记由首次登录后的 `/owner/manage` 主动发起；在远程 Passkey 尚未存在时，当前首登 session 可以完成这一步，后续新增/删除需 Passkey step-up。官方远程 origin 创建独立 Passkey，不与本机 origin 混用。
+- 首次远程 Passkey 登记由首次登录后的 `/app/settings/connection` 主动发起；在远程 Passkey 尚未存在时，当前首登 session 可以完成这一步，后续新增/删除需 Passkey step-up。官方远程 origin 创建独立 Passkey，不与本机 origin 混用。
 - 保留恢复码作为远程紧急恢复凭据，但不在首次启动时生成。用户在管理页主动生成后，恢复码可启动恢复；Owner 单次消费后必须登记新 Passkey，随后才建立完整 session 并轮换其余恢复码。
 - 认证模型切换不做旧数据库迁移；允许删除并重建整个 `owner.sqlite`。这会同时清除其中的 Owner 账户/session、Project、Credential 和其他控制面数据，随后重新初始化 Owner。
 - 提供一次性 URL/QR 作为一条龙连接入口，尽量打包 Relay URL、Owner code、Owner 身份信息和登录请求所需信息，减少手动录入。
@@ -57,7 +57,7 @@ Owner 首次初始化只准备运行时和首登 grant，不登记本机 Passkey
 
 ### 首次登录后的安全设置
 
-1. 用户在 `/owner/manage` 主动选择登记远程 Passkey或生成 recovery code；首次远程 Passkey/recovery 设置可由首登 session 完成。
+1. 用户在 `/app/settings/connection` 主动选择登记远程 Passkey或生成 recovery code；首次远程 Passkey/recovery 设置可由首登 session 完成。
 2. 用户需要本机 Passkey 时，管理页签发短时 localhost enrollment ticket，并引导用户在 Owner 机器的 `http://localhost:5173` 完成独立 WebAuthn ceremony。
 3. 跳过设置不会阻止进入工作区，但管理页显示安全状态和丢失唯一 session 后必须回 Owner 机器的提示。
 
@@ -94,7 +94,7 @@ Owner 首次初始化只准备运行时和首登 grant，不登记本机 Passkey
 5. **登录 QR/请求：** 普通 QR 只用于发现与关联请求，不是 bearer 登录凭据；首次启动的 `first_session` QR 是唯一例外，可在五分钟内单次建立首个远程 session，但不登记凭据、不授权管理、不允许第二设备。每 Owner 同时最多一个待处理请求，有效 5 分钟、单次消费、可取消；重发撤销旧请求。认证成功不另加人工批准，但 Owner 管理页记录并展示安全事件。
 6. **Owner 身份发现与首次信任：** 固定客户端预设官方 Relay 地址，Owner code 只负责路由，回访使用已保存的 Owner 公钥。首次连接若无预存公钥，须通过 QR 或可信线下渠道核对完整指纹；不以 Passkey 代替 Owner 身份验证，不接受静默 TOFU。
 7. **设备登记与撤销：** 保留服务端逐设备记录、单设备撤销及撤销全部远程 session。设备列表展示名称、创建时间、最近活动和撤销操作，不展示凭据材料。trust reset 同时使所有远程 session、待处理登录请求和 QR 失效，并要求设备重新配对。
-8. **管理入口与 CLI：** `/owner/manage` 是首登后的安全设置和新设备请求签发入口。CLI 自适应工作：Owner 运行时通过本机 IPC 将命令交给 Owner；Owner 停止时，CLI 取得实例锁并启动短生命周期受管 runtime。IPC 仅允许同一 OS 用户，Windows 使用命名管道，macOS/Linux 使用 Unix domain socket；命令仍由 Owner application services 执行，不由 CLI 直接写库。CLI 初始启动只打印一次首登 URL/QR，不执行 Passkey ceremony，也不打印 recovery code；丢失/过期时通过显式命令重新生成。重置本机 Passkey 仅在 Owner 停止时由 CLI 执行，清除本机 origin 凭据并签发短时单次登记授权；Owner 重启后，`localhost` 页面仅允许登记新本机 Passkey。远程 Passkey、恢复码和其他数据不受影响。
+8. **管理入口与 CLI：** `/app/settings/connection` 是首登后的安全设置和新设备请求签发入口。CLI 自适应工作：Owner 运行时通过本机 IPC 将命令交给 Owner；Owner 停止时，CLI 取得实例锁并启动短生命周期受管 runtime。IPC 仅允许同一 OS 用户，Windows 使用命名管道，macOS/Linux 使用 Unix domain socket；命令仍由 Owner application services 执行，不由 CLI 直接写库。CLI 初始启动只打印一次首登 URL/QR，不执行 Passkey ceremony，也不打印 recovery code；丢失/过期时通过显式命令重新生成。重置本机 Passkey 仅在 Owner 停止时由 CLI 执行，清除本机 origin 凭据并签发短时单次登记授权；Owner 重启后，`localhost` 页面仅允许登记新本机 Passkey。远程 Passkey、恢复码和其他数据不受影响。
 9. **数据库切换：** 不为旧认证/Owner 数据库做兼容迁移；一次性删除并重建整个 `owner.sqlite`，重新初始化 Owner。清除 Project、Credential、Owner session 和其他控制面记录；Codex Home 中的 Thread transcript 不受影响。清理远程端 IndexedDB 旧 session，保留数据库外的 Owner node key/fingerprint，并让所有设备重新配对。
 
 ## Paseo 对照
@@ -106,7 +106,7 @@ Owner 首次初始化只准备运行时和首登 grant，不登记本机 Passkey
 ## 当前仓库能力与差距
 
 - 当前远程登录实现仍要求 Relay URL、Owner code、人工输入并核对指纹、邮箱/密码和 TOTP；实现快照见 [`current-behavior.md`](../current-behavior.md)。
-- 现有 `/owner/manage` 已通过当前运行的 Owner WebSocket 签发、取消、查询短期一次性 QR capability；兑换后建立远程会话并登记设备。Capability store 在进程内存，Owner 重启会使未消费的 grant 失效。
+- 现有 `/app/settings/connection` 已通过当前运行的 Owner WebSocket 签发、取消、查询短期一次性 QR capability；兑换后建立远程会话并登记设备。Capability store 在进程内存，Owner 重启会使未消费的 grant 失效。
 - 当前 QR 已包含 Relay URL、Owner code、Owner 节点信息、公钥指纹和一次性 capability；客户端会核验 QR 中公钥指纹与握手 Owner 公钥一致。
 - 当前 QR 登录走独立的一次性授权兑换，不是 Passkey 流程，也不要求邮箱/密码/TOTP。登录页当前支持摄像头/图片扫描。
 - 当前 CLI 在 Owner 运行时拒绝执行操作，Owner 停止时使用临时受管 runtime；因此 CLI 依托运行中 Owner 服务签发 QR 需要新增/重构管理通道。

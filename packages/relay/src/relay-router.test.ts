@@ -576,6 +576,110 @@ test('attaches login candidates by online owner code and applies normal node lim
   assert.deepEqual(offline, { ok: false, reason: 'unauthorized' })
 })
 
+test('routes bootstrap references through an owner registration and clears them on unregister', () => {
+  const router = createRouter()
+  const owner = fakeSocket()
+  const ownerResult = router.attach(ownerAttach(), owner.socket)
+  assert.equal(ownerResult.ok, true)
+  if (!ownerResult.ok) return
+
+  const reference = 'ref-bootstrap-1'
+  assert.equal(
+    router.registerBootstrapReference(ownerResult.session.sessionId, {
+      type: 'relay.bootstrap.register',
+      version: RELAY_PROTOCOL_VERSION,
+      reference,
+      expiresAt: Date.now() + 60_000,
+    }),
+    true,
+  )
+  assert.deepEqual(router.resolveBootstrapReference(reference), {
+    online: true,
+    nodeId: 'node-1',
+    trustEpoch: 0,
+  })
+
+  const client = fakeSocket()
+  const candidate = router.attach(
+    {
+      type: 'relay.attach',
+      version: RELAY_PROTOCOL_VERSION,
+      role: 'client',
+      admission: 'bootstrap_reference',
+      connectionId: 'bootstrap-1',
+      reference,
+    },
+    client.socket,
+  )
+  assert.equal(candidate.ok, true)
+  assert.deepEqual(JSON.parse(String(owner.messages.at(-1))), {
+    type: 'relay.client.connected',
+    version: RELAY_PROTOCOL_VERSION,
+    nodeId: 'node-1',
+    connectionId: 'bootstrap-1',
+    admission: 'bootstrap_reference',
+    reference,
+    ownerPublicKey: 'owner-public-key',
+  })
+
+  assert.equal(router.unregisterBootstrapReference(ownerResult.session.sessionId, reference), true)
+  assert.deepEqual(router.resolveBootstrapReference(reference), { online: false })
+  const rejected = router.attach(
+    {
+      type: 'relay.attach',
+      version: RELAY_PROTOCOL_VERSION,
+      role: 'client',
+      admission: 'bootstrap_reference',
+      connectionId: 'bootstrap-2',
+      reference,
+    },
+    fakeSocket().socket,
+  )
+  assert.deepEqual(rejected, { ok: false, reason: 'unauthorized' })
+})
+
+test('replaces and expires bootstrap references, and owner detach removes them', async () => {
+  const router = createRouter()
+  const owner = fakeSocket()
+  const ownerResult = router.attach(ownerAttach(), owner.socket)
+  assert.equal(ownerResult.ok, true)
+  if (!ownerResult.ok) return
+
+  assert.equal(
+    router.registerBootstrapReference(ownerResult.session.sessionId, {
+      type: 'relay.bootstrap.register',
+      version: RELAY_PROTOCOL_VERSION,
+      reference: 'ref-old',
+      expiresAt: Date.now() + 60_000,
+    }),
+    true,
+  )
+  assert.equal(
+    router.registerBootstrapReference(ownerResult.session.sessionId, {
+      type: 'relay.bootstrap.register',
+      version: RELAY_PROTOCOL_VERSION,
+      reference: 'ref-new',
+      expiresAt: Date.now() + 60_000,
+    }),
+    true,
+  )
+  assert.deepEqual(router.resolveBootstrapReference('ref-old'), { online: false })
+  assert.equal(
+    router.registerBootstrapReference(ownerResult.session.sessionId, {
+      type: 'relay.bootstrap.register',
+      version: RELAY_PROTOCOL_VERSION,
+      reference: 'ref-expiring',
+      expiresAt: Date.now() + 2,
+    }),
+    true,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.deepEqual(router.resolveBootstrapReference('ref-expiring'), { online: false })
+
+  router.detach(ownerResult.session.sessionId)
+  assert.deepEqual(router.resolveBootstrapReference('ref-new'), { online: false })
+})
+
 test('allows replacing a routing slot at the global connection limit', () => {
   const router = new RelayRouter({ ownerToken, maxConnections: 2 })
   const owner = fakeSocket()

@@ -30,6 +30,17 @@ export function decodeThreadPageTarget(pathname: string, search = '') {
   return null
 }
 
+export function isKnownAppRoute(pathname: string) {
+  if (pathname === '/app' || pathname === '/app/') return true
+  if (
+    pathname === '/app/settings' ||
+    pathname === '/app/settings/archived-chats' ||
+    pathname === '/app/settings/connection'
+  )
+    return true
+  return decodeThreadSelection(pathname) !== null
+}
+
 export function appPathForThread(projectId: string | null, threadId: string) {
   return projectId
     ? `/app/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}`

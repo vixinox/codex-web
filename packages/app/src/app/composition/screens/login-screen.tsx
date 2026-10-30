@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useNavigate } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 import { KeyRound, Loader2, QrCode, Laptop, Radio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -33,6 +33,7 @@ import {
 
 export function LoginScreen() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [mode, setMode] = React.useState<'local' | 'remote'>('local')
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -43,6 +44,15 @@ export function LoginScreen() {
   const [availability, setAvailability] = React.useState<OwnerCodeAvailability>('idle')
   const [target, setTarget] = React.useState<{ nodeId: string; trustEpoch: number } | null>(null)
   const [fingerprint, setFingerprint] = React.useState('')
+
+  React.useEffect(() => {
+    const reference = new URLSearchParams(location.search).get('ref')
+    if (!reference || !/^[A-Za-z0-9_-]{16,256}$/u.test(reference)) return
+    const url = new URL('/app/first-session', window.location.origin)
+    url.searchParams.set('ref', reference)
+    setManualPayload(url.toString())
+    setMode('remote')
+  }, [location.search])
   const [verifiedFingerprint, setVerifiedFingerprint] = React.useState<string | null>(null)
   const [presence, setPresence] = React.useState<{
     remotePasskey: boolean
@@ -167,8 +177,8 @@ export function LoginScreen() {
     const result = await redeemFirstSession(payload)
     saveRecentOwnerTarget({
       relayUrl: payload.relayUrl,
-      ownerCode: payload.ownerCode,
-      nodeId: payload.nodeId,
+      ownerCode: result.ownerCode,
+      nodeId: result.nodeId,
     })
     await navigate('/app', {
       replace: true,
@@ -356,6 +366,26 @@ export function LoginScreen() {
                             : ''}
                   </p>
                 </Field>
+                <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+                  <Button variant="outline" disabled={busy} onClick={() => setShowScanner(true)}>
+                    <QrCode className="size-4" /> First-session QR
+                  </Button>
+                  <Input
+                    value={manualPayload}
+                    onChange={(event) => setManualPayload(event.target.value)}
+                    placeholder="Paste first-session URL"
+                    aria-label="First-session URL"
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={busy || !manualPayload}
+                    onClick={() =>
+                      void run(async () => finishRemote(parseLoginQrPayload(manualPayload)))
+                    }
+                  >
+                    Connect
+                  </Button>
+                </div>
                 {target ? (
                   <Field>
                     <FieldLabel htmlFor="fingerprint">Owner fingerprint</FieldLabel>
@@ -392,24 +422,6 @@ export function LoginScreen() {
                 ) : null}
                 {verifiedFingerprint ? (
                   <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-                    <Button variant="outline" disabled={busy} onClick={() => setShowScanner(true)}>
-                      <QrCode className="size-4" /> First-session QR
-                    </Button>
-                    <Input
-                      value={manualPayload}
-                      onChange={(event) => setManualPayload(event.target.value)}
-                      placeholder="Paste first-session URL"
-                      aria-label="First-session URL"
-                    />
-                    <Button
-                      variant="outline"
-                      disabled={busy || !manualPayload}
-                      onClick={() =>
-                        void run(async () => finishRemote(parseLoginQrPayload(manualPayload)))
-                      }
-                    >
-                      Connect
-                    </Button>
                     {presence?.remotePasskey ? (
                       <Button disabled={busy} onClick={() => void run(signInPasskey)}>
                         <KeyRound className="size-4" /> Passkey

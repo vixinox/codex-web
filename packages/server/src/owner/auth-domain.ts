@@ -22,7 +22,12 @@ import {
 } from '../db/schema.js'
 import type { Database } from '../database.js'
 
-export const WEBAUTHN_PROFILES = {
+export type WebAuthnProfiles = {
+  local: { origin: string; rpId: string }
+  remote: { origin: string; rpId: string }
+}
+
+export const WEBAUTHN_PROFILES: WebAuthnProfiles = {
   local: { origin: 'http://localhost:5173', rpId: 'localhost' },
   remote: { origin: 'https://codex.vixinox.com', rpId: 'codex.vixinox.com' },
 } as const
@@ -36,7 +41,7 @@ type Challenge = {
   challenge: string
   ownerId: string
   purpose: Purpose
-  profile: keyof typeof WEBAUTHN_PROFILES
+  profile: keyof WebAuthnProfiles
   connectionId: string
   clientPublicKey: string
   requestId: string
@@ -52,19 +57,21 @@ export function createOwnerAuthDomain(
   ownerId: string,
   now = () => Date.now(),
   trustEpoch: () => Promise<number> = async () => 0,
+  profileOverrides: WebAuthnProfiles = WEBAUTHN_PROFILES,
 ) {
+  const profiles = profileOverrides
   const challenges = new Map<string, Challenge>()
   let recoveryReservation: { challengeId: string; codeId: string } | undefined
 
   async function optionsFor(
     purpose: Purpose,
-    profileName: keyof typeof WEBAUTHN_PROFILES,
+    profileName: keyof WebAuthnProfiles,
     binding: Omit<
       Challenge,
       'challenge' | 'ownerId' | 'purpose' | 'profile' | 'expiresAt' | 'failures'
     >,
   ) {
-    const profile = WEBAUTHN_PROFILES[profileName]
+    const profile = profiles[profileName]
     const challenge = randomBytes(32).toString('base64url')
     const expiresAt = now() + CHALLENGE_TTL_MS
     const entry: Challenge = {
@@ -132,7 +139,7 @@ export function createOwnerAuthDomain(
   }
 
   async function registerOptions(
-    profile: keyof typeof WEBAUTHN_PROFILES,
+    profile: keyof WebAuthnProfiles,
     binding: Omit<
       Challenge,
       'challenge' | 'ownerId' | 'purpose' | 'profile' | 'expiresAt' | 'failures'
@@ -148,7 +155,7 @@ export function createOwnerAuthDomain(
   }
 
   async function authenticationOptions(
-    profile: keyof typeof WEBAUTHN_PROFILES,
+    profile: keyof WebAuthnProfiles,
     binding: Omit<
       Challenge,
       'challenge' | 'ownerId' | 'purpose' | 'profile' | 'expiresAt' | 'failures'
@@ -160,7 +167,7 @@ export function createOwnerAuthDomain(
       .where(
         and(
           eq(passkeyCredential.ownerId, ownerId),
-          eq(passkeyCredential.origin, WEBAUTHN_PROFILES[profile].origin),
+          eq(passkeyCredential.origin, profiles[profile].origin),
         ),
       )
       .limit(1)
@@ -182,7 +189,7 @@ export function createOwnerAuthDomain(
         throw new AuthDomainError('ENROLLMENT_TICKET_REQUIRED')
       await consumeLocalEnrollmentTicket(binding.ticket, challenge.enrollmentTicketId)
     }
-    const profile = WEBAUTHN_PROFILES[challenge.profile]
+    const profile = profiles[challenge.profile]
     try {
       const result = await verifyRegistrationResponse({
         response,
@@ -228,7 +235,7 @@ export function createOwnerAuthDomain(
     deviceId?: string,
   ) {
     const challenge = consumeChallenge(challengeId, 'authenticate', binding)
-    const profile = WEBAUTHN_PROFILES[challenge.profile]
+    const profile = profiles[challenge.profile]
     try {
       const [credential] = await db
         .select()
@@ -623,13 +630,13 @@ export function createOwnerAuthDomain(
       id: randomUUID(),
       ownerId,
       tokenHash: hash(ticket),
-      rpId: WEBAUTHN_PROFILES.local.rpId,
+      rpId: profiles.local.rpId,
       purpose: 'local-passkey-registration',
       expiresAt: new Date(now() + CHALLENGE_TTL_MS),
     })
     return {
       ticket,
-      origin: WEBAUTHN_PROFILES.local.origin,
+      origin: profiles.local.origin,
       expiresAt: new Date(now() + CHALLENGE_TTL_MS).toISOString(),
     }
   }
@@ -642,7 +649,7 @@ export function createOwnerAuthDomain(
         and(
           eq(localEnrollmentTicket.ownerId, ownerId),
           eq(localEnrollmentTicket.tokenHash, hash(ticket)),
-          eq(localEnrollmentTicket.rpId, WEBAUTHN_PROFILES.local.rpId),
+          eq(localEnrollmentTicket.rpId, profiles.local.rpId),
           eq(localEnrollmentTicket.purpose, 'local-passkey-registration'),
           isNull(localEnrollmentTicket.consumedAt),
         ),
@@ -663,7 +670,7 @@ export function createOwnerAuthDomain(
           eq(localEnrollmentTicket.ownerId, ownerId),
           eq(localEnrollmentTicket.tokenHash, hash(ticket)),
           eq(localEnrollmentTicket.id, expectedId),
-          eq(localEnrollmentTicket.rpId, WEBAUTHN_PROFILES.local.rpId),
+          eq(localEnrollmentTicket.rpId, profiles.local.rpId),
           eq(localEnrollmentTicket.purpose, 'local-passkey-registration'),
           isNull(localEnrollmentTicket.consumedAt),
         ),
@@ -729,14 +736,14 @@ export function createOwnerAuthDomain(
     revokeAllDevices,
     issueLocalEnrollmentTicket,
     consumeLocalEnrollmentTicket,
-    async hasPasskey(profile: keyof typeof WEBAUTHN_PROFILES) {
+    async hasPasskey(profile: keyof WebAuthnProfiles) {
       const [record] = await db
         .select({ id: passkeyCredential.id })
         .from(passkeyCredential)
         .where(
           and(
             eq(passkeyCredential.ownerId, ownerId),
-            eq(passkeyCredential.origin, WEBAUTHN_PROFILES[profile].origin),
+            eq(passkeyCredential.origin, profiles[profile].origin),
           ),
         )
         .limit(1)

@@ -287,6 +287,42 @@ test('bootstrap recovery requires explicit confirmation', async () => {
   assert.equal(confirmed, true)
 })
 
+test('bootstrap rotation prints the URL and QR without confirmation', async () => {
+  const stdin = Object.assign(new PassThrough(), { isTTY: true })
+  const stdout = Object.assign(new PassThrough(), { isTTY: true })
+  let output = ''
+  stdout.on('data', (chunk) => (output += chunk.toString()))
+  let rotateCalled = false
+
+  await runOwnerCliCommand(
+    { kind: 'bootstrap-rotate' },
+    {
+      localManagement: {
+        bootstrapRotate: async () => {
+          rotateCalled = true
+          return {
+            reference: 'reference-for-cli-test',
+            expiresAt: '2026-10-30T13:08:00.000Z',
+            appOrigin: 'http://localhost:5173',
+          }
+        },
+      },
+    } as never,
+    { stdin, stdout, stderr: stdout } as never,
+    {
+      confirm: async () => {
+        throw new Error('bootstrap rotation should not ask for confirmation')
+      },
+    },
+  )
+
+  assert.equal(rotateCalled, true)
+  assert.match(output, /http:\/\/localhost:5173\/app\/first-session\?ref=reference-for-cli-test/u)
+  assert.match(output, /2026-10-30T13:08:00\.000Z/u)
+  assert.equal(output.includes('Generate a new five-minute first-session URL'), false)
+  assert.equal(output.includes('Result'), false)
+})
+
 test('refuses destructive bootstrap recovery from a non-interactive terminal', async () => {
   const stdin = Object.assign(new PassThrough(), { isTTY: false })
   const output = new PassThrough()

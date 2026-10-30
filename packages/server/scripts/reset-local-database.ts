@@ -12,8 +12,11 @@ const lock = await acquireOwnerInstanceLock(config.dataRoot)
 try {
   const terminal = createInterface({ input: stdin, output: stdout })
   try {
-    const confirmation = await terminal.question('Type RESET OWNER DATABASE to permanently reset Owner control-plane data: ')
-    if (confirmation !== 'RESET OWNER DATABASE') throw new Error('Confirmation did not match; no data was changed.')
+    const confirmation = await terminal.question(
+      'Press Enter to permanently reset Owner control-plane data (or Ctrl+C to cancel): ',
+    )
+    if (confirmation !== '')
+      throw new Error('Please press Enter without typing anything; no data was changed.')
   } finally {
     terminal.close()
   }

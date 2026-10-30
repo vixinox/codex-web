@@ -7,6 +7,8 @@ import {
   encodeFrame,
   isHandshakeOkFrame,
   isRelayAttachFrame,
+  isRelayBootstrapReferenceRegisterFrame,
+  isRelayBootstrapReferenceUnregisterFrame,
   isRelayClientConnectedFrame,
   isRelayForwardFrame,
   parseFrame,
@@ -102,6 +104,40 @@ test('accepts login candidate attachments by owner code without an owner node or
   )
 })
 
+test('accepts reference-only bootstrap attachments and registration controls', () => {
+  const attach = {
+    type: 'relay.attach' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    role: 'client' as const,
+    admission: 'bootstrap_reference' as const,
+    connectionId: 'bootstrap-1',
+    reference: 'ref-123456789',
+  }
+  assert.deepEqual(parseFrame(encodeFrame(attach)), attach)
+  assert.equal(isRelayAttachFrame(parseFrame(encodeFrame(attach))), true)
+  assert.equal(isRelayAttachFrame(parseFrame(encodeFrame({ ...attach, reference: '' }))), false)
+
+  const register = {
+    type: 'relay.bootstrap.register' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    reference: 'ref-123456789',
+    expiresAt: Date.now() + 60_000,
+  }
+  const unregister = {
+    type: 'relay.bootstrap.unregister' as const,
+    version: RELAY_PROTOCOL_VERSION,
+    reference: register.reference,
+  }
+  assert.equal(isRelayBootstrapReferenceRegisterFrame(parseFrame(encodeFrame(register))), true)
+  assert.equal(isRelayBootstrapReferenceUnregisterFrame(parseFrame(encodeFrame(unregister))), true)
+  assert.equal(
+    isRelayBootstrapReferenceRegisterFrame(
+      parseFrame(encodeFrame({ ...register, expiresAt: Date.now() - 1 })),
+    ),
+    false,
+  )
+})
+
 test('validates paired and login candidate relay client-connected notifications', () => {
   const paired = {
     type: 'relay.client.connected' as const,
@@ -139,6 +175,22 @@ test('validates paired and login candidate relay client-connected notifications'
       ),
     ),
     false,
+  )
+  assert.equal(
+    isRelayClientConnectedFrame(
+      parseFrame(
+        encodeFrame({
+          type: 'relay.client.connected',
+          version: RELAY_PROTOCOL_VERSION,
+          nodeId: 'node-1',
+          connectionId: 'bootstrap-1',
+          admission: 'bootstrap_reference',
+          reference: 'ref-123456789',
+          ownerPublicKey: '{"kty":"EC"}',
+        }),
+      ),
+    ),
+    true,
   )
 })
 

@@ -4,16 +4,20 @@ import { Button } from '@/components/ui/button'
 
 export function SettingsSidebar({
   archivedActive,
+  connectionActive,
   onBack,
   onGeneral,
+  onConnection,
   onArchived,
   archivedDisabled = false,
   archivedDisabledMessage = 'Archived chats are unavailable.',
   showArchived = true,
 }: {
   archivedActive: boolean
+  connectionActive: boolean
   onBack: () => void
   onGeneral: () => void
+  onConnection: () => void
   onArchived: () => void
   archivedDisabled?: boolean
   archivedDisabledMessage?: string
@@ -41,9 +45,17 @@ export function SettingsSidebar({
             variant="ghost"
             className="w-full justify-start font-normal"
             onClick={onGeneral}
-            aria-current={!archivedActive ? 'page' : undefined}
+            aria-current={!archivedActive && !connectionActive ? 'page' : undefined}
           >
             General
+          </Button>
+          <Button
+            variant="ghost"
+            className="w-full justify-start font-normal"
+            onClick={onConnection}
+            aria-current={connectionActive ? 'page' : undefined}
+          >
+            Connection
           </Button>
         </div>
         {showArchived ? (

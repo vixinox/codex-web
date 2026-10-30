@@ -1,45 +1,28 @@
 import { describe, expect, it } from 'vitest'
 import { parseLoginQrPayload } from './login-qr-scanner'
 
-const validPayload = {
-  version: 1,
-  relayUrl: 'wss://relay.example.test/ws',
-  ownerCode: '123456789',
-  nodeId: 'owner-node',
-  trustEpoch: 2,
-  ownerPublicKey: '{"kty":"EC"}',
-  ownerPublicKeyVerificationKey: '{"kty":"EC"}',
-  ownerPublicKeyFingerprint: 'abcdefghijklmnop',
-  type: 'first_session',
-  grant: 'x'.repeat(32),
-  expiresAt: '2026-10-30T12:05:00.000Z',
-}
+const validReference = 'bootstrap-reference-1234'
+const validUrl = `${window.location.origin}/app/first-session?ref=${validReference}`
 
-describe('login QR payload', () => {
-  it('parses the supported first-session payload', () => {
-    expect(parseLoginQrPayload(JSON.stringify(validPayload))).toEqual(validPayload)
+describe('login QR reference', () => {
+  it('parses a short first-session reference URL', () => {
+    expect(parseLoginQrPayload(validUrl)).toMatchObject({
+      version: 1,
+      type: 'first_session',
+      reference: validReference,
+      relayUrl: expect.stringMatching(/^ws:\/\//u),
+    })
   })
 
   it.each([
-    { ...validPayload, relayUrl: 'javascript:alert(1)' },
-    { ...validPayload, ownerCode: 'not-a-code' },
-    { ...validPayload, ownerPublicKeyFingerprint: 'too-short' },
-    { ...validPayload, extra: 'unexpected' },
-    { ...validPayload, grant: 'short' },
-  ])('rejects invalid or unexpected QR fields', (payload) => {
-    expect(() => parseLoginQrPayload(JSON.stringify(payload))).toThrow()
+    'https://codex.vixinox.com/app/first-session?payload=%7B%22grant%22%3A%22secret%22%7D',
+    'http://localhost/app/first-session?ref=short',
+    'http://localhost/app/first-session?ref=bootstrap-reference-1234&grant=secret',
+    'http://localhost:5173/first-session?ref=bootstrap-reference-1234',
+    'https://other.example/app/first-session?ref=bootstrap-reference-1234',
+    'not a URL',
+    '',
+  ])('rejects payload-bearing or malformed QR values (%s)', (raw) => {
+    expect(() => parseLoginQrPayload(raw)).toThrow()
   })
-
-  it('parses the official first-session URL', () => {
-    const url = new URL('https://codex.vixinox.com/app/first-session')
-    url.searchParams.set('payload', JSON.stringify(validPayload))
-    expect(parseLoginQrPayload(url.toString())).toEqual(validPayload)
-  })
-
-  it.each(['', 'not an image payload', '{broken', JSON.stringify({ type: 'other' })])(
-    'rejects a failed decode or unsupported QR value (%s)',
-    (raw) => {
-      expect(() => parseLoginQrPayload(raw)).toThrow()
-    },
-  )
 })

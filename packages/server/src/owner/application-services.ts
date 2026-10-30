@@ -10,8 +10,9 @@ import type { OwnerConnector } from '../remote/connector.js'
 import { FirstSessionGrantStore } from '../remote/first-session-grant-store.js'
 import { OwnerMethodError } from './session-runtime.js'
 import type { OwnerContext, OwnerMethodContext, OwnerTransport } from './session-runtime.js'
-import { createOwnerAuthDomain, WEBAUTHN_PROFILES } from './auth-domain.js'
+import { createOwnerAuthDomain, WEBAUTHN_PROFILES, type WebAuthnProfiles } from './auth-domain.js'
 import type { Database } from '../database.js'
+import { log } from '../logger.js'
 
 const MAX_INITIAL_MESSAGE_LENGTH = 256_000
 const SUBSCRIPTION_TTL_MS = 10 * 60 * 1000
@@ -91,6 +92,8 @@ export type OwnerApplicationServiceOptions = {
   trustedOrigins: readonly string[]
   requireDangerousAccessConfirmation?: boolean
   remoteRelayUrl?: string
+  appOrigin?: string
+  rpId?: string
 }
 
 export type OwnerApplicationServices = ReturnType<typeof createOwnerApplicationServices>
@@ -107,9 +110,18 @@ export function createOwnerApplicationServices(
           () => Date.now(),
           async () =>
             dependencies.remote ? (await dependencies.remote.trust.identity()).trustEpoch : 0,
+          {
+            local: WEBAUTHN_PROFILES.local,
+            remote: {
+              origin: options.appOrigin ?? WEBAUTHN_PROFILES.remote.origin,
+              rpId: options.rpId ?? WEBAUTHN_PROFILES.remote.rpId,
+            },
+          } satisfies WebAuthnProfiles,
         )
       : undefined
   const firstSessionGrants = new FirstSessionGrantStore()
+  let activeBootstrapReference: string | undefined
+  let bootstrapReferenceTimer: ReturnType<typeof setTimeout> | undefined
   let startupBootstrap: Awaited<ReturnType<typeof issueBootstrapPayload>> | undefined
   const pendingRecoveryLogins = new Map<
     string,
@@ -121,29 +133,32 @@ export function createOwnerApplicationServices(
     const identity = await dependencies.remote.trust.identity()
     if (!allowClaimed && (await dependencies.remote.listDevices()).length > 0)
       throw new OwnerMethodError('BOOTSTRAP_ALREADY_CLAIMED')
+    if (activeBootstrapReference) {
+      await dependencies.remote.unregisterBootstrapReference(activeBootstrapReference)
+      activeBootstrapReference = undefined
+    }
+    if (bootstrapReferenceTimer) clearTimeout(bootstrapReferenceTimer)
     const issued = firstSessionGrants.issue({
       ownerId: dependencies.ownerId,
       nodeId: identity.nodeId,
       trustEpoch: identity.trustEpoch,
-      remoteOrigin: 'https://codex.vixinox.com',
+      remoteOrigin: options.appOrigin ?? WEBAUTHN_PROFILES.remote.origin,
     })
-    return {
-      payload: {
-        version: 1,
-        type: 'first_session',
-        relayUrl: options.remoteRelayUrl,
-        ownerCode: identity.ownerCode,
-        nodeId: identity.nodeId,
-        trustEpoch: identity.trustEpoch,
-        ownerPublicKey: identity.ownerPublicKey,
-        ownerPublicKeyFingerprint: createHash('sha256')
-          .update(identity.ownerPublicKey)
-          .digest('base64url')
-          .slice(0, 16),
-        ownerPublicKeyVerificationKey: identity.ownerPublicKey,
-        grant: issued.grant,
+    activeBootstrapReference = issued.reference
+    await dependencies.remote.registerBootstrapReference(issued.reference, issued.expiresAt)
+    bootstrapReferenceTimer = setTimeout(
+      () => {
+        if (activeBootstrapReference !== issued.reference) return
+        firstSessionGrants.invalidate()
+        activeBootstrapReference = undefined
+        void dependencies.remote?.unregisterBootstrapReference(issued.reference)
       },
+      Math.max(0, issued.expiresAt - Date.now()),
+    )
+    return {
+      reference: issued.reference,
       expiresAt: new Date(issued.expiresAt).toISOString(),
+      appOrigin: options.appOrigin,
     }
   }
   const threadDomain = createThreadDomain({
@@ -179,6 +194,9 @@ export function createOwnerApplicationServices(
 
     async passkeyRegisterOptions(context: OwnerMethodContext, _input: Record<string, unknown>) {
       const profile = webauthnProfile(context.transport)
+      log.info(
+        `Owner Passkey registration options requested (${profile ?? 'unavailable'}, ${context.transport.kind})`,
+      )
       if (!authDomain || !profile) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
       if (profile === 'remote') requireOwner(context)
       else if (context.owner) requireOwner(context)
@@ -198,12 +216,17 @@ export function createOwnerApplicationServices(
       )
         throw new OwnerMethodError('INVALID_PARAMS')
       try {
-        return await authDomain.register(input.challengeId, input.response as never, {
+        const result = await authDomain.register(input.challengeId, input.response as never, {
           ...authBinding(context),
           profile,
           ...(typeof input.ticket === 'string' ? { ticket: input.ticket } : {}),
         })
+        log.info(`Owner Passkey registration succeeded (${profile})`)
+        return result
       } catch (error) {
+        log.warn(
+          `Owner Passkey registration failed (${profile}, ${error instanceof Error ? error.name : 'unknown'})`,
+        )
         throw new OwnerMethodError(error instanceof Error ? error.message : 'PASSKEY_INVALID')
       }
     },
@@ -354,26 +377,47 @@ export function createOwnerApplicationServices(
         !context.transport.clientPublicKey
       )
         throw new OwnerMethodError('AUTH_FAILURE')
-      if (typeof input.grant !== 'string' || !dependencies.remote || !authDomain)
+      const reference =
+        context.transport.bootstrapReference ??
+        (typeof input.reference === 'string'
+          ? input.reference
+          : typeof input.grant === 'string'
+            ? input.grant
+            : undefined)
+      if (!reference || !dependencies.remote || !authDomain)
         throw new OwnerMethodError('INVALID_PARAMS')
       const identity = await dependencies.remote.trust.identity()
       const ownerId = dependencies.ownerId!
       const existingDevices = await dependencies.remote.listDevices()
-      if (existingDevices.length !== 0) throw new OwnerMethodError('FIRST_SESSION_ALREADY_USED')
+      if (existingDevices.length !== 0) {
+        log.warn(
+          `First-session redemption rejected: ${existingDevices.length} remote device(s) already exist`,
+        )
+        throw new OwnerMethodError('FIRST_SESSION_ALREADY_USED')
+      }
       if (
-        !firstSessionGrants.consume(input.grant, {
+        !firstSessionGrants.consume(reference, {
           ownerId,
           nodeId: identity.nodeId,
           trustEpoch: identity.trustEpoch,
-          remoteOrigin: 'https://codex.vixinox.com',
+          remoteOrigin: options.appOrigin ?? WEBAUTHN_PROFILES.remote.origin,
           clientPublicKey: context.transport.clientPublicKey,
         })
-      )
+      ) {
+        log.warn('First-session redemption rejected: grant is invalid or expired')
         throw new OwnerMethodError('FIRST_SESSION_GRANT_INVALID')
+      }
+      await dependencies.remote.unregisterBootstrapReference(reference)
+      activeBootstrapReference = undefined
+      if (bootstrapReferenceTimer) clearTimeout(bootstrapReferenceTimer)
+      bootstrapReferenceTimer = undefined
       const trusted = await dependencies.remote.trust.trustPeerWithStatus(
         context.transport.clientPublicKey,
       )
-      if (!trusted.created) throw new OwnerMethodError('FIRST_SESSION_ALREADY_USED')
+      if (!trusted.created) {
+        log.warn('First-session redemption rejected: client key was already trusted')
+        throw new OwnerMethodError('FIRST_SESSION_ALREADY_USED')
+      }
       await authDomain.registerDevice(trusted.deviceId, context.transport.clientPublicKey)
       const session = await authDomain.createSession(trusted.deviceId)
       const clientToken = await dependencies.remote.createPairedClientToken(trusted.deviceId)
@@ -385,6 +429,7 @@ export function createOwnerApplicationServices(
         scope: 'bootstrap',
       })
       context.transport.promote?.(trusted.deviceId, clientToken)
+      log.info('First-session redemption succeeded')
       return {
         verified: true,
         ownerId,
@@ -392,6 +437,7 @@ export function createOwnerApplicationServices(
         expiresAt: session.expiresAt,
         deviceId: trusted.deviceId,
         clientToken,
+        ownerCode: currentIdentity.ownerCode,
         trustEpoch: currentIdentity.trustEpoch,
         ownerNodeId: currentIdentity.nodeId,
         bootstrap: true,
@@ -425,6 +471,10 @@ export function createOwnerApplicationServices(
 
     async bootstrapGrantInvalidate() {
       firstSessionGrants.invalidate()
+      await dependencies.remote?.unregisterBootstrapReference(activeBootstrapReference)
+      activeBootstrapReference = undefined
+      if (bootstrapReferenceTimer) clearTimeout(bootstrapReferenceTimer)
+      bootstrapReferenceTimer = undefined
       return { invalidated: true }
     },
 
@@ -1322,6 +1372,15 @@ export function createOwnerApplicationServices(
       return { cancelled: await dependencies.remote.cancelLoginQrCapability() }
     },
 
+    async remoteLoginQrConsume(context: OwnerMethodContext, input: Record<string, unknown>) {
+      requireOwner(context)
+      if (!dependencies.remote || typeof input.reference !== 'string' || !safeId(input.reference))
+        throw new OwnerMethodError('INVALID_PARAMS')
+      const consumed = await dependencies.remote.consumeLoginQrCapability(input.reference)
+      if (!consumed) throw new OwnerMethodError('RESOURCE_NOT_FOUND')
+      return { consumed: true, ...consumed }
+    },
+
     async remoteDevices(context: OwnerMethodContext) {
       requireOwner(context)
       if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
@@ -1441,6 +1500,10 @@ export function createOwnerApplicationServices(
       async trustReset() {
         if (!deps.remote) throw new Error('REMOTE_UNAVAILABLE')
         firstSessionGrants.invalidate()
+        await deps.remote.unregisterBootstrapReference(activeBootstrapReference)
+        activeBootstrapReference = undefined
+        if (bootstrapReferenceTimer) clearTimeout(bootstrapReferenceTimer)
+        bootstrapReferenceTimer = undefined
         const reset = await deps.remote.resetRemoteTrust()
         await authDomain?.revokeAllDevices()
         return reset
@@ -1491,8 +1554,7 @@ function requireLocalOwner(context: OwnerMethodContext) {
 }
 
 function webauthnProfile(transport: OwnerTransport): keyof typeof WEBAUTHN_PROFILES | null {
-  if (transport.kind === 'relay' && transport.loginCandidate && transport.e2eeVerified === true)
-    return 'remote'
+  if (transport.kind === 'relay' && transport.e2eeVerified === true) return 'remote'
   if (transport.kind === 'local' && transport.origin === 'http://localhost:5173') return 'local'
   return null
 }

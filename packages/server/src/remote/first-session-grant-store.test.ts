@@ -11,6 +11,7 @@ test('first-session grant is single use and binds the first verified E2EE key', 
     trustEpoch: 4,
     remoteOrigin: 'https://codex.vixinox.com',
   })
+  assert.match(issued.reference, /^[A-Za-z0-9_-]{24}$/u)
   const binding = {
     ownerId: 'owner-1',
     nodeId: 'node-1',
@@ -20,8 +21,8 @@ test('first-session grant is single use and binds the first verified E2EE key', 
   }
 
   assert.equal(store.consume(issued.grant, { ...binding, nodeId: 'other-node' }), false)
-  assert.equal(store.consume(issued.grant, binding), true)
-  assert.equal(store.consume(issued.grant, binding), false)
+  assert.equal(store.consume(issued.reference, binding), true)
+  assert.equal(store.consume(issued.reference, binding), false)
   assert.equal(store.consume(issued.grant, { ...binding, clientPublicKey: 'second-key' }), false)
 
   const rotated = store.issue(binding)

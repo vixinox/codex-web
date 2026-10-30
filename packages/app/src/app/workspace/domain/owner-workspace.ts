@@ -36,7 +36,7 @@ export const ownerWorkspace = {
     list: async (projectId: string | null, signal?: AbortSignal, archived = false) => {
       const result = await getOwnerBridge().request<unknown>(
         'threads.list',
-        { ...(projectId ? { projectId } : {}), archived },
+        { projectId, archived },
         { signal },
       )
       if (Array.isArray(result)) return result as ThreadSummary[]

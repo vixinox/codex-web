@@ -14,8 +14,10 @@ export function MockSettingsPreview({ className }: { className?: string }) {
         <div className="hidden w-56 shrink-0 sm:flex xl:w-72">
           <SettingsSidebar
             archivedActive={false}
+            connectionActive={false}
             onBack={() => {}}
             onGeneral={() => {}}
+            onConnection={() => {}}
             onArchived={() => undefined}
             showArchived={false}
           />
