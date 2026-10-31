@@ -1,6 +1,7 @@
 import { AppearanceSection } from '@/app/settings/appearance-section'
 import { cn } from '@/lib/utils'
 import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
+import { DEFAULT_WORKSPACE_SIDEBAR_WIDTH } from '@/app/workspace/sidebar/sidebar-storage'
 
 export function MockSettingsPreview({ className }: { className?: string }) {
   return (
@@ -11,10 +12,12 @@ export function MockSettingsPreview({ className }: { className?: string }) {
       )}
     >
       <div className="absolute inset-0 flex min-w-0">
-        <div className="hidden w-56 shrink-0 sm:flex xl:w-72">
+        <div className="hidden w-56 shrink-0 sm:flex xl:w-78">
           <SettingsSidebar
             archivedActive={false}
             connectionActive={false}
+            sidebarWidth={DEFAULT_WORKSPACE_SIDEBAR_WIDTH}
+            onSidebarWidthChange={() => undefined}
             onBack={() => {}}
             onGeneral={() => {}}
             onConnection={() => {}}

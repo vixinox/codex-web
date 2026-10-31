@@ -1,9 +1,15 @@
 import * as React from 'react'
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  clampSidebarWidth,
+} from '@/components/shared/sidebar'
 
 export const WORKSPACE_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-sidebar:width'
-export const DEFAULT_WORKSPACE_SIDEBAR_WIDTH = 312
-export const MIN_WORKSPACE_SIDEBAR_WIDTH = 240
-export const MAX_WORKSPACE_SIDEBAR_WIDTH = 520
+export const DEFAULT_WORKSPACE_SIDEBAR_WIDTH = DEFAULT_SIDEBAR_WIDTH
+export const MIN_WORKSPACE_SIDEBAR_WIDTH = MIN_SIDEBAR_WIDTH
+export const MAX_WORKSPACE_SIDEBAR_WIDTH = MAX_SIDEBAR_WIDTH
 
 export function parseWorkspaceSidebarWidth(value: string | null) {
   if (value === null) return DEFAULT_WORKSPACE_SIDEBAR_WIDTH
@@ -15,7 +21,7 @@ export function parseWorkspaceSidebarWidth(value: string | null) {
 }
 
 export function clampWorkspaceSidebarWidth(width: number) {
-  return Math.min(MAX_WORKSPACE_SIDEBAR_WIDTH, Math.max(MIN_WORKSPACE_SIDEBAR_WIDTH, width))
+  return clampSidebarWidth(width)
 }
 
 export function readWorkspaceSidebarWidth() {

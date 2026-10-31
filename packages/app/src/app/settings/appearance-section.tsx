@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select'
 import type { RegisteredTheme, ThemeMode, ThemeVariant } from '@/lib/theme/theme'
 import { cn } from '@/lib/utils'
+import { SettingsSection, SettingsSectionContent } from './settings-page-layout'
 
 export function AppearanceSection() {
   const { darkThemeId, lightThemeId, mode, setMode, setThemeForVariant, themes } = useTheme()
@@ -17,28 +18,29 @@ export function AppearanceSection() {
   const darkThemes = themes.filter((theme) => theme.source.variant === 'dark')
 
   return (
-    <section className="flex flex-col gap-8" aria-labelledby="appearance-heading">
-      <h1 id="appearance-heading" className="text-xl">
-        Appearance
-      </h1>
-      <ThemeModeCards mode={mode} onModeChange={setMode} />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <ThemeField
-          label="Light theme"
-          themeId={lightThemeId}
-          themes={lightThemes}
-          variant="light"
-          onThemeChange={setThemeForVariant}
-        />
-        <ThemeField
-          label="Dark theme"
-          themeId={darkThemeId}
-          themes={darkThemes}
-          variant="dark"
-          onThemeChange={setThemeForVariant}
-        />
-      </div>
-    </section>
+    <SettingsSection title="Appearance">
+      <SettingsSectionContent ready>
+        <div className="flex flex-col gap-8">
+          <ThemeModeCards mode={mode} onModeChange={setMode} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ThemeField
+              label="Light theme"
+              themeId={lightThemeId}
+              themes={lightThemes}
+              variant="light"
+              onThemeChange={setThemeForVariant}
+            />
+            <ThemeField
+              label="Dark theme"
+              themeId={darkThemeId}
+              themes={darkThemes}
+              variant="dark"
+              onThemeChange={setThemeForVariant}
+            />
+          </div>
+        </div>
+      </SettingsSectionContent>
+    </SettingsSection>
   )
 }
 

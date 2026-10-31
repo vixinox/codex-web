@@ -1,6 +1,14 @@
 import { useNativeEnter } from '@/lib/platform/browser/use-native-enter'
 import { ArrowLeft } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarHeader,
+  SidebarItem,
+  SidebarSection,
+  SidebarSectionHeading,
+  SidebarSectionItems,
+} from '@/components/shared/sidebar'
 
 export function SettingsSidebar({
   archivedActive,
@@ -12,6 +20,8 @@ export function SettingsSidebar({
   archivedDisabled = false,
   archivedDisabledMessage = 'Archived chats are unavailable.',
   showArchived = true,
+  sidebarWidth,
+  onSidebarWidthChange,
 }: {
   archivedActive: boolean
   connectionActive: boolean
@@ -22,62 +32,46 @@ export function SettingsSidebar({
   archivedDisabled?: boolean
   archivedDisabledMessage?: string
   showArchived?: boolean
+  sidebarWidth: number
+  onSidebarWidthChange: (width: number) => void
 }) {
   const sidebarRef = useNativeEnter<HTMLElement>([], { duration: 0.22, y: 0 })
 
   return (
-    <aside
-      ref={sidebarRef}
-      className="flex h-full w-full min-w-0 flex-col bg-sidebar text-sidebar-foreground xl:w-72 xl:shrink-0"
-    >
-      <div className="flex flex-col gap-1 p-3">
-        <Button variant="ghost" className="w-full justify-start font-normal" onClick={onBack}>
-          <ArrowLeft data-icon="inline-start" />
+    <Sidebar ref={sidebarRef} width={sidebarWidth} onWidthChange={onSidebarWidthChange}>
+      <SidebarHeader className="gap-1 p-3">
+        <SidebarItem icon={<ArrowLeft data-icon="inline-start" />} onClick={onBack}>
           Back to app
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        <div className="flex items-center px-2 py-2 text-sm font-medium text-muted-foreground select-none">
-          Personal
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <Button
-            variant="ghost"
-            className="w-full justify-start font-normal"
-            onClick={onGeneral}
-            aria-current={!archivedActive && !connectionActive ? 'page' : undefined}
-          >
-            General
-          </Button>
-          <Button
-            variant="ghost"
-            className="w-full justify-start font-normal"
-            onClick={onConnection}
-            aria-current={connectionActive ? 'page' : undefined}
-          >
-            Connection
-          </Button>
-        </div>
+        </SidebarItem>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarSection>
+          <SidebarSectionHeading>Personal</SidebarSectionHeading>
+          <SidebarSectionItems>
+            <SidebarItem onClick={onGeneral} active={!archivedActive && !connectionActive}>
+              General
+            </SidebarItem>
+            <SidebarItem onClick={onConnection} active={connectionActive}>
+              Connection
+            </SidebarItem>
+          </SidebarSectionItems>
+        </SidebarSection>
         {showArchived ? (
-          <>
-            <div className="mt-2 flex items-center px-2 py-2 text-sm font-medium text-muted-foreground select-none">
-              Archived
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <Button
-                variant="ghost"
-                className="w-full justify-start font-normal"
+          <SidebarSection className="mt-2">
+            <SidebarSectionHeading>Archived</SidebarSectionHeading>
+            <SidebarSectionItems>
+              <SidebarItem
                 onClick={onArchived}
                 disabled={archivedDisabled}
                 title={archivedDisabled ? archivedDisabledMessage : undefined}
-                aria-current={archivedActive ? 'page' : undefined}
+                active={archivedActive}
               >
                 Archived chats
-              </Button>
-            </div>
-          </>
+              </SidebarItem>
+            </SidebarSectionItems>
+          </SidebarSection>
         ) : null}
-      </div>
-    </aside>
+      </SidebarContent>
+    </Sidebar>
   )
 }

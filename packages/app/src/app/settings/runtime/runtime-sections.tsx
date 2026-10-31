@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import type { SettingsCollection } from '../model-types'
+import { SettingsSection, SettingsSectionContent } from '../settings-page-layout'
 
 export function ProjectSection({
   projects,
@@ -62,29 +63,26 @@ export function ResourceSection<T>({
   children: (items: readonly T[]) => React.ReactNode
 }) {
   return (
-    <section className="flex flex-col gap-8" aria-labelledby={`offline-${heading}-heading`}>
-      <div className="flex items-center justify-between gap-4">
-        <h1 id={`offline-${heading}-heading`} className="text-xl">
-          {heading}
-        </h1>
-        {headerAction}
-      </div>
-      {collection.status === 'loading' ? (
-        <div />
-      ) : collection.status === 'error' ? (
-        <Alert variant="destructive" className="w-full">
-          <AlertTitle>{errorTitle}</AlertTitle>
-          <AlertDescription>{collection.message}</AlertDescription>
-          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-            <RefreshCwIcon data-icon="inline-start" />
-            Retry
-          </Button>
-        </Alert>
-      ) : collection.items.length === 0 ? (
-        empty
-      ) : (
-        children(collection.items)
-      )}
-    </section>
+    <SettingsSection title={heading} action={headerAction}>
+      <SettingsSectionContent
+        ready={collection.status !== 'loading'}
+        message={`Loading ${heading.toLowerCase()}...`}
+      >
+        {collection.status === 'error' ? (
+          <Alert variant="destructive" className="w-full">
+            <AlertTitle>{errorTitle}</AlertTitle>
+            <AlertDescription>{collection.message}</AlertDescription>
+            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+              <RefreshCwIcon data-icon="inline-start" />
+              Retry
+            </Button>
+          </Alert>
+        ) : collection.status === 'ready' && collection.items.length === 0 ? (
+          empty
+        ) : collection.status === 'ready' ? (
+          children(collection.items)
+        ) : null}
+      </SettingsSectionContent>
+    </SettingsSection>
   )
 }

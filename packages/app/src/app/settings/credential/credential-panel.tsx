@@ -31,7 +31,6 @@ import type { SettingsCollection, SettingsCredential } from '../model-types'
 import { CredentialForm } from './credential-form'
 import { CredentialRow, type CredentialTestState } from './credential-row'
 import { ProjectSection, ResourceSection } from '../runtime/runtime-sections'
-import { useSettingsLoadEnter } from '../use-settings-load-enter'
 
 type PendingCredentialSwitch = { id: string; fromCredentialId: string | null }
 
@@ -63,7 +62,6 @@ export function CredentialPanel({ controller, projects, onRetryProjects }: Crede
   const [switchDialogOpen, setSwitchDialogOpen] = React.useState(false)
   const [testStates, setTestStates] = React.useState<Record<string, CredentialTestState>>({})
   const testRequestIds = React.useRef<Record<string, number>>({})
-  const credentialsListRef = useSettingsLoadEnter<HTMLDivElement>([credentials.status])
   const runtimePendingCredentialId =
     activeCredentialId && selectedCredentialId && activeCredentialId !== selectedCredentialId
       ? selectedCredentialId
@@ -151,7 +149,7 @@ export function CredentialPanel({ controller, projects, onRetryProjects }: Crede
           }
         >
           {(items) => (
-            <div ref={credentialsListRef} className="w-full">
+            <div className="w-full">
               <RadioGroup
                 className="block"
                 value={pendingCredentialId ?? selectedCredentialId ?? ''}

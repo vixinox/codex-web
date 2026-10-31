@@ -56,15 +56,7 @@ export function WorkspacePageContent({
       ) : null}
       <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto overscroll-none">
         {route.settingsActive ? (
-          route.archivedChatsActive && !ready ? (
-            <RuntimePlaceholder
-              model={runtime.model}
-              onRetry={runtime.start}
-              onOpenSettings={route.openSettings}
-            />
-          ) : (
-            <SettingsScreen runtime={runtime} archived={route.archivedChatsActive} />
-          )
+          <SettingsScreen runtime={runtime} archived={route.archivedChatsActive} />
         ) : ready && !threadLoading ? (
           <ThreadPageSurface controller={surfacePage} onRetry={() => page.actions.retry()} />
         ) : (

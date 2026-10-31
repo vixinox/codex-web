@@ -5,19 +5,16 @@ import { Input } from '@/components/ui/input'
 import { ownerWorkspace } from '@/app/workspace/domain/owner-workspace'
 import type { ThreadSummary } from '@/lib/bridge/interfaces/thread'
 import { Separator } from '@/components/ui/separator'
-import { useSettingsLoadEnter } from './use-settings-load-enter'
+import { SettingsSection, SettingsSectionContent } from './settings-page-layout'
 
 export function ArchivedChats() {
   const [items, setItems] = React.useState<readonly ThreadSummary[]>([])
   const [query, setQuery] = React.useState('')
-  const [loading, setLoading] = React.useState(true)
+  const [hasLoaded, setHasLoaded] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [projectNames, setProjectNames] = React.useState<Record<string, string>>({})
   const [deleteAllOpen, setDeleteAllOpen] = React.useState(false)
-  const listRef = useSettingsLoadEnter<HTMLDivElement>([loading])
-  const emptyRef = useSettingsLoadEnter<HTMLParagraphElement>([loading])
   const load = React.useCallback(async () => {
-    setLoading(true)
     setError(null)
     try {
       const [threads, projects] = await Promise.all([
@@ -29,7 +26,7 @@ export function ArchivedChats() {
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Could not load archived chats.')
     } finally {
-      setLoading(false)
+      setHasLoaded(true)
     }
   }, [])
   React.useEffect(() => {
@@ -69,96 +66,101 @@ export function ArchivedChats() {
     [load],
   )
   return (
-    <section className="flex w-full flex-col gap-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl">Archived chats</h1>
+    <SettingsSection
+      title="Archived chats"
+      headingLevel={1}
+      action={
         <Button variant="destructive" onClick={() => setDeleteAllOpen(true)}>
           <Trash2 />
           Delete all
         </Button>
-      </div>
-      <div className="flex gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-3 size-5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="max-w-2/3 rounded-full pl-10"
-            placeholder="Search archived chats"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </div>
-      </div>
-      <div>
-        {error ? (
-          <p role="alert" className="mb-4 text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
-        {loading ? (
-          <div />
-        ) : visible.length === 0 ? (
-          <p ref={emptyRef} className="text-muted-foreground">
-            No archived chats
-          </p>
-        ) : (
-          <div ref={listRef} className="flex flex-col gap-10">
-            {groups.map((group) => (
-              <section key={group.id}>
-                <div className="mb-4 flex items-center justify-between px-1">
-                  <div className="flex items-center gap-3">
-                    <FolderClosed className="size-4" />
-                    {group.name}
-                  </div>
-                  <span className="text-sm text-muted-foreground">
-                    {group.items.length} {group.items.length === 1 ? 'chat' : 'chats'}
-                  </span>
-                </div>
-                <div className="overflow-hidden rounded-2xl border bg-app-surface">
-                  {group.items.map((item, index) => (
-                    <React.Fragment key={item.id}>
-                      <article className="flex items-center justify-between gap-6 px-4 py-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm">{item.title}</div>
-                          <div className="mt-0.5 text-xs text-muted-foreground">
-                            {new Date(item.updatedAt * 1000).toLocaleString()}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-3">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Delete chat"
-                            className="text-muted-foreground"
-                            onClick={() =>
-                              void run(() => ownerWorkspace.threads.delete(item.projectId, item.id))
-                            }
-                          >
-                            <Trash2 />
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() =>
-                              void run(() =>
-                                ownerWorkspace.threads.unarchive(item.projectId, item.id),
-                              )
-                            }
-                          >
-                            Unarchive
-                          </Button>
-                        </div>
-                      </article>
-                      {index < group.items.length - 1 ? (
-                        <div className="px-4">
-                          <Separator />
-                        </div>
-                      ) : null}
-                    </React.Fragment>
-                  ))}
-                </div>
-              </section>
-            ))}
+      }
+    >
+      <div className="flex flex-col gap-8">
+        <div className="flex gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute top-1/2 left-3 size-5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="max-w-2/3 rounded-full pl-10"
+              placeholder="Search archived chats"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </div>
-        )}
+        </div>
+        {error ? (
+          <div className="mb-4 flex flex-wrap items-center gap-3" role="alert">
+            <p className="text-sm text-destructive">{error}</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+              Try again
+            </Button>
+          </div>
+        ) : null}
+        <SettingsSectionContent ready={hasLoaded} message="Loading archived chats...">
+          {visible.length === 0 ? (
+            <p className="text-muted-foreground">No archived chats</p>
+          ) : (
+            <div className="flex flex-col gap-10">
+              {groups.map((group) => (
+                <section key={group.id}>
+                  <div className="mb-4 flex items-center justify-between px-1">
+                    <div className="flex items-center gap-3">
+                      <FolderClosed className="size-4" />
+                      {group.name}
+                    </div>
+                    <span className="text-sm text-muted-foreground">
+                      {group.items.length} {group.items.length === 1 ? 'chat' : 'chats'}
+                    </span>
+                  </div>
+                  <div className="overflow-hidden rounded-2xl border bg-app-surface">
+                    {group.items.map((item, index) => (
+                      <React.Fragment key={item.id}>
+                        <article className="flex items-center justify-between gap-6 px-4 py-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm">{item.title}</div>
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              {new Date(item.updatedAt * 1000).toLocaleString()}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-3">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Delete chat"
+                              className="text-muted-foreground"
+                              onClick={() =>
+                                void run(() =>
+                                  ownerWorkspace.threads.delete(item.projectId, item.id),
+                                )
+                              }
+                            >
+                              <Trash2 />
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              onClick={() =>
+                                void run(() =>
+                                  ownerWorkspace.threads.unarchive(item.projectId, item.id),
+                                )
+                              }
+                            >
+                              Unarchive
+                            </Button>
+                          </div>
+                        </article>
+                        {index < group.items.length - 1 ? (
+                          <div className="px-4">
+                            <Separator />
+                          </div>
+                        ) : null}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </SettingsSectionContent>
       </div>
       {deleteAllOpen ? (
         <div role="dialog" className="fixed inset-0 grid place-items-center">
@@ -184,6 +186,6 @@ export function ArchivedChats() {
           </div>
         </div>
       ) : null}
-    </section>
+    </SettingsSection>
   )
 }

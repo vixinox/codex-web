@@ -23,7 +23,15 @@ import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
 import { isKnownAppRoute } from '@/app/composition/routes/route-model'
 import { MobileWorkspaceNavigation } from '@/app/composition/navigation/workspace-navigation'
 import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
-import { readWorkspaceSidebarWidth } from '@/app/workspace/sidebar/sidebar-storage'
+import {
+  SettingsPageError,
+  SettingsPageDelayedLoading,
+  SettingsPageLayout,
+} from '@/app/settings/settings-page-layout'
+import {
+  readWorkspaceSidebarWidth,
+  storeWorkspaceSidebarWidth,
+} from '@/app/workspace/sidebar/sidebar-storage'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
@@ -305,6 +313,19 @@ async function redeemEnrollment(
 }
 
 export function OwnerManageRoute() {
+  const [retryVersion, setRetryVersion] = useState(0)
+
+  return (
+    <SettingsPageLayout resetKey="connection" pageTitle="Connection">
+      <OwnerManageConnection
+        key={retryVersion}
+        onRetry={() => setRetryVersion((version) => version + 1)}
+      />
+    </SettingsPageLayout>
+  )
+}
+
+function OwnerManageConnection({ onRetry }: { onRetry: () => void }) {
   const [client, setClient] = useState<ReturnType<typeof createOwnerManagementClient> | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const profileId =
@@ -326,6 +347,7 @@ export function OwnerManageRoute() {
   )
   const closeOwner = useCallback(() => closeOwnerRuntime('management closed'), [closeOwnerRuntime])
   useEffect(() => {
+    let timer: number | undefined
     if (ownerStatus === 'ready') {
       setConnectionError(null)
       setClient(
@@ -337,24 +359,39 @@ export function OwnerManageRoute() {
       )
     } else {
       setClient(null)
-      if (ownerStatus === 'failed') setConnectionError(ownerError)
+      if (ownerStatus === 'failed') {
+        timer = window.setTimeout(
+          () => setConnectionError(ownerError ?? 'Owner connection failed'),
+          400,
+        )
+      } else {
+        setConnectionError(null)
+      }
+    }
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [closeOwner, ownerError, requestOwner, ownerStatus, requirePasskeyStepUp])
-  if (connectionError)
-    return (
-      <main className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground">
-        <p role="alert" className="text-sm text-destructive">
-          {connectionError}
-        </p>
-      </main>
-    )
-  if (!client) return pageFallback
-  return <OwnerManageScreen client={client} />
+  return (
+    <>
+      {connectionError ? (
+        <SettingsPageError message={connectionError} onRetry={onRetry} />
+      ) : client ? (
+        <OwnerManageScreen client={client} />
+      ) : (
+        <SettingsPageDelayedLoading message="Connecting to Owner..." />
+      )}
+    </>
+  )
 }
 
 export function ConnectionRoute() {
   const navigate = useNavigate()
-  const sidebarWidth = readWorkspaceSidebarWidth()
+  const [sidebarWidth, setSidebarWidth] = useState(readWorkspaceSidebarWidth)
+  const handleSidebarWidthChange = useCallback((width: number) => {
+    setSidebarWidth(width)
+    storeWorkspaceSidebarWidth(width)
+  }, [])
 
   return (
     <div className="app-shell relative flex h-svh max-h-svh w-full touch-pan-x overflow-hidden overscroll-none bg-sidebar">
@@ -362,6 +399,8 @@ export function ConnectionRoute() {
         <SettingsSidebar
           archivedActive={false}
           connectionActive
+          sidebarWidth={sidebarWidth}
+          onSidebarWidthChange={handleSidebarWidthChange}
           onBack={() => void navigate('/app')}
           onGeneral={() => void navigate('/app/settings')}
           onConnection={() => undefined}

@@ -140,6 +140,8 @@ export function WorkspaceNavigation({
     <SettingsSidebar
       archivedActive={route.archivedChatsActive}
       connectionActive={route.connectionActive}
+      sidebarWidth={sidebarWidth}
+      onSidebarWidthChange={handleSidebarWidthChange}
       onBack={route.openApp}
       onGeneral={route.openSettings}
       onConnection={route.openConnection}
