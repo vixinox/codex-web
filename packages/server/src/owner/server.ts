@@ -12,7 +12,6 @@ import { RemoteTrustStore } from '../remote/trust-store.js'
 import { buildOwnerServer } from './app.js'
 import { acquireOwnerInstanceLock } from './instance-lock.js'
 import { ensureOwnerInitialized } from './owner-initialization.js'
-import { renderTerminal } from '@vincentkoc/qrcode-tui'
 
 const config = loadServerConfig()
 let db: ReturnType<typeof createDatabase>['db']
@@ -65,13 +64,6 @@ try {
   await connector.start()
   await app.listen({ host: config.host, port: config.port })
   log.success(`Owner server listening at http://${config.host}:${config.port}`)
-  const bootstrap = await app.ownerServices.startupBootstrapPayload()
-  if (bootstrap) {
-    const origin = bootstrap.appOrigin ?? config.appOrigin ?? 'http://localhost:5173'
-    const url = `${origin}/app/first-session?ref=${encodeURIComponent(bootstrap.reference)}`
-    process.stdout.write(`First remote session (expires at ${bootstrap.expiresAt}):\n${url}\n`)
-    if (process.stdout.isTTY) process.stdout.write(await renderTerminal(url, { small: true }))
-  }
 } catch (error) {
   log.error(`Owner server failed to start: ${safeError(error)}`)
   try {

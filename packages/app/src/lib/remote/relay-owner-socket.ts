@@ -14,14 +14,8 @@ export type RelayTarget = {
   deviceId?: string
   publicKey: string
   privateKey: CryptoKey
-  loginOwnerCode?: string
-  firstSessionOwnerCode?: string
-  firstSessionGrant?: string
-  bootstrapReference?: string
-  /** For an explicitly confirmed bootstrap, the QR payload carries the key fingerprint. */
-  firstSessionFingerprint?: string
-  expectedOwnerFingerprint?: string
-  onOwnerFingerprint?: (fingerprint: string) => void
+  enrollmentReference?: string
+  expectedOwnerPublicKey?: string
 }
 
 export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSocket {
@@ -53,35 +47,39 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
           payload: encodeFrame(encrypted),
         }),
       )
+      return undefined
     })
   }) as typeof socket.send
 
   socket.addEventListener('open', () => {
-    const frame = {
-      type: 'relay.attach' as const,
-      version: RELAY_PROTOCOL_VERSION,
-      nodeId: target.nodeId,
-      role: 'client' as const,
-      connectionId: crypto.randomUUID(),
-      ...(target.bootstrapReference
-        ? {
-            admission: 'bootstrap_reference' as const,
-            reference: target.bootstrapReference,
-          }
-        : target.firstSessionOwnerCode && target.firstSessionGrant
-          ? {
-              admission: 'first_session' as const,
-              ownerCode: target.firstSessionOwnerCode,
-              grant: target.firstSessionGrant,
-            }
-          : target.loginOwnerCode
-            ? { admission: 'login' as const, ownerCode: target.loginOwnerCode }
-            : {
-                clientToken: target.clientToken,
-                trustEpoch: target.trustEpoch,
-                deviceId: target.deviceId!,
-              }),
-    } as RelayAttachFrame
+    const attachConnectionId = crypto.randomUUID()
+    let frame: RelayAttachFrame
+    if (target.enrollmentReference) {
+      frame = {
+        type: 'relay.attach',
+        version: RELAY_PROTOCOL_VERSION,
+        role: 'client',
+        connectionId: attachConnectionId,
+        admission: 'enrollment',
+        reference: target.enrollmentReference,
+      }
+    } else {
+      if (!target.nodeId || target.trustEpoch === undefined || !target.deviceId) {
+        pendingError?.(new Error('Paired connection identity is incomplete.'))
+        socket.close(1008, 'paired_identity_unavailable')
+        return
+      }
+      frame = {
+        type: 'relay.attach',
+        version: RELAY_PROTOCOL_VERSION,
+        nodeId: target.nodeId,
+        role: 'client',
+        connectionId: attachConnectionId,
+        clientToken: target.clientToken,
+        trustEpoch: target.trustEpoch,
+        deviceId: target.deviceId,
+      }
+    }
     originalSend(encodeFrame(frame))
   })
   socket.addEventListener('message', (event) => {
@@ -124,26 +122,24 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
             handshake.clientPublicKey !== target.publicKey
           )
             throw new Error('Owner identity does not match the selected target.')
-          return fingerprint(handshake.ownerPublicKey).then((actual) => {
-            target.onOwnerFingerprint?.(actual)
-            if (
-              target.firstSessionOwnerCode &&
-              target.firstSessionFingerprint !== handshake.ownerPublicKey
-            )
-              throw new Error('Owner fingerprint does not match the first-session grant.')
-            if (target.expectedOwnerFingerprint && actual !== target.expectedOwnerFingerprint)
-              throw new Error('Owner fingerprint mismatch. Verify the Owner before signing in.')
-            pendingOpen?.()
-            pendingOpen = null
-            for (const queuedValue of queued.splice(0)) socket.send(queuedValue)
-          })
+          if (
+            target.expectedOwnerPublicKey &&
+            target.expectedOwnerPublicKey !== handshake.ownerPublicKey
+          )
+            throw new Error('Owner identity does not match the saved connection.')
+          pendingOpen?.()
+          pendingOpen = null
+          for (const queuedValue of queued.splice(0)) socket.send(queuedValue)
+          return undefined
         }
         socket.dispatchEvent(new MessageEvent('message', { data: value }))
+        return undefined
       })
       .catch((error: unknown) => {
         const failure = error instanceof Error ? error : new Error('Relay handshake failed')
         pendingError?.(failure)
         socket.close(1008, 'owner_handshake_failed')
+        return undefined
       })
   })
   socket.addEventListener('error', () => pendingError?.(new Error('Relay connection failed')))
@@ -171,10 +167,8 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
       return
     }
     try {
-      const actual = await fingerprint(ownerPublicKey)
-      target.onOwnerFingerprint?.(actual)
-      if (target.expectedOwnerFingerprint && actual !== target.expectedOwnerFingerprint)
-        throw new Error('Owner fingerprint mismatch. Verify the Owner before signing in.')
+      if (target.expectedOwnerPublicKey && target.expectedOwnerPublicKey !== ownerPublicKey)
+        throw new Error('Owner identity does not match the saved connection.')
       const ownerKey = await importPublicKey(ownerPublicKey)
       key = (await deriveSessionKey(
         target.privateKey,
@@ -201,16 +195,4 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
       socket.close(1008, 'owner_handshake_failed')
     }
   }
-}
-
-async function fingerprint(serializedPublicKey: string) {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(serializedPublicKey),
-  )
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/u, '')
-    .slice(0, 16)
 }

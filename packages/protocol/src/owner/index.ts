@@ -62,8 +62,6 @@ export const OWNER_ERROR_CODES = [
   'REMOTE_UNAVAILABLE',
   'REMOTE_RELAY_REQUIRED',
   'DEVICE_NOT_FOUND',
-  'FIRST_SESSION_ALREADY_USED',
-  'FIRST_SESSION_GRANT_INVALID',
 ] as const
 
 export type OwnerErrorCode = (typeof OWNER_ERROR_CODES)[number]

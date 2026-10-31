@@ -3,7 +3,7 @@ import * as React from 'react'
 import { PanelLeft } from 'lucide-react'
 
 import { clearLocalOwnerSession } from '@/lib/auth/auth-client'
-import { clearRemoteOwnerSession } from '@/lib/remote/device-key-store'
+import { clearConnectionProfileSession } from '@/lib/remote/device-key-store'
 import type { WorkspaceRouteController } from '@/app/composition/routes/use-workspace-route-controller'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
 import type { WorkspaceSidebarController } from '@/app/workspace/sidebar/use-workspace-sidebar-controller'
@@ -113,8 +113,13 @@ export function WorkspaceNavigation({
     onOpenSettings: route.openSettings,
     onOpenNewChat: () => route.openNewChat(),
     onSignOut: async () => {
-      await clearRemoteOwnerSession().catch(() => undefined)
-      clearLocalOwnerSession()
+      const profileId = sessionStorage.getItem('codex-web:active-connection-profile')
+      if (profileId) {
+        await clearConnectionProfileSession(profileId).catch(() => undefined)
+        sessionStorage.removeItem('codex-web:active-connection-profile')
+      } else {
+        clearLocalOwnerSession()
+      }
       void navigate('/login', { replace: true })
     },
     onSelectThread: actions.selectThread,

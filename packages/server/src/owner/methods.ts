@@ -39,31 +39,10 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'owner.recovery.login.reserve',
+      'owner.enrollment.redeem',
       {
         access: 'public' as const,
-        handle: (params, context) => services.recoveryLoginReserve(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.recovery.login.finish',
-      {
-        access: 'public' as const,
-        handle: (params, context) => services.recoveryLoginFinish(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.firstSession.redeem',
-      {
-        access: 'public' as const,
-        handle: (params, context) => services.firstSessionRedeem(context, asRecord(params)),
-      },
-    ],
-    [
-      'owner.recovery.generate',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.recoveryCodesGenerate(context),
+        handle: (params, context) => services.enrollmentRedeem(context, asRecord(params)),
       },
     ],
     [
@@ -81,10 +60,24 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'owner.bootstrap.issue',
+      'owner.enrollment.issue',
       {
         access: 'authenticated' as const,
-        handle: (_params, context) => services.bootstrapGrantIssue(context),
+        handle: (_params, context) => services.enrollmentIssue(context),
+      },
+    ],
+    [
+      'owner.enrollment.status',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.enrollmentStatus(context),
+      },
+    ],
+    [
+      'owner.enrollment.cancel',
+      {
+        access: 'authenticated' as const,
+        handle: (_params, context) => services.enrollmentCancel(context),
       },
     ],
     [
@@ -120,34 +113,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (_params, context) => services.remoteTrustReset(context),
-      },
-    ],
-    [
-      'remote.loginQr.issue',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.remoteLoginQrIssue(context),
-      },
-    ],
-    [
-      'remote.loginQr.status',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.remoteLoginQrStatus(context),
-      },
-    ],
-    [
-      'remote.loginQr.cancel',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.remoteLoginQrCancel(context),
-      },
-    ],
-    [
-      'remote.loginQr.consume',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.remoteLoginQrConsume(context, asRecord(params)),
       },
     ],
     [
@@ -383,20 +348,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (_params, context) => services.remoteStatus(context),
-      },
-    ],
-    [
-      'owner.code.show',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.ownerCodeShow(context),
-      },
-    ],
-    [
-      'owner.code.rotate',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.ownerCodeRotate(context),
       },
     ],
     [

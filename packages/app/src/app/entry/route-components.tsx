@@ -1,4 +1,3 @@
-import * as React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
@@ -12,9 +11,13 @@ import { CodexLogo } from '@/components/shared/codex-logo'
 import { OwnerManageScreen } from '@/app/owner/owner-manage-screen'
 import { createOwnerManagementClient } from '@/app/owner/owner-management-client'
 import { useOwnerRuntime } from '@/lib/owner-ws/use-owner-runtime'
-import { loadDeviceKey, loadRemoteOwnerSession } from '@/lib/remote/device-key-store'
+import {
+  completeConnectionProfile,
+  createConnectionProfileDraft,
+  loadConnectionProfileSession,
+  removeConnectionProfile,
+} from '@/lib/remote/device-key-store'
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
-import { redeemFirstSession, type RemoteLoginResult } from '@/lib/remote/admission'
 import { remoteRelayUrl } from '@/lib/remote/relay-profile'
 import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
 import { isKnownAppRoute } from '@/app/composition/routes/route-model'
@@ -24,18 +27,7 @@ import { readWorkspaceSidebarWidth } from '@/app/workspace/sidebar/sidebar-stora
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
-const firstSessionAttempts = new Map<string, Promise<RemoteLoginResult>>()
-
-function redeemFirstSessionOnce(payload: Parameters<typeof redeemFirstSession>[0]) {
-  const existing = firstSessionAttempts.get(payload.reference)
-  if (existing) return existing
-  const attempt = redeemFirstSession(payload).catch((cause) => {
-    firstSessionAttempts.delete(payload.reference)
-    throw cause
-  })
-  firstSessionAttempts.set(payload.reference, attempt)
-  return attempt
-}
+const enrollmentAttempts = new Map<string, Promise<{ ownerId: string; profileId: string }>>()
 
 export const startupPageEnabled = import.meta.env.VITE_ENABLE_STARTUP_PAGE === 'true'
 
@@ -57,59 +49,82 @@ export function StartupRoute() {
 }
 
 export function RootRoute() {
-  return <Navigate to={readLocalOwnerSession() ? '/app' : '/login'} replace />
+  const localSession = readLocalOwnerSession()
+  const connectionProfileId = sessionStorage.getItem('codex-web:active-connection-profile')
+  if (connectionProfileId)
+    return <Navigate to={`/app?connection=${encodeURIComponent(connectionProfileId)}`} replace />
+  return <Navigate to={localSession ? '/app' : '/login'} replace />
 }
 
 export function CandidateRoute() {
   const location = useLocation()
   const [remoteOwnerId, setRemoteOwnerId] = useState<string | null>(null)
   const [remoteChecked, setRemoteChecked] = useState(false)
+  const routeState = location.state as {
+    remoteOwnerId?: unknown
+    connectionProfileId?: unknown
+  } | null
+  const profileId =
+    typeof routeState?.connectionProfileId === 'string'
+      ? routeState.connectionProfileId
+      : (new URLSearchParams(location.search).get('connection') ??
+        sessionStorage.getItem('codex-web:active-connection-profile') ??
+        undefined)
+  const localSession = readLocalOwnerSession()
   useEffect(() => {
-    let active = true
-    void loadDeviceKey()
-      .then(async (record) => {
-        if (!record?.pairedClientToken || !record.deviceId || !record.relayUrl || !record.ownerCode)
-          return null
-        return loadRemoteOwnerSession({
-          relayUrl: record.relayUrl,
-          ownerCode: record.ownerCode,
-          nodeId: record.nodeId ?? '',
-          deviceId: record.deviceId,
-          ownerId: record.ownerId ?? undefined,
-        })
-      })
-      .then((saved) => {
-        if (active) setRemoteOwnerId(saved?.ownerId ?? null)
-      })
-      .catch(() => {
-        if (active) setRemoteOwnerId(null)
-      })
-      .finally(() => {
-        if (active) setRemoteChecked(true)
-      })
-    return () => {
-      active = false
+    if (localSession && !profileId) {
+      setRemoteOwnerId(localSession.ownerId)
+      setRemoteChecked(true)
+      return
     }
-  }, [])
+    if (profileId) {
+      void loadConnectionProfileSession(profileId)
+        .then((session) => {
+          setRemoteOwnerId(session?.ownerId ?? null)
+          if (
+            !session &&
+            sessionStorage.getItem('codex-web:active-connection-profile') === profileId
+          )
+            sessionStorage.removeItem('codex-web:active-connection-profile')
+          return undefined
+        })
+        .catch(() => {
+          setRemoteOwnerId(null)
+          return undefined
+        })
+        .finally(() => setRemoteChecked(true))
+      return
+    }
+    setRemoteOwnerId(null)
+    setRemoteChecked(true)
+    return
+  }, [localSession, profileId])
 
   if (!isKnownAppRoute(location.pathname)) return <Navigate to="/app" replace />
   if (!remoteChecked) return pageFallback
-  const stateOwnerId = (location.state as { remoteOwnerId?: unknown } | null)?.remoteOwnerId
-  const localSession = readLocalOwnerSession()
-  const ownerId = remoteOwnerId ?? stateOwnerId ?? localSession?.ownerId
+  const stateOwnerId = routeState?.remoteOwnerId
+  const ownerId = profileId ? remoteOwnerId : (stateOwnerId ?? localSession?.ownerId)
   if (typeof ownerId !== 'string') return <Navigate to="/login" replace />
 
-  return <AuthenticatedWorkspace userId={ownerId} sessionToken={localSession?.token} />
+  return (
+    <AuthenticatedWorkspace
+      userId={ownerId}
+      sessionToken={profileId ? undefined : localSession?.token}
+      connectionProfileId={profileId}
+    />
+  )
 }
 
 export function AuthenticatedWorkspace({
   userId,
   sessionToken,
+  connectionProfileId,
 }: {
   userId: string
   sessionToken?: string
+  connectionProfileId?: string
 }) {
-  const { status, error } = useOwnerRuntime(sessionToken)
+  const { status, error } = useOwnerRuntime(sessionToken, connectionProfileId)
   const runtime = useCodexRuntimeController(status === 'ready')
 
   useEffect(() => {
@@ -143,10 +158,12 @@ export function AuthenticatedWorkspace({
 
 export function LoginRoute() {
   if (readLocalOwnerSession()) return <Navigate to="/app" replace />
+  if (sessionStorage.getItem('codex-web:active-connection-profile'))
+    return <Navigate to="/app" replace />
   return <LoginScreen />
 }
 
-export function FirstSessionRoute() {
+export function EnrollmentRoute() {
   const location = useLocation()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
@@ -158,7 +175,7 @@ export function FirstSessionRoute() {
     const reference = params.get('ref')
     const hasUnexpectedParameter = [...params.keys()].some((key) => key !== 'ref')
     if (hasUnexpectedParameter || !reference || !/^[A-Za-z0-9_-]{16,256}$/u.test(reference)) {
-      setError('This first-session link is invalid.')
+      setError('This enrollment link is invalid.')
       return () => {
         active = false
       }
@@ -167,21 +184,16 @@ export function FirstSessionRoute() {
     setError(null)
     void (async () => {
       try {
-        const result = await redeemFirstSessionOnce({
-          version: 1,
-          type: 'first_session',
-          reference,
-          relayUrl: remoteRelayUrl(),
-          expiresAt: '',
-        })
+        const result = await redeemEnrollmentOnce(reference)
         if (!active) return
-        await navigate('/app', {
+        sessionStorage.setItem('codex-web:active-connection-profile', result.profileId)
+        await navigate(`/app?connection=${encodeURIComponent(result.profileId)}`, {
           replace: true,
-          state: { remoteOwnerId: result.ownerId, firstSession: true },
+          state: { remoteOwnerId: result.ownerId, connectionProfileId: result.profileId },
         })
       } catch (cause) {
         if (!active) return
-        setError(cause instanceof Error ? cause.message : 'First-session connection failed.')
+        setError(cause instanceof Error ? cause.message : 'Device enrollment failed.')
       }
     })()
 
@@ -195,7 +207,7 @@ export function FirstSessionRoute() {
       <div className="w-full max-w-md space-y-4 rounded-md border bg-card p-6 text-center shadow-sm">
         {error ? (
           <>
-            <h1 className="text-lg font-semibold">Unable to connect to Owner</h1>
+            <h1 className="text-lg font-semibold">Unable to add this browser</h1>
             <p role="alert" className="text-sm text-destructive">
               {error}
             </p>
@@ -217,9 +229,9 @@ export function FirstSessionRoute() {
         ) : (
           <div className="space-y-3" role="status" aria-live="polite">
             <Loader2 className="mx-auto size-6 animate-spin" aria-hidden="true" />
-            <h1 className="text-lg font-semibold">Connecting to Owner</h1>
+            <h1 className="text-lg font-semibold">Adding this browser</h1>
             <p className="text-sm text-muted-foreground">
-              This one-time link is being used to connect this device.
+              This one-time invitation is being used to add this browser.
             </p>
           </div>
         )}
@@ -228,130 +240,106 @@ export function FirstSessionRoute() {
   )
 }
 
+function redeemEnrollmentOnce(reference: string) {
+  const existing = enrollmentAttempts.get(reference)
+  if (existing) return existing
+  const attempt = redeemEnrollment(reference).finally(() => enrollmentAttempts.delete(reference))
+  enrollmentAttempts.set(reference, attempt)
+  return attempt
+}
+
+async function redeemEnrollment(
+  reference: string,
+): Promise<{ ownerId: string; profileId: string }> {
+  const relayUrl = remoteRelayUrl()
+  const draft = await createConnectionProfileDraft({ label: 'Owner connection', relayUrl })
+  const runtime = createOwnerRuntime(() =>
+    createRelayOwnerSocket(relayUrl, {
+      clientToken: '',
+      publicKey: draft.publicKey,
+      privateKey: draft.privateKey,
+      enrollmentReference: reference,
+    }),
+  )
+  try {
+    await runtime.connect({ url: relayUrl, clientId: 'owner-enrollment', capabilities: ['owner'] })
+    const result = await runtime.request<{
+      ownerId: string
+      nodeId: string
+      ownerPublicKey: string
+      deviceId: string
+      clientToken: string
+      trustEpoch: number
+      sessionToken: string
+      expiresAt: string
+    }>('owner.enrollment.redeem', { reference }, { timeoutMs: 10_000 })
+    if (
+      typeof result.ownerId !== 'string' ||
+      typeof result.nodeId !== 'string' ||
+      typeof result.ownerPublicKey !== 'string' ||
+      typeof result.deviceId !== 'string' ||
+      typeof result.clientToken !== 'string' ||
+      !Number.isSafeInteger(result.trustEpoch) ||
+      typeof result.sessionToken !== 'string' ||
+      typeof result.expiresAt !== 'string'
+    )
+      throw new Error('Owner returned an invalid enrollment result.')
+    await completeConnectionProfile({
+      id: draft.id,
+      nodeId: result.nodeId,
+      ownerId: result.ownerId,
+      ownerPublicKey: result.ownerPublicKey,
+      deviceId: result.deviceId,
+      pairedClientToken: result.clientToken,
+      trustEpoch: result.trustEpoch,
+      sessionToken: result.sessionToken,
+      sessionExpiresAt: result.expiresAt,
+    })
+    return { ownerId: result.ownerId, profileId: draft.id }
+  } catch (cause) {
+    await removeConnectionProfile(draft.id).catch(() => undefined)
+    throw cause
+  } finally {
+    runtime.close('enrollment complete')
+  }
+}
+
 export function OwnerManageRoute() {
   const [client, setClient] = useState<ReturnType<typeof createOwnerManagementClient> | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
+  const profileId =
+    new URLSearchParams(window.location.search).get('connection') ??
+    sessionStorage.getItem('codex-web:active-connection-profile') ??
+    undefined
+  const localSession = readLocalOwnerSession()
   const {
     status: ownerStatus,
     error: ownerError,
     request: ownerRequest,
     close: closeOwnerRuntime,
-  } = useOwnerRuntime(readLocalOwnerSession()?.token)
-  const [remoteCredentials, setRemoteCredentials] = useState<{
-    token: string
-    ownerId: string
-    relayUrl: string
-    nodeId: string
-    deviceId: string
-    trustEpoch: number
-    clientToken: string
-    publicKey: string
-    privateKey: CryptoKey
-  } | null>(null)
-  const remoteRuntimeRef = React.useRef<ReturnType<typeof createOwnerRuntime> | null>(null)
-  useEffect(() => {
-    if (readLocalOwnerSession()) return
-    let active = true
-    void (async () => {
-      const record = await loadDeviceKey()
-      if (
-        !record?.pairedClientToken ||
-        !record.deviceId ||
-        !record.nodeId ||
-        !record.relayUrl ||
-        !record.ownerCode
-      )
-        return
-      const session = await loadRemoteOwnerSession({
-        relayUrl: record.relayUrl,
-        ownerCode: record.ownerCode,
-        nodeId: record.nodeId,
-        deviceId: record.deviceId,
-        ownerId: record.ownerId ?? undefined,
-      })
-      if (!session || !active) return
-      setRemoteCredentials({
-        token: session.token,
-        ownerId: session.ownerId,
-        relayUrl: record.relayUrl,
-        nodeId: record.nodeId,
-        deviceId: record.deviceId,
-        trustEpoch: record.trustEpoch ?? 0,
-        clientToken: record.pairedClientToken,
-        publicKey: record.publicKey,
-        privateKey: record.privateKey,
-      })
-    })().catch((cause) => {
-      if (active)
-        setConnectionError(
-          cause instanceof Error ? cause.message : 'Unable to restore remote session',
-        )
-    })
-    return () => {
-      active = false
-    }
-  }, [])
-  useEffect(() => {
-    if (!remoteCredentials || readLocalOwnerSession()) return
-    const runtime = createOwnerRuntime((url) =>
-      createRelayOwnerSocket(url, {
-        nodeId: remoteCredentials.nodeId,
-        trustEpoch: remoteCredentials.trustEpoch,
-        clientToken: remoteCredentials.clientToken,
-        deviceId: remoteCredentials.deviceId,
-        publicKey: remoteCredentials.publicKey,
-        privateKey: remoteCredentials.privateKey,
-      }),
-    )
-    remoteRuntimeRef.current = runtime
-    let active = true
-    void runtime
-      .connect({
-        url: remoteCredentials.relayUrl,
-        sessionToken: remoteCredentials.token,
-        clientId: 'owner-management',
-        capabilities: ['owner', 'remote-administration'],
-      })
-      .then(() => {
-        if (!active) return
-        setClient(
-          createOwnerManagementClient({
-            request: (method: string, params?: Record<string, unknown>) =>
-              runtime.request(method, params),
-            close: () => runtime.close('management closed'),
-          }),
-        )
-      })
-      .catch((cause) => {
-        if (active)
-          setConnectionError(cause instanceof Error ? cause.message : 'Unable to connect to Owner')
-      })
-    return () => {
-      active = false
-      runtime.close('management route disposed')
-      remoteRuntimeRef.current = null
-    }
-  }, [remoteCredentials])
+  } = useOwnerRuntime(localSession?.token, profileId)
+  const requirePasskeyStepUp = !localSession && Boolean(profileId)
   const requestOwner = useCallback(
-    (method: string, params?: Record<string, unknown>) => ownerRequest(method, params),
+    <T = unknown,>(method: string, params?: Record<string, unknown>) =>
+      ownerRequest<T>(method, params),
     [ownerRequest],
   )
   const closeOwner = useCallback(() => closeOwnerRuntime('management closed'), [closeOwnerRuntime])
   useEffect(() => {
-    if (!readLocalOwnerSession()) return
     if (ownerStatus === 'ready') {
       setConnectionError(null)
       setClient(
         createOwnerManagementClient({
           request: requestOwner,
           close: closeOwner,
+          requirePasskeyStepUp,
         }),
       )
     } else {
       setClient(null)
       if (ownerStatus === 'failed') setConnectionError(ownerError)
     }
-  }, [closeOwner, ownerError, requestOwner, ownerStatus])
+  }, [closeOwner, ownerError, requestOwner, ownerStatus, requirePasskeyStepUp])
   if (connectionError)
     return (
       <main className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground">

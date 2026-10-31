@@ -9,7 +9,7 @@ import {
   type RelayAttachFrame,
   type RelayClientConnectedFrame,
   type RelayClientDisconnectedFrame,
-  type RelayBootstrapReferenceRegisterFrame,
+  type RelayEnrollmentRegisterFrame,
 } from '@codex-web/protocol/relay'
 
 export type RelaySocket = {
@@ -27,7 +27,7 @@ export type RelaySession = {
   trustEpoch: number
   role: ConnectionRole
   socket: RelaySocket
-  admission?: 'paired' | 'login' | 'first_session' | 'bootstrap_reference'
+  admission?: 'paired' | 'enrollment'
   deviceId?: string
   ownerCode?: string
   reference?: string
@@ -60,7 +60,7 @@ export type RelayRouterOptions = {
 type RelayNode = {
   owner?: RelaySession
   ownerCode?: string
-  bootstrapReferences: Set<string>
+  enrollmentReferences: Set<string>
   trustEpoch: number
   clients: Map<string, RelaySession>
 }
@@ -75,7 +75,7 @@ const encoder = new TextEncoder()
 export class RelayRouter {
   private readonly nodes = new Map<string, RelayNode>()
   private readonly ownerCodes = new Map<string, string>()
-  private readonly bootstrapReferences = new Map<string, { nodeId: string; expiresAt: number }>()
+  private readonly enrollmentReferences = new Map<string, { nodeId: string; expiresAt: number }>()
   private readonly sessions = new Map<string, RelaySession>()
   private readonly options: RelayRouterOptions
 
@@ -84,12 +84,7 @@ export class RelayRouter {
   }
 
   attach(attachment: RelayAttachFrame, socket: RelaySocket): RelayAttachResult {
-    if (
-      attachment.role === 'client' &&
-      (attachment.admission === 'login' ||
-        attachment.admission === 'first_session' ||
-        attachment.admission === 'bootstrap_reference')
-    )
+    if (attachment.role === 'client' && attachment.admission === 'enrollment')
       return this.attachLoginCandidate(attachment, socket)
     const trustEpoch = attachment.trustEpoch
     if (
@@ -170,8 +165,8 @@ export class RelayRouter {
       if (existingNode?.ownerCode && existingNode.ownerCode !== attachment.ownerCode)
         this.removeOwnerCode(existingNode.ownerCode, attachment.nodeId)
       if (existingNode?.owner && existingNode.owner.sessionId !== session.sessionId) {
-        for (const reference of existingNode.bootstrapReferences)
-          this.removeBootstrapReference(reference, attachment.nodeId)
+        for (const reference of existingNode.enrollmentReferences)
+          this.removeEnrollmentReference(reference, attachment.nodeId)
       }
       this.ownerCodes.set(attachment.ownerCode, attachment.nodeId)
       node.ownerCode = attachment.ownerCode
@@ -265,57 +260,54 @@ export class RelayRouter {
     return { online: true, nodeId, trustEpoch: node.trustEpoch }
   }
 
-  resolveBootstrapReference(
+  resolveEnrollmentReference(
     reference: string,
   ): { online: true; nodeId: string; trustEpoch: number } | { online: false } {
-    const mapping = this.bootstrapReferences.get(reference)
+    const mapping = this.enrollmentReferences.get(reference)
     if (!mapping || mapping.expiresAt <= Date.now()) {
-      if (mapping) this.removeBootstrapReference(reference, mapping.nodeId)
+      if (mapping) this.removeEnrollmentReference(reference, mapping.nodeId)
       return { online: false }
     }
     const node = this.nodes.get(mapping.nodeId)
-    if (!node?.owner || !node.bootstrapReferences.has(reference)) {
-      this.removeBootstrapReference(reference, mapping.nodeId)
+    if (!node?.owner || !node.enrollmentReferences.has(reference)) {
+      this.removeEnrollmentReference(reference, mapping.nodeId)
       return { online: false }
     }
     return { online: true, nodeId: mapping.nodeId, trustEpoch: node.trustEpoch }
   }
 
-  registerBootstrapReference(
-    sessionId: string,
-    frame: RelayBootstrapReferenceRegisterFrame,
-  ): boolean {
+  registerEnrollmentReference(sessionId: string, frame: RelayEnrollmentRegisterFrame): boolean {
     const session = this.sessions.get(sessionId)
     if (!session || session.role !== 'owner' || frame.expiresAt <= Date.now()) return false
     const node = this.nodes.get(session.nodeId)
     if (!node?.owner || node.owner.sessionId !== sessionId) return false
-    const existing = this.bootstrapReferences.get(frame.reference)
+    const existing = this.enrollmentReferences.get(frame.reference)
     if (existing && existing.expiresAt <= Date.now())
-      this.removeBootstrapReference(frame.reference, existing.nodeId)
+      this.removeEnrollmentReference(frame.reference, existing.nodeId)
     if (existing && existing.nodeId !== session.nodeId) return false
-    for (const reference of node.bootstrapReferences)
-      this.removeBootstrapReference(reference, session.nodeId)
-    this.bootstrapReferences.set(frame.reference, {
+    for (const reference of node.enrollmentReferences)
+      this.removeEnrollmentReference(reference, session.nodeId)
+    this.enrollmentReferences.set(frame.reference, {
       nodeId: session.nodeId,
       expiresAt: frame.expiresAt,
     })
-    node.bootstrapReferences.add(frame.reference)
+    node.enrollmentReferences.add(frame.reference)
     return true
   }
 
-  unregisterBootstrapReference(sessionId: string, reference?: string): boolean {
+  unregisterEnrollmentReference(sessionId: string, reference?: string): boolean {
     const session = this.sessions.get(sessionId)
     if (!session || session.role !== 'owner') return false
     const node = this.nodes.get(session.nodeId)
     if (!node?.owner || node.owner.sessionId !== sessionId) return false
     if (reference) {
-      const mapping = this.bootstrapReferences.get(reference)
+      const mapping = this.enrollmentReferences.get(reference)
       if (!mapping || mapping.nodeId !== session.nodeId) return false
-      this.removeBootstrapReference(reference, session.nodeId)
+      this.removeEnrollmentReference(reference, session.nodeId)
       return true
     }
-    for (const active of node.bootstrapReferences)
-      this.removeBootstrapReference(active, session.nodeId)
+    for (const active of node.enrollmentReferences)
+      this.removeEnrollmentReference(active, session.nodeId)
     return true
   }
 
@@ -361,20 +353,13 @@ export class RelayRouter {
       version: 1,
       nodeId: client.nodeId,
       connectionId: client.connectionId,
-      ...(client.admission === 'login'
-        ? { admission: client.admission, ownerCode: client.ownerCode! }
-        : client.admission === 'bootstrap_reference'
-          ? {
-              admission: client.admission,
-              reference: client.reference!,
-              ownerPublicKey: owner.ownerPublicKey!,
-            }
-          : client.admission === 'first_session'
-            ? {
-                admission: client.admission,
-                ownerCode: client.ownerCode!,
-              }
-            : { deviceId: client.deviceId! }),
+      ...(client.admission === 'enrollment'
+        ? {
+            admission: client.admission,
+            reference: client.reference!,
+            ownerPublicKey: owner.ownerPublicKey!,
+          }
+        : { deviceId: client.deviceId! }),
     }
     owner.socket.send(encodeFrame(frame))
   }
@@ -382,7 +367,7 @@ export class RelayRouter {
   private createNode(): RelayNode {
     return {
       trustEpoch: 0,
-      bootstrapReferences: new Set<string>(),
+      enrollmentReferences: new Set<string>(),
       clients: new Map<string, RelaySession>(),
     }
   }
@@ -404,8 +389,8 @@ export class RelayRouter {
         delete node.owner
         if (session.ownerCode) this.removeOwnerCode(session.ownerCode, session.nodeId)
         if (node.ownerCode === session.ownerCode) delete node.ownerCode
-        for (const reference of node.bootstrapReferences)
-          this.removeBootstrapReference(reference, session.nodeId)
+        for (const reference of node.enrollmentReferences)
+          this.removeEnrollmentReference(reference, session.nodeId)
       }
       const clients = [...node.clients.values()]
       node.clients.clear()
@@ -434,44 +419,30 @@ export class RelayRouter {
     if (this.ownerCodes.get(ownerCode) === nodeId) this.ownerCodes.delete(ownerCode)
   }
 
-  private removeBootstrapReference(reference: string, nodeId: string) {
-    const mapping = this.bootstrapReferences.get(reference)
-    if (mapping?.nodeId === nodeId) this.bootstrapReferences.delete(reference)
+  private removeEnrollmentReference(reference: string, nodeId: string) {
+    const mapping = this.enrollmentReferences.get(reference)
+    if (mapping?.nodeId === nodeId) this.enrollmentReferences.delete(reference)
     const node = this.nodes.get(nodeId)
-    node?.bootstrapReferences.delete(reference)
+    node?.enrollmentReferences.delete(reference)
   }
 
   private attachLoginCandidate(
-    attachment: Extract<
-      RelayAttachFrame,
-      { role: 'client'; admission: 'login' | 'first_session' | 'bootstrap_reference' }
-    >,
+    attachment: Extract<RelayAttachFrame, { role: 'client'; admission: 'enrollment' }>,
     socket: RelaySocket,
   ): RelayAttachResult {
     if (
       !attachment.connectionId ||
       encoder.encode(attachment.connectionId).byteLength > MAX_ROUTE_ID_BYTES ||
-      (attachment.admission !== 'bootstrap_reference' &&
-        !isOwnerCode('ownerCode' in attachment ? attachment.ownerCode : undefined)) ||
-      (attachment.admission === 'bootstrap_reference' &&
-        (!isRouteReference(attachment.reference) || attachment.reference.length === 0))
+      !isRouteReference(attachment.reference)
     )
       return { ok: false, reason: 'invalid_attachment' }
-    const ownerCode = 'ownerCode' in attachment ? attachment.ownerCode : undefined
-    const reference =
-      attachment.admission === 'bootstrap_reference' ? attachment.reference : undefined
-    const mapping = reference ? this.bootstrapReferences.get(reference) : undefined
+    const reference = attachment.reference
+    const mapping = this.enrollmentReferences.get(reference)
     if (mapping && mapping.expiresAt <= Date.now())
-      this.removeBootstrapReference(reference!, mapping.nodeId)
-    const nodeId = reference
-      ? this.bootstrapReferences.get(reference)?.nodeId
-      : this.ownerCodes.get(ownerCode!)
+      this.removeEnrollmentReference(reference, mapping.nodeId)
+    const nodeId = this.enrollmentReferences.get(reference)?.nodeId
     const node = nodeId ? this.nodes.get(nodeId) : undefined
-    if (
-      !nodeId ||
-      !node?.owner ||
-      (reference ? !node.bootstrapReferences.has(reference) : node.ownerCode !== ownerCode)
-    )
+    if (!nodeId || !node?.owner || !node.enrollmentReferences.has(reference))
       return { ok: false, reason: 'unauthorized' }
     if (this.sessions.size >= (this.options.maxConnections ?? DEFAULT_MAX_CONNECTIONS))
       return { ok: false, reason: 'capacity' }
@@ -486,7 +457,7 @@ export class RelayRouter {
       role: 'client',
       socket,
       admission: attachment.admission,
-      ...(reference ? { reference } : { ownerCode: ownerCode! }),
+      reference,
       ...(node.owner?.ownerPublicKey ? { ownerPublicKey: node.owner.ownerPublicKey } : {}),
       rateTokens: this.options.messagesPerSecond ?? DEFAULT_MESSAGES_PER_SECOND,
       lastRateUpdate: Date.now(),

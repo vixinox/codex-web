@@ -22,7 +22,7 @@ export type OwnerIpcResponse =
       error: { code: string; message: string; retryable: boolean }
     }
 
-export type OwnerIpcDispatcher = (command: string, params: unknown) => Promise<unknown> | unknown
+export type OwnerIpcDispatcher = (command: string, params: unknown) => unknown
 
 export function ownerIpcEndpoint(dataRoot: string) {
   const canonicalRoot = path.resolve(dataRoot).toLocaleLowerCase('en-US')

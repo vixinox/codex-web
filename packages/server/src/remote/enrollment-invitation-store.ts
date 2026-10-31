@@ -1,55 +1,67 @@
 import { createHash, randomBytes } from 'node:crypto'
 
-export type FirstSessionGrantBinding = {
+export type EnrollmentInvitationBinding = {
   ownerId: string
   nodeId: string
   trustEpoch: number
-  remoteOrigin: string
+  issuer: 'owner-local' | 'cli' | 'paired-device'
+  issuerDeviceId?: string
 }
 
-type GrantEntry = FirstSessionGrantBinding & {
-  grantHash: string
+type EnrollmentIdentityBinding = Pick<
+  EnrollmentInvitationBinding,
+  'ownerId' | 'nodeId' | 'trustEpoch'
+>
+
+type InvitationEntry = EnrollmentInvitationBinding & {
   referenceHash: string
   expiresAt: number
   consumed: boolean
   clientPublicKey?: string
 }
 
-export class FirstSessionGrantStore {
-  private entry: GrantEntry | undefined
+export class EnrollmentInvitationStore {
+  private entry: InvitationEntry | undefined
   private readonly now: () => number
 
   constructor(now = () => Date.now()) {
     this.now = now
   }
 
-  issue(binding: FirstSessionGrantBinding) {
-    const grant = randomBytes(32).toString('base64url')
+  issue(binding: EnrollmentInvitationBinding) {
     const reference = randomBytes(18).toString('base64url')
     const expiresAt = this.now() + 5 * 60_000
     this.entry = {
       ...binding,
-      grantHash: hash(grant),
       referenceHash: hash(reference),
       expiresAt,
       consumed: false,
     }
-    return { grant, reference, expiresAt }
+    return { reference, expiresAt }
   }
 
-  consume(
-    grantOrReference: string,
-    binding: FirstSessionGrantBinding & { clientPublicKey: string },
-  ) {
+  status() {
+    const entry = this.entry
+    if (!entry || entry.expiresAt <= this.now()) {
+      this.entry = undefined
+      return null
+    }
+    return {
+      expiresAt: entry.expiresAt,
+      consumed: entry.consumed,
+      issuer: entry.issuer,
+      ...(entry.issuerDeviceId ? { issuerDeviceId: entry.issuerDeviceId } : {}),
+    }
+  }
+
+  consume(reference: string, binding: EnrollmentIdentityBinding & { clientPublicKey: string }) {
     const entry = this.entry
     if (!entry || entry.consumed || entry.expiresAt <= this.now()) return false
     if (
-      (!equal(entry.grantHash, hash(grantOrReference)) &&
-        !equal(entry.referenceHash, hash(grantOrReference))) ||
+      !equal(entry.referenceHash, hash(reference)) ||
       entry.ownerId !== binding.ownerId ||
       entry.nodeId !== binding.nodeId ||
       entry.trustEpoch !== binding.trustEpoch ||
-      entry.remoteOrigin !== binding.remoteOrigin ||
       (entry.clientPublicKey !== undefined && entry.clientPublicKey !== binding.clientPublicKey)
     )
       return false
@@ -60,6 +72,12 @@ export class FirstSessionGrantStore {
 
   invalidate() {
     this.entry = undefined
+  }
+
+  cancel() {
+    const existed = this.status() !== null
+    this.entry = undefined
+    return existed
   }
 }
 

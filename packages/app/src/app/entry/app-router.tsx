@@ -2,7 +2,7 @@ import { Navigate, Route, Routes } from 'react-router'
 import {
   CandidateRoute,
   ConnectionRoute,
-  FirstSessionRoute,
+  EnrollmentRoute,
   LoginRoute,
   RootRoute,
   StartupRoute,
@@ -20,7 +20,7 @@ export function AppRouter() {
       <Route path="/" element={<RootRoute />} />
       {startupPageEnabled ? <Route path="/startup" element={<StartupRoute />} /> : null}
       <Route path="/login" element={<LoginRoute />} />
-      <Route path="/app/first-session" element={<FirstSessionRoute />} />
+      <Route path="/app/enroll" element={<EnrollmentRoute />} />
       <Route path="/app/settings/connection" element={<ConnectionRoute />} />
       <Route path="/owner/manage" element={<Navigate to="/app/settings/connection" replace />} />
       <Route path="/app/manage" element={<Navigate to="/app/settings/connection" replace />} />

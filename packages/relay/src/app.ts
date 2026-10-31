@@ -4,8 +4,8 @@ import type { BunWebSocketHandler, BunWebSocketData } from 'hono/bun'
 import {
   encodeFrame,
   isRelayAttachFrame,
-  isRelayBootstrapReferenceRegisterFrame,
-  isRelayBootstrapReferenceUnregisterFrame,
+  isRelayEnrollmentRegisterFrame,
+  isRelayEnrollmentUnregisterFrame,
   parseFrame,
   RELAY_PROTOCOL_VERSION,
 } from '@codex-web/protocol/relay'
@@ -31,22 +31,6 @@ export function createRelayApp(
   },
 ) {
   const app = new Hono()
-  app.use('/owner-code/*', async (context, next) => {
-    await next()
-    context.header('access-control-allow-origin', '*')
-    context.header('access-control-allow-methods', 'GET, OPTIONS')
-    context.header('access-control-allow-headers', 'accept')
-    context.header('cache-control', 'no-store')
-  })
-
-  app.options('/owner-code/:ownerCode', (context) => {
-    context.header('access-control-allow-origin', '*')
-    context.header('access-control-allow-methods', 'GET, OPTIONS')
-    context.header('access-control-allow-headers', 'accept')
-    context.header('cache-control', 'no-store')
-    return context.body(null, 204)
-  })
-
   app.get('/healthz', (context) =>
     context.json({
       status: 'ok',
@@ -54,12 +38,6 @@ export function createRelayApp(
       connections: router.connectionCount(),
     }),
   )
-
-  app.get('/owner-code/:ownerCode', (context) => {
-    const { ownerCode } = context.req.param()
-    if (!/^[0-9]{9}$/.test(ownerCode)) return context.json({ error: 'invalid_owner_code' }, 400)
-    return context.json(router.resolveOwnerCode(ownerCode))
-  })
 
   app.get(
     '/ws',
@@ -138,18 +116,18 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
         return
       }
       const control = parseFrame(event.data)
-      if (isRelayBootstrapReferenceRegisterFrame(control)) {
-        if (!router.registerBootstrapReference(sessionId, control)) {
-          relayLog('Bootstrap reference registration rejected')
-          ws.close(1008, 'invalid_bootstrap_reference')
-        } else relayLog('Bootstrap reference registered')
+      if (isRelayEnrollmentRegisterFrame(control)) {
+        if (!router.registerEnrollmentReference(sessionId, control)) {
+          relayLog('Enrollment reference registration rejected')
+          ws.close(1008, 'invalid_enrollment_reference')
+        } else relayLog('Enrollment reference registered')
         return
       }
-      if (isRelayBootstrapReferenceUnregisterFrame(control)) {
-        if (!router.unregisterBootstrapReference(sessionId, control.reference)) {
-          relayLog('Bootstrap reference unregister rejected')
-          ws.close(1008, 'invalid_bootstrap_reference')
-        } else relayLog('Bootstrap reference unregistered')
+      if (isRelayEnrollmentUnregisterFrame(control)) {
+        if (!router.unregisterEnrollmentReference(sessionId, control.reference)) {
+          relayLog('Enrollment reference unregister rejected')
+          ws.close(1008, 'invalid_enrollment_reference')
+        } else relayLog('Enrollment reference unregistered')
         return
       }
       const session = router.getSession(sessionId)

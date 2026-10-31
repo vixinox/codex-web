@@ -1,473 +1,328 @@
 import * as React from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { KeyRound, Loader2, QrCode, Laptop, Radio } from 'lucide-react'
+import { KeyRound, Loader2, LogOut, Plus, Radio, Trash2, Wifi } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
 import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
+import { authenticateWithPasskey } from '@/lib/remote/admission'
 import {
-  checkOwnerCodeAvailability,
-  readKnownOwnerFingerprint,
-  readOwnerCodePreference,
-  rememberOwnerFingerprint,
-  saveRecentOwnerTarget,
-  type OwnerCodeAvailability,
-} from '@/lib/remote/owner-code-preference'
-import { createDeviceKey } from '@/lib/remote/device-key-store'
-import {
-  authenticateWithPasskey,
-  authenticateWithRecoveryCode,
-  redeemFirstSession,
-} from '@/lib/remote/admission'
-import { inspectRemoteOwnerFingerprint } from '@/lib/remote/admission'
-import { LoginQrScanner, parseLoginQrPayload } from '@/app/owner/login-qr-scanner'
-import type { FirstSessionPayload } from '@/app/owner/owner-management-model'
-import { saveLocalOwnerSession } from '@/lib/auth/auth-client'
-import {
-  loadRemoteOwnerSession,
-  loadDeviceKey,
-  saveRemoteOwnerSession,
-  setPairedDevice,
+  clearConnectionProfileSession,
+  listConnectionProfiles,
+  loadConnectionProfile,
+  loadConnectionProfileSession,
+  removeConnectionProfile,
+  saveConnectionProfileSession,
+  updateConnectionProfileLastConnected,
+  type ConnectionProfileSummary,
 } from '@/lib/remote/device-key-store'
+import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
 
 export function LoginScreen() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [mode, setMode] = React.useState<'local' | 'remote'>('local')
-  const [busy, setBusy] = React.useState(false)
+  const isLocal = window.location.hostname === 'localhost'
+  const [profiles, setProfiles] = React.useState<ConnectionProfileSummary[]>([])
+  const [busy, setBusy] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const [showScanner, setShowScanner] = React.useState(false)
-  const [manualPayload, setManualPayload] = React.useState('')
-  const [relayUrl, setRelayUrl] = React.useState(readOwnerCodePreference().target?.relayUrl ?? '')
-  const [ownerCode, setOwnerCode] = React.useState(readOwnerCodePreference().ownerCode)
-  const [availability, setAvailability] = React.useState<OwnerCodeAvailability>('idle')
-  const [target, setTarget] = React.useState<{ nodeId: string; trustEpoch: number } | null>(null)
-  const [fingerprint, setFingerprint] = React.useState('')
+  const [statuses, setStatuses] = React.useState<Record<string, string>>({})
+  const enrollmentReference = new URLSearchParams(location.search).get('ref')
+
+  const refreshProfiles = React.useCallback(async () => {
+    setProfiles(await listConnectionProfiles())
+  }, [])
 
   React.useEffect(() => {
-    const reference = new URLSearchParams(location.search).get('ref')
-    if (!reference || !/^[A-Za-z0-9_-]{16,256}$/u.test(reference)) return
-    const url = new URL('/app/first-session', window.location.origin)
-    url.searchParams.set('ref', reference)
-    setManualPayload(url.toString())
-    setMode('remote')
-  }, [location.search])
-  const [verifiedFingerprint, setVerifiedFingerprint] = React.useState<string | null>(null)
-  const [presence, setPresence] = React.useState<{
-    remotePasskey: boolean
-    recovery: boolean
-  } | null>(null)
-  const [recoveryCode, setRecoveryCode] = React.useState('')
-  const [showSecurityPrompt, setShowSecurityPrompt] = React.useState(false)
+    if (isLocal) return
+    void refreshProfiles().catch((cause) =>
+      setError(cause instanceof Error ? cause.message : 'Unable to read saved connections'),
+    )
+  }, [isLocal, refreshProfiles])
 
-  React.useEffect(() => {
-    let active = true
-    void (async () => {
-      const device = await loadDeviceKey()
-      if (
-        !device?.pairedClientToken ||
-        !device.deviceId ||
-        !device.nodeId ||
-        !device.relayUrl ||
-        !device.ownerCode
-      )
+  const connectProfile = async (id: string, testOnly: boolean) => {
+    const profile = await loadConnectionProfile(id)
+    if (!profile?.deviceId || !profile.pairedClientToken || profile.trustEpoch === null)
+      throw new Error('This connection needs a new enrollment invitation.')
+    const savedSession = await loadConnectionProfileSession(id)
+    const socketTarget = {
+      nodeId: profile.nodeId,
+      trustEpoch: profile.trustEpoch,
+      clientToken: profile.pairedClientToken,
+      deviceId: profile.deviceId,
+      publicKey: profile.publicKey,
+      privateKey: profile.privateKey,
+      expectedOwnerPublicKey: profile.ownerPublicKey,
+    }
+    const runtime = createOwnerRuntime(() => createRelayOwnerSocket(profile.relayUrl, socketTarget))
+    try {
+      await runtime.connect({
+        url: profile.relayUrl,
+        ...(savedSession ? { sessionToken: savedSession.token } : {}),
+        clientId: 'owner-remote-login',
+        capabilities: ['owner'],
+      })
+      if (!runtime.authenticated) {
+        if (testOnly)
+          throw new Error(
+            savedSession
+              ? 'Owner is reachable, but the session needs re-authentication.'
+              : 'Owner is reachable, but this profile has no active session.',
+          )
+        const result = await authenticateWithPasskey(runtime, 'remote')
+        if (!result.ownerId || result.ownerId !== profile.ownerId)
+          throw new Error('Owner identity does not match this saved connection.')
+        await saveConnectionProfileSession(id, {
+          token: result.token,
+          expiresAt: result.expiresAt,
+        })
+        await updateConnectionProfileLastConnected(id)
+        sessionStorage.setItem('codex-web:active-connection-profile', id)
+        await navigate(`/app?connection=${encodeURIComponent(id)}`, {
+          replace: true,
+          state: { remoteOwnerId: profile.ownerId, connectionProfileId: id },
+        })
         return
-      const session = await loadRemoteOwnerSession({
-        relayUrl: device.relayUrl,
-        ownerCode: device.ownerCode,
-        nodeId: device.nodeId,
-        deviceId: device.deviceId,
-        ownerId: device.ownerId ?? undefined,
-      })
-      if (active && session)
-        await navigate('/app', { replace: true, state: { remoteOwnerId: session.ownerId } })
-    })().catch(() => undefined)
-    return () => {
-      active = false
-    }
-  }, [navigate])
-
-  React.useEffect(() => {
-    if (mode !== 'remote' || ownerCode.length !== 9 || !relayUrl) return
-    let active = true
-    setAvailability('checking')
-    const timer = window.setTimeout(() => {
-      void checkOwnerCodeAvailability({ relayUrl, ownerCode }).then((result) => {
-        if (!active) return
-        setAvailability(result.status)
-        setTarget(
-          result.status === 'online'
-            ? { nodeId: result.nodeId, trustEpoch: result.trustEpoch }
-            : null,
-        )
-      })
-    }, 200)
-    return () => {
-      active = false
-      window.clearTimeout(timer)
-    }
-  }, [mode, ownerCode, relayUrl])
-
-  React.useEffect(() => {
-    if (!target) return
-    const saved = readKnownOwnerFingerprint(relayUrl, target.nodeId)
-    setFingerprint(saved ?? '')
-    setVerifiedFingerprint(null)
-    setPresence(null)
-  }, [relayUrl, target])
-
-  const connectRemoteCandidate = async (options: {
-    relayUrl: string
-    ownerCode: string
-    nodeId: string
-    trustEpoch: number
-    expectedFingerprint: string
-  }) => {
-    const record = await loadDeviceKey()
-    if (!record) await createDeviceKey()
-    const device = await loadDeviceKey()
-    if (!device) throw new Error('Unable to create a remote device key.')
-    const targetSocket = {
-      nodeId: options.nodeId,
-      trustEpoch: options.trustEpoch,
-      clientToken: '',
-      publicKey: device.publicKey,
-      privateKey: device.privateKey,
-      loginOwnerCode: options.ownerCode,
-      expectedOwnerFingerprint: options.expectedFingerprint,
-    }
-    const { createRelayOwnerSocket } = await import('@/lib/remote/relay-owner-socket')
-    const relaySocket = createRelayOwnerSocket(options.relayUrl, targetSocket)
-    const candidate = createOwnerRuntime(() => relaySocket)
-    await candidate.connect({
-      url: options.relayUrl,
-      clientId: 'owner-login-candidate',
-      capabilities: ['owner'],
-    })
-    return candidate
-  }
-
-  const inspectRemotePresence = async (
-    owner: { nodeId: string; trustEpoch: number },
-    fingerprint: string,
-  ) => {
-    const runtime = await connectRemoteCandidate({
-      relayUrl,
-      ownerCode,
-      nodeId: owner.nodeId,
-      trustEpoch: owner.trustEpoch,
-      expectedFingerprint: fingerprint,
-    })
-    try {
-      const status = await runtime.request<{
-        remotePasskeyAvailable?: boolean
-        recoveryAvailable?: boolean
-      }>('owner.status')
-      setPresence({
-        remotePasskey: status.remotePasskeyAvailable === true,
-        recovery: status.recoveryAvailable === true,
-      })
-    } finally {
-      runtime.close('presence checked')
-    }
-  }
-
-  const finishRemote = async (payload: FirstSessionPayload) => {
-    const result = await redeemFirstSession(payload)
-    saveRecentOwnerTarget({
-      relayUrl: payload.relayUrl,
-      ownerCode: result.ownerCode,
-      nodeId: result.nodeId,
-    })
-    await navigate('/app', {
-      replace: true,
-      state: { remoteOwnerId: result.ownerId, firstSession: true },
-    })
-    setShowSecurityPrompt(true)
-  }
-
-  const signInPasskey = async () => {
-    if (!target || !verifiedFingerprint) throw new Error('Verify the Owner fingerprint first.')
-    const runtime = await connectRemoteCandidate({
-      relayUrl,
-      ownerCode,
-      nodeId: target.nodeId,
-      trustEpoch: target.trustEpoch,
-      expectedFingerprint: verifiedFingerprint,
-    })
-    try {
-      const result = await authenticateWithPasskey(runtime, 'remote')
-      saveRecentOwnerTarget({ relayUrl, ownerCode, nodeId: target.nodeId })
-      await navigate('/app', { replace: true, state: { remoteOwnerId: result.ownerId } })
-    } finally {
-      runtime.close('passkey sign-in complete')
-    }
-  }
-
-  const signInRecovery = async () => {
-    if (!target || !verifiedFingerprint) throw new Error('Verify the Owner fingerprint first.')
-    const runtime = await connectRemoteCandidate({
-      relayUrl,
-      ownerCode,
-      nodeId: target.nodeId,
-      trustEpoch: target.trustEpoch,
-      expectedFingerprint: verifiedFingerprint,
-    })
-    try {
-      const result = await authenticateWithRecoveryCode(runtime, recoveryCode.trim())
-      const device = await loadDeviceKey()
-      if (!device) throw new Error('Remote device key is unavailable.')
-      await setPairedDevice({
-        deviceId: result.deviceId,
-        pairedClientToken: result.clientToken,
-        trustEpoch: result.trustEpoch,
-        nodeId: target.nodeId,
-        relayUrl,
-      })
-      await saveRemoteOwnerSession({
-        token: result.sessionToken,
-        expiresAt: result.expiresAt,
-        relayUrl,
-        ownerCode,
-        nodeId: target.nodeId,
-        deviceId: result.deviceId,
-        ownerId: result.ownerId,
-      })
-      saveRecentOwnerTarget({ relayUrl, ownerCode, nodeId: target.nodeId })
-      await navigate('/app', {
+      }
+      if (testOnly) {
+        setStatuses((current) => ({ ...current, [id]: 'Connected' }))
+        return
+      }
+      const session = await loadConnectionProfileSession(id)
+      if (!session) throw new Error('The saved session expired. Use a new enrollment invitation.')
+      await updateConnectionProfileLastConnected(id)
+      sessionStorage.setItem('codex-web:active-connection-profile', id)
+      await navigate(`/app?connection=${encodeURIComponent(id)}`, {
         replace: true,
-        state: {
-          remoteOwnerId: result.ownerId!,
-          recovered: true,
-          recoveryCodes: result.recoveryCodes,
-        },
+        state: { remoteOwnerId: profile.ownerId, connectionProfileId: id },
       })
     } finally {
-      runtime.close('recovery sign-in complete')
+      runtime.close(testOnly ? 'connection test complete' : 'remote login complete')
+    }
+  }
+
+  const run = async (key: string, action: () => Promise<void>) => {
+    setBusy(key)
+    setError(null)
+    try {
+      await action()
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Connection failed'
+      setError(message)
+      if (key.startsWith('test:'))
+        setStatuses((current) => ({ ...current, [key.slice(5)]: message }))
+    } finally {
+      setBusy(null)
     }
   }
 
   const signInLocal = async () => {
     const runtime = createOwnerRuntime()
-    await runtime.connect({
-      url: `${window.location.origin.replace(/^http/, 'ws')}/ws`,
-      clientId: 'owner-local-login',
-      capabilities: ['owner'],
-    })
-    const result = await authenticateWithPasskey(runtime, 'local')
-    if (!result.ownerId) throw new Error('Owner identity is unavailable.')
-    saveLocalOwnerSession({
-      token: result.token!,
-      ownerId: result.ownerId,
-      expiresAt: result.expiresAt,
-    })
-    runtime.close('local passkey sign-in complete')
-    await navigate('/app', { replace: true })
-  }
-
-  const run = async (operation: () => Promise<void>) => {
-    setBusy(true)
-    setError(null)
     try {
-      await operation()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Connection failed')
+      await runtime.connect({
+        url: `${window.location.origin.replace(/^http/u, 'ws')}/ws`,
+        clientId: 'owner-local-login',
+        capabilities: ['owner'],
+      })
+      const result = await authenticateWithPasskey(runtime, 'local')
+      if (!result.ownerId || !result.token || !result.expiresAt)
+        throw new Error('Owner identity is unavailable.')
+      const { saveLocalOwnerSession } = await import('@/lib/auth/auth-client')
+      saveLocalOwnerSession({
+        token: result.token,
+        ownerId: result.ownerId,
+        expiresAt: result.expiresAt,
+      })
+      await navigate('/app', { replace: true })
     } finally {
-      setBusy(false)
+      runtime.close('local Passkey sign-in complete')
     }
   }
 
+  const removeProfile = async (id: string) => {
+    const profile = await loadConnectionProfile(id)
+    if (profile?.deviceId && profile.pairedClientToken && profile.trustEpoch !== null) {
+      const session = await loadConnectionProfileSession(id)
+      if (session) {
+        const target = {
+          nodeId: profile.nodeId,
+          trustEpoch: profile.trustEpoch,
+          clientToken: profile.pairedClientToken,
+          deviceId: profile.deviceId,
+          publicKey: profile.publicKey,
+          privateKey: profile.privateKey,
+          expectedOwnerPublicKey: profile.ownerPublicKey,
+        }
+        const runtime = createOwnerRuntime(() => createRelayOwnerSocket(profile.relayUrl, target))
+        try {
+          await runtime.connect({
+            url: profile.relayUrl,
+            sessionToken: session.token,
+            clientId: 'owner-connection-removal',
+            capabilities: ['owner'],
+          })
+          await runtime.request('remote.devices.revoke', { deviceId: profile.deviceId })
+        } catch {
+          // Local secrets are removed even when Owner cannot be reached.
+        } finally {
+          runtime.close('connection removed')
+        }
+      }
+    }
+    await removeConnectionProfile(id)
+    await refreshProfiles()
+  }
+
   return (
-    <main className="flex min-h-svh items-center justify-center bg-background px-4 py-8 text-foreground">
-      <div className="w-full max-w-md space-y-5">
+    <main className="min-h-svh bg-background px-4 py-10 text-foreground">
+      <div className="mx-auto w-full max-w-xl space-y-5">
         <header>
           <p className="text-sm text-muted-foreground">Codex Web</p>
-          <h1 className="text-2xl font-semibold">Connect to Owner</h1>
+          <h1 className="text-2xl font-semibold">
+            {isLocal ? 'Sign in to this Owner' : 'Remote connections'}
+          </h1>
         </header>
-        {showSecurityPrompt ? (
-          <div role="status" className="rounded-md border p-3 text-sm">
-            First connection complete. You can set up Passkey and recovery codes later in{' '}
-            <a className="underline" href="/app/owner">
-              Owner security settings
-            </a>
-            .
-            <Button
-              className="ml-2"
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowSecurityPrompt(false)}
-            >
-              Continue
-            </Button>
-          </div>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
         ) : null}
-        <div className="inline-flex border-b border-border">
-          <Button
-            variant={mode === 'local' ? 'secondary' : 'ghost'}
-            onClick={() => setMode('local')}
-          >
-            <Laptop className="size-4" /> This machine
-          </Button>
-          <Button
-            variant={mode === 'remote' ? 'secondary' : 'ghost'}
-            onClick={() => setMode('remote')}
-          >
-            <Radio className="size-4" /> Remote
-          </Button>
-        </div>
-        <Card className="border-border bg-card">
-          <CardContent className="space-y-4 p-5">
-            {mode === 'local' ? (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  Sign in with a Passkey registered for localhost.
-                </p>
-                <Button className="w-full" disabled={busy} onClick={() => void run(signInLocal)}>
-                  {busy ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <KeyRound className="size-4" />
-                  )}
-                  Use local Passkey
-                </Button>
-              </>
-            ) : (
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="relay-url">Relay URL</FieldLabel>
-                  <Input
-                    id="relay-url"
-                    value={relayUrl}
-                    onChange={(event) => setRelayUrl(event.target.value)}
-                    placeholder="wss://relay.vixinox.com/ws"
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="owner-code">Owner code</FieldLabel>
-                  <Input
-                    id="owner-code"
-                    inputMode="numeric"
-                    maxLength={9}
-                    value={ownerCode}
-                    onChange={(event) =>
-                      setOwnerCode(event.target.value.replace(/\D/gu, '').slice(0, 9))
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground" role="status">
-                    {availability === 'online'
-                      ? 'Owner online'
-                      : availability === 'checking'
-                        ? 'Checking Owner'
-                        : availability === 'offline'
-                          ? 'Owner offline'
-                          : availability === 'unreachable'
-                            ? 'Relay unreachable'
-                            : ''}
-                  </p>
-                </Field>
-                <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-                  <Button variant="outline" disabled={busy} onClick={() => setShowScanner(true)}>
-                    <QrCode className="size-4" /> First-session QR
-                  </Button>
-                  <Input
-                    value={manualPayload}
-                    onChange={(event) => setManualPayload(event.target.value)}
-                    placeholder="Paste first-session URL"
-                    aria-label="First-session URL"
-                  />
-                  <Button
-                    variant="outline"
-                    disabled={busy || !manualPayload}
-                    onClick={() =>
-                      void run(async () => finishRemote(parseLoginQrPayload(manualPayload)))
-                    }
-                  >
-                    Connect
-                  </Button>
-                </div>
-                {target ? (
-                  <Field>
-                    <FieldLabel htmlFor="fingerprint">Owner fingerprint</FieldLabel>
-                    <Input
-                      id="fingerprint"
-                      value={fingerprint}
-                      onChange={(event) => {
-                        setFingerprint(event.target.value)
-                        setVerifiedFingerprint(null)
-                      }}
-                      spellCheck={false}
-                    />
-                    <Button
-                      variant="outline"
-                      disabled={busy || !fingerprint}
-                      onClick={() =>
-                        void run(async () => {
-                          const actual = await inspectRemoteOwnerFingerprint({
-                            relayUrl,
-                            ownerCode,
-                            nodeId: target.nodeId,
-                            trustEpoch: target.trustEpoch,
-                          })
-                          if (actual !== fingerprint) throw new Error('Owner fingerprint mismatch.')
-                          rememberOwnerFingerprint(relayUrl, target.nodeId, actual)
-                          setVerifiedFingerprint(actual)
-                          await inspectRemotePresence(target, actual)
-                        })
-                      }
-                    >
-                      Verify fingerprint
-                    </Button>
-                  </Field>
-                ) : null}
-                {verifiedFingerprint ? (
-                  <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-                    {presence?.remotePasskey ? (
-                      <Button disabled={busy} onClick={() => void run(signInPasskey)}>
-                        <KeyRound className="size-4" /> Passkey
+        {isLocal ? (
+          <Card>
+            <CardContent className="space-y-4 p-5">
+              <p className="text-sm text-muted-foreground">
+                Use a Passkey registered for localhost.
+              </p>
+              <Button
+                className="w-full"
+                disabled={busy !== null}
+                onClick={() => void run('local', signInLocal)}
+              >
+                {busy === 'local' ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <KeyRound className="size-4" />
+                )}
+                Use local Passkey
+              </Button>
+            </CardContent>
+          </Card>
+        ) : enrollmentReference ? (
+          <Card>
+            <CardContent className="space-y-3 p-5">
+              <h2 className="font-medium">Adding this browser</h2>
+              <p className="text-sm text-muted-foreground">
+                The Owner-issued invitation will register this browser and save a remote connection.
+              </p>
+              <Button
+                onClick={() =>
+                  void navigate(`/app/enroll?ref=${encodeURIComponent(enrollmentReference)}`, {
+                    replace: true,
+                  })
+                }
+              >
+                <Plus className="size-4" /> Continue enrollment
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {profiles.length ? (
+              profiles.map((profile) => (
+                <Card key={profile.id}>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+                    <div className="min-w-0 flex-1">
+                      <h2 className="truncate font-medium">
+                        {profile.label || 'Owner connection'}
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        {profile.lastConnectedAt
+                          ? `Last connected ${new Date(profile.lastConnectedAt).toLocaleString()}`
+                          : 'Not connected yet'}
+                        {statuses[profile.id] ? ` · ${statuses[profile.id]}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy !== null}
+                        onClick={() =>
+                          void run(`test:${profile.id}`, () => connectProfile(profile.id, true))
+                        }
+                      >
+                        {busy === `test:${profile.id}` ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Wifi className="size-4" />
+                        )}
+                        Test
                       </Button>
-                    ) : null}
-                    {presence?.recovery ? (
-                      <div className="w-full space-y-2">
-                        <Input
-                          aria-label="Recovery code"
-                          value={recoveryCode}
-                          onChange={(event) => setRecoveryCode(event.target.value)}
-                          placeholder="Recovery code"
-                        />
-                        <Button
-                          variant="outline"
-                          disabled={busy || !recoveryCode.trim()}
-                          onClick={() => void run(signInRecovery)}
-                        >
-                          Use recovery code and register a new Passkey
-                        </Button>
-                      </div>
-                    ) : null}
-                    {!presence?.remotePasskey && !presence?.recovery ? (
+                      <Button
+                        size="sm"
+                        disabled={busy !== null || !profile.paired}
+                        onClick={() =>
+                          void run(`connect:${profile.id}`, () => connectProfile(profile.id, false))
+                        }
+                      >
+                        {busy === `connect:${profile.id}` ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Radio className="size-4" />
+                        )}
+                        Connect
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy !== null || !profile.hasSession}
+                        onClick={() =>
+                          void run(`logout:${profile.id}`, async () => {
+                            await clearConnectionProfileSession(profile.id)
+                            if (
+                              sessionStorage.getItem('codex-web:active-connection-profile') ===
+                              profile.id
+                            )
+                              sessionStorage.removeItem('codex-web:active-connection-profile')
+                            await refreshProfiles()
+                          })
+                        }
+                      >
+                        <LogOut className="size-4" /> Log out
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remove ${profile.label}`}
+                        title="Remove connection"
+                        disabled={busy !== null}
+                        onClick={() =>
+                          void run(`remove:${profile.id}`, () => removeProfile(profile.id))
+                        }
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                    {!profile.hasSession ? (
                       <p className="w-full text-xs text-muted-foreground">
-                        If no first-session QR is available, generate a new bootstrap URL on the
-                        Owner machine.
+                        Session unavailable. Use a new enrollment invitation.
                       </p>
                     ) : null}
-                  </div>
-                ) : null}
-              </FieldGroup>
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              <div className="border-y py-8 text-center">
+                <p className="font-medium">No saved connections</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Open an enrollment link issued by the Owner.
+                </p>
+              </div>
             )}
-            {error ? (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
+            <p className="flex items-center gap-2 pt-1 text-xs text-muted-foreground">
+              <Radio className="size-3.5" /> Connection profiles are stored in this browser.
+            </p>
+          </div>
+        )}
       </div>
-      {showScanner ? (
-        <LoginQrScanner
-          onClose={() => setShowScanner(false)}
-          onRedeem={(payload) => finishRemote(payload)}
-        />
-      ) : null}
     </main>
   )
 }

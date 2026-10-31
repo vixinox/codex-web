@@ -7,8 +7,8 @@ import {
   encodeFrame,
   isHandshakeOkFrame,
   isRelayAttachFrame,
-  isRelayBootstrapReferenceRegisterFrame,
-  isRelayBootstrapReferenceUnregisterFrame,
+  isRelayEnrollmentRegisterFrame,
+  isRelayEnrollmentUnregisterFrame,
   isRelayClientConnectedFrame,
   isRelayForwardFrame,
   parseFrame,
@@ -80,37 +80,13 @@ test('requires a device binding on client attachments', () => {
   )
 })
 
-test('accepts login candidate attachments by owner code without an owner node or admission token', () => {
-  const login = {
-    type: 'relay.attach' as const,
-    version: RELAY_PROTOCOL_VERSION,
-    role: 'client' as const,
-    admission: 'login' as const,
-    connectionId: 'login-1',
-    ownerCode: '123456789',
-  }
-  assert.deepEqual(parseFrame(encodeFrame(login)), login)
-  assert.equal(isRelayAttachFrame(parseFrame(encodeFrame(login))), true)
-  for (const ownerCode of ['', '12345678', '1234567890', '１２３４５６７８９']) {
-    assert.equal(
-      isRelayAttachFrame(parseFrame(encodeFrame({ ...login, ownerCode }))),
-      false,
-      ownerCode,
-    )
-  }
-  assert.equal(
-    isRelayAttachFrame(parseFrame(encodeFrame({ ...login, nodeId: 'node-1' } as never))),
-    false,
-  )
-})
-
-test('accepts reference-only bootstrap attachments and registration controls', () => {
+test('accepts reference-only enrollment attachments and registration controls', () => {
   const attach = {
     type: 'relay.attach' as const,
     version: RELAY_PROTOCOL_VERSION,
     role: 'client' as const,
-    admission: 'bootstrap_reference' as const,
-    connectionId: 'bootstrap-1',
+    admission: 'enrollment' as const,
+    connectionId: 'enrollment-1',
     reference: 'ref-123456789',
   }
   assert.deepEqual(parseFrame(encodeFrame(attach)), attach)
@@ -118,27 +94,27 @@ test('accepts reference-only bootstrap attachments and registration controls', (
   assert.equal(isRelayAttachFrame(parseFrame(encodeFrame({ ...attach, reference: '' }))), false)
 
   const register = {
-    type: 'relay.bootstrap.register' as const,
+    type: 'relay.enrollment.register' as const,
     version: RELAY_PROTOCOL_VERSION,
     reference: 'ref-123456789',
     expiresAt: Date.now() + 60_000,
   }
   const unregister = {
-    type: 'relay.bootstrap.unregister' as const,
+    type: 'relay.enrollment.unregister' as const,
     version: RELAY_PROTOCOL_VERSION,
     reference: register.reference,
   }
-  assert.equal(isRelayBootstrapReferenceRegisterFrame(parseFrame(encodeFrame(register))), true)
-  assert.equal(isRelayBootstrapReferenceUnregisterFrame(parseFrame(encodeFrame(unregister))), true)
+  assert.equal(isRelayEnrollmentRegisterFrame(parseFrame(encodeFrame(register))), true)
+  assert.equal(isRelayEnrollmentUnregisterFrame(parseFrame(encodeFrame(unregister))), true)
   assert.equal(
-    isRelayBootstrapReferenceRegisterFrame(
+    isRelayEnrollmentRegisterFrame(
       parseFrame(encodeFrame({ ...register, expiresAt: Date.now() - 1 })),
     ),
     false,
   )
 })
 
-test('validates paired and login candidate relay client-connected notifications', () => {
+test('validates paired and enrollment relay client-connected notifications', () => {
   const paired = {
     type: 'relay.client.connected' as const,
     version: RELAY_PROTOCOL_VERSION,
@@ -154,9 +130,10 @@ test('validates paired and login candidate relay client-connected notifications'
           type: 'relay.client.connected',
           version: RELAY_PROTOCOL_VERSION,
           nodeId: 'node-1',
-          connectionId: 'login-1',
-          admission: 'login',
-          ownerCode: '123456789',
+          connectionId: 'enrollment-1',
+          admission: 'enrollment',
+          reference: 'ref-123456789',
+          ownerPublicKey: '{"kty":"EC"}',
         }),
       ),
     ),
@@ -183,8 +160,8 @@ test('validates paired and login candidate relay client-connected notifications'
           type: 'relay.client.connected',
           version: RELAY_PROTOCOL_VERSION,
           nodeId: 'node-1',
-          connectionId: 'bootstrap-1',
-          admission: 'bootstrap_reference',
+          connectionId: 'enrollment-2',
+          admission: 'enrollment',
           reference: 'ref-123456789',
           ownerPublicKey: '{"kty":"EC"}',
         }),

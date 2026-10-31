@@ -151,24 +151,6 @@ export class RemoteTrustStore {
     }
   }
 
-  async ownerCode() {
-    return (await this.load()).ownerCode
-  }
-
-  async rotateOwnerCode() {
-    const state = await this.load()
-    state.ownerCode = createOwnerCode()
-    await this.persist()
-    return state.ownerCode
-  }
-
-  async setOwnerCode(ownerCode: string) {
-    if (!isOwnerCode(ownerCode)) throw new Error('INVALID_OWNER_CODE')
-    const state = await this.load()
-    state.ownerCode = ownerCode
-    await this.persist()
-  }
-
   async status() {
     const state = await this.load()
     return {

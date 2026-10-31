@@ -12,12 +12,10 @@ import type {
   WebAuthnCredential,
 } from '@simplewebauthn/server'
 import {
-  authThrottle,
   localEnrollmentTicket,
   owner,
   ownerSession,
   passkeyCredential,
-  recoveryCode,
   remoteDevice,
 } from '../db/schema.js'
 import type { Database } from '../database.js'
@@ -61,7 +59,6 @@ export function createOwnerAuthDomain(
 ) {
   const profiles = profileOverrides
   const challenges = new Map<string, Challenge>()
-  let recoveryReservation: { challengeId: string; codeId: string } | undefined
 
   async function optionsFor(
     purpose: Purpose,
@@ -404,178 +401,6 @@ export function createOwnerAuthDomain(
     return { revoked: result.length > 0 }
   }
 
-  async function generateRecoveryCodes() {
-    const codes = Array.from({ length: 10 }, () => randomBytes(16).toString('base64url'))
-    const batchId = randomUUID()
-    db.transaction((tx) => {
-      tx.delete(recoveryCode).where(eq(recoveryCode.ownerId, ownerId)).run()
-      tx.insert(recoveryCode)
-        .values(
-          codes.map((code) => ({
-            id: randomUUID(),
-            ownerId,
-            codeHash: hash(code),
-            batchId,
-          })),
-        )
-        .run()
-      tx.update(owner)
-        .set({ recoveryConfiguredAt: new Date(now()) })
-        .where(eq(owner.id, ownerId))
-        .run()
-    })
-    return codes
-  }
-
-  async function consumeRecoveryCode(code: string) {
-    const codeHash = hash(code)
-    const scopeHash = hash(`${ownerId}:recovery`)
-    const nowDate = new Date(now())
-    const [throttle] = await db
-      .select()
-      .from(authThrottle)
-      .where(eq(authThrottle.scopeHash, scopeHash))
-    if (throttle?.lockedUntil && throttle.lockedUntil.getTime() > now())
-      throw new AuthDomainError('AUTH_THROTTLED')
-    const result = await db
-      .update(recoveryCode)
-      .set({ consumedAt: new Date(now()) })
-      .where(
-        and(
-          eq(recoveryCode.ownerId, ownerId),
-          eq(recoveryCode.codeHash, codeHash),
-          isNull(recoveryCode.consumedAt),
-          isNull(recoveryCode.reservedAt),
-        ),
-      )
-      .returning({ id: recoveryCode.id })
-    if (result.length !== 1) {
-      const failures = (throttle?.failures ?? 0) + 1
-      await db
-        .insert(authThrottle)
-        .values({
-          id: randomUUID(),
-          scopeHash,
-          failures,
-          lockedUntil: failures >= 5 ? new Date(now() + 15 * 60_000) : null,
-          updatedAt: nowDate,
-        })
-        .onConflictDoUpdate({
-          target: authThrottle.scopeHash,
-          set: {
-            failures,
-            lockedUntil: failures >= 5 ? new Date(now() + 15 * 60_000) : null,
-            updatedAt: nowDate,
-          },
-        })
-      throw new AuthDomainError('RECOVERY_CODE_INVALID')
-    }
-    await db.delete(authThrottle).where(eq(authThrottle.scopeHash, scopeHash))
-    return { consumed: true }
-  }
-
-  async function reserveRecoveryCode(code: string) {
-    if (recoveryReservation) throw new AuthDomainError('RECOVERY_CODE_RESERVED')
-    const scopeHash = hash(`${ownerId}:recovery`)
-    const [throttle] = await db
-      .select()
-      .from(authThrottle)
-      .where(eq(authThrottle.scopeHash, scopeHash))
-    if (throttle?.lockedUntil && throttle.lockedUntil.getTime() > now())
-      throw new AuthDomainError('AUTH_THROTTLED')
-    const codeHash = hash(code)
-    const [record] = await db
-      .select({ id: recoveryCode.id })
-      .from(recoveryCode)
-      .where(
-        and(
-          eq(recoveryCode.ownerId, ownerId),
-          eq(recoveryCode.codeHash, codeHash),
-          isNull(recoveryCode.consumedAt),
-          isNull(recoveryCode.reservedAt),
-        ),
-      )
-    if (!record) {
-      const failures = (throttle?.failures ?? 0) + 1
-      await db
-        .insert(authThrottle)
-        .values({
-          id: randomUUID(),
-          scopeHash,
-          failures,
-          lockedUntil: failures >= 5 ? new Date(now() + 15 * 60_000) : null,
-          updatedAt: new Date(now()),
-        })
-        .onConflictDoUpdate({
-          target: authThrottle.scopeHash,
-          set: {
-            failures,
-            lockedUntil: failures >= 5 ? new Date(now() + 15 * 60_000) : null,
-            updatedAt: new Date(now()),
-          },
-        })
-      throw new AuthDomainError('RECOVERY_CODE_INVALID')
-    }
-    const reservation = { challengeId: randomUUID(), codeId: record.id }
-    const reserved = await db
-      .update(recoveryCode)
-      .set({ reservedAt: new Date(now()) })
-      .where(
-        and(
-          eq(recoveryCode.id, record.id),
-          isNull(recoveryCode.reservedAt),
-          isNull(recoveryCode.consumedAt),
-        ),
-      )
-      .returning({ id: recoveryCode.id })
-    if (reserved.length !== 1) throw new AuthDomainError('RECOVERY_CODE_RESERVED')
-    recoveryReservation = reservation
-    await db.delete(authThrottle).where(eq(authThrottle.scopeHash, scopeHash))
-    return { ...reservation }
-  }
-
-  async function finishRecoveryReservation(challengeId: string, committed: boolean) {
-    const reservation = recoveryReservation
-    if (!reservation || reservation.challengeId !== challengeId)
-      throw new AuthDomainError('RECOVERY_CODE_INVALID')
-    recoveryReservation = undefined
-    if (committed) {
-      const codes = Array.from({ length: 10 }, () => randomBytes(16).toString('base64url'))
-      const batchId = randomUUID()
-      db.transaction((tx) => {
-        tx.update(recoveryCode)
-          .set({ consumedAt: new Date(now()), reservedAt: null })
-          .where(and(eq(recoveryCode.id, reservation.codeId), isNull(recoveryCode.consumedAt)))
-          .run()
-        tx.delete(recoveryCode)
-          .where(and(eq(recoveryCode.ownerId, ownerId), isNull(recoveryCode.consumedAt)))
-          .run()
-        tx.insert(recoveryCode)
-          .values(
-            codes.map((code) => ({
-              id: randomUUID(),
-              ownerId,
-              codeHash: hash(code),
-              batchId,
-            })),
-          )
-          .run()
-        tx.update(owner)
-          .set({ recoveryConfiguredAt: new Date(now()) })
-          .where(eq(owner.id, ownerId))
-          .run()
-      })
-      await revokeAllRemoteSessions()
-      return { completed: true, recoveryCodes: codes }
-    } else {
-      await db
-        .update(recoveryCode)
-        .set({ reservedAt: null })
-        .where(and(eq(recoveryCode.id, reservation.codeId), isNull(recoveryCode.consumedAt)))
-    }
-    return { completed: true }
-  }
-
   async function revokeAllRemoteSessions() {
     const result = await db
       .update(ownerSession)
@@ -726,10 +551,6 @@ export function createOwnerAuthDomain(
     registerDevice,
     resume,
     logout,
-    generateRecoveryCodes,
-    consumeRecoveryCode,
-    reserveRecoveryCode,
-    finishRecoveryReservation,
     revokeAllRemoteSessions,
     revokeDeviceSessions,
     markDeviceRevoked,
@@ -746,14 +567,6 @@ export function createOwnerAuthDomain(
             eq(passkeyCredential.origin, profiles[profile].origin),
           ),
         )
-        .limit(1)
-      return Boolean(record)
-    },
-    async hasRecoveryCodes() {
-      const [record] = await db
-        .select({ id: recoveryCode.id })
-        .from(recoveryCode)
-        .where(and(eq(recoveryCode.ownerId, ownerId), isNull(recoveryCode.consumedAt)))
         .limit(1)
       return Boolean(record)
     },

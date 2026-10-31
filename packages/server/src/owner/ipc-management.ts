@@ -5,16 +5,13 @@ import type { OwnerIpcDispatcher } from './ipc.js'
 export const OWNER_IPC_MANAGEMENT_COMMANDS: ReadonlySet<string> = new Set([
   'owner.ready',
   'auth.status',
-  'bootstrap.rotate',
-  'bootstrap.recover',
-  'recovery.rotate',
+  'enrollment.issue',
+  'enrollment.recover',
   'sessions.revoke-all',
   'devices.list',
   'devices.revoke',
   'devices.revoke-all',
   'devices.revoke-all-sessions',
-  'owner-code.show',
-  'owner-code.rotate',
   'trust.reset',
 ])
 
@@ -32,12 +29,10 @@ export function createOwnerIpcManagementDispatcher(
         return { ready: true }
       case 'auth.status':
         return management.authStatus()
-      case 'bootstrap.rotate':
-        return management.bootstrapRotate()
-      case 'bootstrap.recover':
-        return management.bootstrapRecover()
-      case 'recovery.rotate':
-        return management.rotateRecoveryCodes()
+      case 'enrollment.issue':
+        return management.enrollmentIssue()
+      case 'enrollment.recover':
+        return management.enrollmentRecover()
       case 'sessions.revoke-all':
         return management.revokeAllSessions()
       case 'devices.list':
@@ -48,10 +43,6 @@ export function createOwnerIpcManagementDispatcher(
         return management.revokeAllDevices()
       case 'devices.revoke-all-sessions':
         return management.revokeAllSessions()
-      case 'owner-code.show':
-        return management.ownerCodeShow()
-      case 'owner-code.rotate':
-        return management.ownerCodeRotate()
       case 'trust.reset':
         return management.trustReset()
       default:

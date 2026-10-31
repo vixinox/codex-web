@@ -18,6 +18,7 @@ import {
   type EncryptedFrame,
   type RelayForwardFrame,
 } from '@codex-web/protocol/relay'
+import WebSocket from 'ws'
 
 import type { ServerConfig } from '../config.js'
 import { log } from '../logger.js'
@@ -27,7 +28,6 @@ import {
   type OwnerMethodRegistry,
 } from '../owner/session-runtime.js'
 import { RemoteTrustStore } from './trust-store.js'
-import { LoginQrCapabilityStore } from './login-qr-capability-store.js'
 import { signAdmissionToken } from './admission-token.js'
 
 export type ConnectorTransport = {
@@ -46,6 +46,7 @@ type RelayWebSocket = ConnectorTransport &
   RelayWebSocketHandlers & {
     ping?: () => void
     onpong?: (() => void) | null
+    on?: (event: 'pong', listener: () => void) => unknown
   }
 
 type RelayWebSocketFactory = (url: string) => RelayWebSocket
@@ -74,13 +75,7 @@ const RELAY_HEARTBEAT_INTERVAL_MS = 10_000
 const RELAY_STALE_TIMEOUT_MS = 30_000
 
 const defaultWebSocketFactory: RelayWebSocketFactory = (url) => {
-  const WebSocketConstructor = (
-    globalThis as unknown as {
-      WebSocket?: new (url: string) => WebSocket
-    }
-  ).WebSocket
-  if (!WebSocketConstructor) throw new Error('WEBSOCKET_UNAVAILABLE')
-  return new WebSocketConstructor(url)
+  return new WebSocket(url) as unknown as RelayWebSocket
 }
 
 export class OwnerConnector {
@@ -97,8 +92,8 @@ export class OwnerConnector {
   private readonly connectionId = randomUUID()
   private readonly connections = new Map<string, ConnectionState>()
   private readonly connectedClientIds = new Map<string, string>()
-  private readonly connectedBootstrapReferences = new Map<string, string>()
-  private bootstrapReference?: { reference: string; expiresAt: number }
+  private readonly connectedEnrollmentReferences = new Map<string, string>()
+  private enrollmentReference?: { reference: string; expiresAt: number }
   private runtimeRegistry?: OwnerMethodRegistry
   private resumeSession?: NonNullable<
     ConstructorParameters<typeof OwnerSessionRuntime>[2]['resumeSession']
@@ -107,17 +102,21 @@ export class OwnerConnector {
 
   private readonly config: ServerConfig
   readonly trust: RemoteTrustStore
-  readonly loginQrCapabilities = new LoginQrCapabilityStore()
   private readonly webSocketFactory: RelayWebSocketFactory
+  private readonly heartbeatIntervalMs: number
+  private readonly staleTimeoutMs: number
 
   constructor(
     config: ServerConfig,
     trust: RemoteTrustStore,
     webSocketFactory: RelayWebSocketFactory = defaultWebSocketFactory,
+    heartbeat: { intervalMs?: number; staleTimeoutMs?: number } = {},
   ) {
     this.config = config
     this.trust = trust
     this.webSocketFactory = webSocketFactory
+    this.heartbeatIntervalMs = heartbeat.intervalMs ?? RELAY_HEARTBEAT_INTERVAL_MS
+    this.staleTimeoutMs = heartbeat.staleTimeoutMs ?? RELAY_STALE_TIMEOUT_MS
   }
 
   async start() {
@@ -128,12 +127,11 @@ export class OwnerConnector {
 
   async stop() {
     this.running = false
-    this.loginQrCapabilities.invalidate()
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     this.clearRelayTimers()
     await this.closeAllConnections('owner_shutdown')
-    this.bootstrapReference = undefined
+    this.enrollmentReference = undefined
     this.detachTransport()
     this.socket?.close?.(1000, 'owner_shutdown')
     this.socket = undefined
@@ -181,22 +179,6 @@ export class OwnerConnector {
     if (!this.connected) throw new Error('REMOTE_UNAVAILABLE')
   }
 
-  async rotateOwnerCode() {
-    const previous = await this.trust.ownerCode()
-    const ownerCode = await this.trust.rotateOwnerCode()
-    if (!this.config.remoteRelayUrl) return ownerCode
-    await this.refreshOwnerCode()
-    try {
-      await this.waitUntilConnected()
-      return ownerCode
-    } catch (error) {
-      await this.trust.setOwnerCode(previous)
-      await this.refreshOwnerCode()
-      await this.waitUntilConnected().catch(() => undefined)
-      throw error
-    }
-  }
-
   async createPairedClientToken(deviceId: string) {
     const identity = await this.trust.identity()
     return signRelayToken(this.requireRelaySecret(), {
@@ -212,60 +194,36 @@ export class OwnerConnector {
   async resetRemoteTrust() {
     await this.closeAllConnections('trust_reset')
     const reset = await this.trust.reset()
-    this.loginQrCapabilities.invalidate()
-    await this.unregisterBootstrapReference()
+    await this.unregisterEnrollmentReference()
     this.socket?.close?.(1000, 'trust_reset')
     return reset
   }
 
-  async issueLoginQrCapability(ownerId: string) {
-    const identity = await this.trust.identity()
-    const issued = this.loginQrCapabilities.issue(ownerId, identity.nodeId, identity.trustEpoch)
-    return {
-      reference: issued.capability,
-      expiresAt: new Date(issued.expiresAt).toISOString(),
-    }
-  }
-
-  async cancelLoginQrCapability() {
-    return this.loginQrCapabilities.cancel()
-  }
-
-  async registerBootstrapReference(reference: string, expiresAt: number) {
-    this.bootstrapReference = { reference, expiresAt }
+  async registerEnrollmentReference(reference: string, expiresAt: number) {
+    this.enrollmentReference = { reference, expiresAt }
     if (this.connected)
       this.sendRelayFrame({
-        type: 'relay.bootstrap.register',
+        type: 'relay.enrollment.register',
         version: RELAY_PROTOCOL_VERSION,
         reference,
         expiresAt,
       })
   }
 
-  async unregisterBootstrapReference(reference?: string) {
-    if (reference && this.bootstrapReference?.reference !== reference) return
-    const active = this.bootstrapReference
-    this.bootstrapReference = undefined
+  hasEnrollmentReference(reference: string) {
+    return this.enrollmentReference?.reference === reference
+  }
+
+  async unregisterEnrollmentReference(reference?: string) {
+    if (reference && this.enrollmentReference?.reference !== reference) return
+    const active = this.enrollmentReference
+    this.enrollmentReference = undefined
     if (this.connected && active)
       this.sendRelayFrame({
-        type: 'relay.bootstrap.unregister',
+        type: 'relay.enrollment.unregister',
         version: RELAY_PROTOCOL_VERSION,
         reference: active.reference,
       })
-  }
-
-  loginQrCapabilityStatus() {
-    return this.loginQrCapabilities.status()
-  }
-
-  async consumeLoginQrCapability(capability: string) {
-    const identity = await this.trust.identity()
-    return this.loginQrCapabilities.consume(capability, identity.nodeId, identity.trustEpoch)
-  }
-
-  async refreshOwnerCode() {
-    await this.closeAllConnections('owner_code_rotated')
-    this.socket?.close?.(1000, 'owner_code_rotated')
   }
 
   configureRemoteSessions(
@@ -366,6 +324,7 @@ export class OwnerConnector {
       if (this.socket === socket) this.socket = undefined
       this.clearRelayTimers()
       this.detachTransport()
+      this.enrollmentReference = undefined
       this.teardownAllConnections('relay_disconnected', false)
       this.scheduleReconnect()
     }
@@ -394,20 +353,22 @@ export class OwnerConnector {
 
   private startHeartbeat(socket: RelayWebSocket) {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
-    socket.onpong = () => {
+    const handlePong = () => {
       if (this.socket === socket) this.lastRelayActivity = Date.now()
     }
+    if (socket.on) socket.on('pong', handlePong)
+    else socket.onpong = handlePong
     this.heartbeatTimer = setInterval(() => {
       if (this.socket !== socket) return
       // A relay that stopped answering while the socket stays half-open never emits `close`.
       // Treat silence past the stale window as a dead link and force a reconnect.
-      if (Date.now() - this.lastRelayActivity > RELAY_STALE_TIMEOUT_MS) {
+      if (Date.now() - this.lastRelayActivity > this.staleTimeoutMs) {
         socket.close?.(4001, 'relay_stale')
         return
       }
       // Use a WebSocket control frame so application traffic does not masquerade as liveness.
       socket.ping?.()
-    }, RELAY_HEARTBEAT_INTERVAL_MS)
+    }, this.heartbeatIntervalMs)
   }
 
   private clearRelayTimers() {
@@ -446,13 +407,6 @@ export class OwnerConnector {
         this.reconnectAttempt = 0
         log.info('Remote Relay owner connection ready')
         if (this.socket) this.startHeartbeat(this.socket)
-        if (this.bootstrapReference)
-          this.sendRelayFrame({
-            type: 'relay.bootstrap.register',
-            version: RELAY_PROTOCOL_VERSION,
-            reference: this.bootstrapReference.reference,
-            expiresAt: this.bootstrapReference.expiresAt,
-          })
       } else {
         this.socket?.close?.(1008, 'invalid_relay_ready')
       }
@@ -460,32 +414,29 @@ export class OwnerConnector {
     }
     if (frame.type === 'relay.client.connected') {
       const deviceId = 'deviceId' in frame ? frame.deviceId : undefined
-      const loginCandidate =
-        frame.admission === 'login' ||
-        frame.admission === 'first_session' ||
-        frame.admission === 'bootstrap_reference'
-      if (!deviceId && !loginCandidate) {
+      const enrollmentCandidate = frame.admission === 'enrollment'
+      if (!deviceId && !enrollmentCandidate) {
         // Relay admission always carries the device binding; without it the Owner cannot tell
         // which paired device owns this connection.
         this.socket?.close?.(1008, 'invalid_client_binding')
         return
       }
-      const candidateId = deviceId ?? (loginCandidate ? frame.admission : undefined)
+      const candidateId = deviceId ?? (enrollmentCandidate ? frame.admission : undefined)
       if (!candidateId) {
         this.socket?.close?.(1008, 'invalid_client_binding')
         return
       }
       log.info(`Remote Relay client admitted (${frame.admission ?? 'paired'})`)
       this.connectedClientIds.set(frame.connectionId, candidateId)
-      if (frame.admission === 'bootstrap_reference' && typeof frame.reference === 'string')
-        this.connectedBootstrapReferences.set(frame.connectionId, frame.reference)
+      if (enrollmentCandidate && typeof frame.reference === 'string')
+        this.connectedEnrollmentReferences.set(frame.connectionId, frame.reference)
       this.connections.set(frame.connectionId, { phase: 'awaiting_handshake' })
       return
     }
     if (frame.type === 'relay.client.disconnected') {
       log.info('Remote Relay client disconnected')
       this.connectedClientIds.delete(frame.connectionId)
-      this.connectedBootstrapReferences.delete(frame.connectionId)
+      this.connectedEnrollmentReferences.delete(frame.connectionId)
       this.teardownConnection(frame.connectionId, 'peer_disconnected')
     }
   }
@@ -522,18 +473,16 @@ export class OwnerConnector {
     const identity = await this.trust.identity()
     const attachedDeviceId = this.connectedClientIds.get(connectionId)
     const deviceId = await this.trust.deviceId(frame.clientPublicKey)
-    const firstSessionCandidate =
-      attachedDeviceId === 'first_session' || attachedDeviceId === 'bootstrap_reference'
-    const loginCandidate = attachedDeviceId === 'login' || firstSessionCandidate
+    const enrollmentCandidate = attachedDeviceId === 'enrollment'
     if (
       frame.nodeId !== identity.nodeId ||
       frame.trustEpoch !== identity.trustEpoch ||
-      (!loginCandidate && (!deviceId || attachedDeviceId !== deviceId)) ||
+      (!enrollmentCandidate && (!deviceId || attachedDeviceId !== deviceId)) ||
       !this.runtimeRegistry ||
       !this.resumeSession
     ) {
       log.warn(
-        `Remote client handshake rejected (${firstSessionCandidate ? 'first-session' : loginCandidate ? 'login' : 'paired'})`,
+        `Remote client handshake rejected (${enrollmentCandidate ? 'enrollment' : 'paired'})`,
       )
       this.teardownConnection(connectionId, 'unauthorized_client')
       return
@@ -556,16 +505,15 @@ export class OwnerConnector {
     }
     if (this.connections.get(connectionId)?.phase !== 'handshaking') return
     const transport = new VirtualOwnerTransport(
-      deviceId ?? (firstSessionCandidate ? 'first_session' : 'login'),
+      deviceId ?? 'enrollment',
       (ownerFrame) => void this.sendEncrypted(connectionId, ownerFrame),
       (code, reason) => this.requestConnectionClose(connectionId, code, reason),
     )
     transport.clientPublicKey = frame.clientPublicKey
-    if (loginCandidate) {
-      transport.loginCandidate = true
-      transport.firstSessionCandidate = firstSessionCandidate
-      const bootstrapReference = this.connectedBootstrapReferences.get(connectionId)
-      if (bootstrapReference) transport.bootstrapReference = bootstrapReference
+    if (enrollmentCandidate) {
+      transport.enrollmentCandidate = true
+      const enrollmentReference = this.connectedEnrollmentReferences.get(connectionId)
+      if (enrollmentReference) transport.enrollmentReference = enrollmentReference
       transport.promote = (promotedDeviceId) => {
         transport.pairedDeviceId = promotedDeviceId
         transport.promoted = true
@@ -581,15 +529,13 @@ export class OwnerConnector {
       sendSequence: 0,
       sendQueue: Promise.resolve(),
       publicKey: frame.clientPublicKey,
-      deviceId: deviceId ?? (firstSessionCandidate ? 'first_session' : 'login'),
+      deviceId: deviceId ?? 'enrollment',
       transport,
       runtime,
       createdAt: Date.now(),
     }
     this.connections.set(connectionId, { phase: 'open', session })
-    log.info(
-      `Remote client handshake accepted (${firstSessionCandidate ? 'first-session' : loginCandidate ? 'login' : 'paired'})`,
-    )
+    log.info(`Remote client handshake accepted (${enrollmentCandidate ? 'enrollment' : 'paired'})`)
     // Key confirmation: the client only trusts the channel once it decrypts this record under the
     // context-bound session key, which proves the Owner derived the same key.
     await this.sendEncrypted(
@@ -678,7 +624,7 @@ export class OwnerConnector {
     this.connections.delete(connectionId)
     log.warn(`Remote client connection closed (${reason ?? 'connection_closed'})`)
     this.connectedClientIds.delete(connectionId)
-    this.connectedBootstrapReferences.delete(connectionId)
+    this.connectedEnrollmentReferences.delete(connectionId)
     if (state.phase === 'open') {
       // The peer can only observe the teardown while its session key is still live, so tell the
       // relay to drop the routing slot before releasing the encrypted channel below.

@@ -1,6 +1,4 @@
 import * as React from 'react'
-import { useLocation, useNavigate } from 'react-router'
-import { Button } from '@/components/ui/button'
 
 import { useThreadPageController } from '@/app/chat/session/controllers/use-thread-page-controller'
 import { ThreadSessionRegistryProvider } from '@/app/chat/session/state/thread-session-store'
@@ -45,10 +43,6 @@ function WorkspaceShellContents({
   userId: string
   runtime: CodexRuntimeController
 }) {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const recoveryCodes = (location.state as { recoveryCodes?: unknown } | null)?.recoveryCodes
-  const [codesVisible, setCodesVisible] = React.useState(Array.isArray(recoveryCodes))
   const [capabilities, setCapabilities] = React.useState<ComposerCapabilities>()
   React.useEffect(() => {
     if (runtime.model.status !== 'started') return
@@ -106,33 +100,6 @@ function WorkspaceShellContents({
 
   return (
     <>
-      {codesVisible &&
-      Array.isArray(recoveryCodes) &&
-      recoveryCodes.every((code) => typeof code === 'string') ? (
-        <aside
-          role="alert"
-          className="fixed inset-x-4 top-4 z-50 mx-auto max-w-xl space-y-3 rounded-md border bg-background p-4 text-foreground shadow-lg"
-        >
-          <p className="font-medium">Save your new recovery codes now</p>
-          <pre className="grid grid-cols-2 gap-2 whitespace-pre-wrap break-all text-sm">
-            {recoveryCodes.join('\n')}
-          </pre>
-          <p className="text-xs text-muted-foreground">
-            These codes are shown once. Store them somewhere safe before continuing.
-          </p>
-          <Button
-            onClick={() => {
-              setCodesVisible(false)
-              void navigate(location.pathname, {
-                replace: true,
-                state: { remoteOwnerId: userId, recovered: true },
-              })
-            }}
-          >
-            I saved these codes
-          </Button>
-        </aside>
-      ) : null}
       <WorkspaceNavigation
         route={route}
         runtime={runtime.model}

@@ -3,26 +3,26 @@ import QRCode from 'qrcode'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Copy, KeyRound, RefreshCw } from 'lucide-react'
+import { Copy, KeyRound } from 'lucide-react'
 import {
   emptyOwnerManagementSnapshot,
   formatDeviceDate,
-  type FirstSessionPayload,
-  type ManagementQr,
+  type EnrollmentInvitation,
   type OwnerManagementClient,
 } from './owner-management-model'
-import { buildFirstSessionUrl } from '@/lib/remote/relay-profile'
+
+function buildEnrollmentUrl(reference: string) {
+  const url = new URL('/app/enroll', window.location.origin)
+  url.searchParams.set('ref', reference)
+  return url.toString()
+}
 
 export function OwnerManageScreen({ client }: { client: OwnerManagementClient }) {
   const [snapshot, setSnapshot] = useState(emptyOwnerManagementSnapshot)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
-  const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false)
-  const [firstSession, setFirstSession] = useState<FirstSessionPayload | null>(null)
-  const [firstSessionImage, setFirstSessionImage] = useState<string | null>(null)
-  const [managementQr, setManagementQr] = useState<ManagementQr | null>(null)
-  const [managementQrImage, setManagementQrImage] = useState<string | null>(null)
+  const [invitation, setInvitation] = useState<EnrollmentInvitation | null>(null)
+  const [invitationImage, setInvitationImage] = useState<string | null>(null)
   const [enrollment, setEnrollment] = useState<{
     ticket: string
     origin: string
@@ -41,6 +41,33 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    let active = true
+    void client
+      .getEnrollmentStatus()
+      .then(async (current) => {
+        if (!active || !current || Date.parse(current.expiresAt) <= Date.now()) return undefined
+        const image = await QRCode.toDataURL(buildEnrollmentUrl(current.reference), {
+          margin: 2,
+          width: 240,
+          errorCorrectionLevel: 'Q',
+        })
+        if (active) {
+          setInvitation(current)
+          setInvitationImage(image)
+        }
+        return undefined
+      })
+      .catch((cause) => {
+        if (active)
+          setError(cause instanceof Error ? cause.message : 'Unable to load enrollment status')
+        return undefined
+      })
+    return () => {
+      active = false
+    }
+  }, [client])
 
   const act = async (key: string, operation: () => Promise<void>) => {
     setBusy(key)
@@ -128,174 +155,65 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Management QR request</CardTitle>
+            <CardTitle>Add a device</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Create a five-minute, single-use request reference. It does not create a session by
-              itself.
+              Create a short-lived invitation to add a remote browser to this Owner.
             </p>
-            {managementQr && managementQrImage ? (
+            {invitation && invitationImage ? (
               <div className="flex flex-wrap items-start gap-4">
                 <img
-                  src={managementQrImage}
-                  alt="Management QR request"
+                  src={invitationImage}
+                  alt="Device enrollment QR code"
                   className="size-56 bg-white p-2"
                 />
                 <div className="space-y-2 text-sm">
-                  <p>Expires {new Date(managementQr.expiresAt).toLocaleTimeString()}</p>
-                  <code className="block max-w-sm break-all text-xs">{managementQr.reference}</code>
-                  <Button
-                    variant="outline"
-                    disabled={busy === 'management-qr-cancel'}
-                    onClick={() =>
-                      void act('management-qr-cancel', async () => {
-                        await client.cancelManagementQr()
-                        setManagementQr(null)
-                        setManagementQrImage(null)
-                      })
-                    }
-                  >
-                    Cancel request
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <Button
-                disabled={busy === 'management-qr'}
-                onClick={() =>
-                  void act('management-qr', async () => {
-                    const issued = await client.issueManagementQr()
-                    setManagementQr(issued)
-                    setManagementQrImage(
-                      await QRCode.toDataURL(
-                        JSON.stringify({
-                          version: 1,
-                          type: 'management_request',
-                          reference: issued.reference,
-                          expiresAt: issued.expiresAt,
-                        }),
-                        { margin: 2, width: 240, errorCorrectionLevel: 'Q' },
-                      ),
-                    )
-                  })
-                }
-              >
-                Generate management QR
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Recovery codes</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              {snapshot.recoveryCodesAvailable
-                ? 'A recovery batch is configured.'
-                : 'No recovery path is configured.'}
-            </p>
-            <Button
-              variant="outline"
-              disabled={busy === 'recovery'}
-              onClick={() =>
-                void act('recovery', async () => {
-                  setRecoveryCodes(await client.generateRecoveryCodes())
-                  setRecoveryAcknowledged(false)
-                })
-              }
-            >
-              <RefreshCw className="size-4" /> Generate recovery batch
-            </Button>
-            {recoveryCodes ? (
-              <div className="space-y-3 border-t pt-3">
-                <pre className="grid grid-cols-2 gap-2 whitespace-pre-wrap break-all text-sm">
-                  {recoveryCodes.join('\n')}
-                </pre>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => void navigator.clipboard.writeText(recoveryCodes.join('\n'))}
-                  >
-                    <Copy className="size-4" /> Copy codes
-                  </Button>
-                  <Button
-                    disabled={recoveryAcknowledged}
-                    onClick={() => {
-                      setRecoveryAcknowledged(true)
-                      setRecoveryCodes(null)
-                    }}
-                  >
-                    I saved these codes
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Codes are shown once. Generating a new batch invalidates the previous one.
-                </p>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>First remote session</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Use a one-time bootstrap URL or QR to connect the first remote device.
-            </p>
-            {firstSession && firstSessionImage ? (
-              <div className="flex flex-wrap items-start gap-4">
-                <img
-                  src={firstSessionImage}
-                  alt="First-session QR code"
-                  className="size-56 bg-white p-2"
-                />
-                <div className="space-y-2 text-sm">
-                  <p>Expires {new Date(firstSession.expiresAt).toLocaleTimeString()}</p>
+                  <p>Expires {new Date(invitation.expiresAt).toLocaleTimeString()}</p>
                   <code className="block max-w-sm break-all text-xs">
-                    {buildFirstSessionUrl(firstSession.reference)}
+                    {buildEnrollmentUrl(invitation.reference)}
                   </code>
                   <Button
                     variant="outline"
                     onClick={() =>
-                      void navigator.clipboard.writeText(
-                        buildFirstSessionUrl(firstSession.reference),
-                      )
+                      void navigator.clipboard.writeText(buildEnrollmentUrl(invitation.reference))
                     }
                   >
                     <Copy className="size-4" /> Copy URL
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => {
-                      setFirstSession(null)
-                      setFirstSessionImage(null)
-                    }}
+                    disabled={busy === 'enrollment-cancel'}
+                    onClick={() =>
+                      void act('enrollment-cancel', async () => {
+                        await client.cancelEnrollment()
+                        setInvitation(null)
+                        setInvitationImage(null)
+                      })
+                    }
                   >
-                    Close
+                    Cancel invitation
                   </Button>
                 </div>
               </div>
             ) : (
               <Button
-                disabled={busy === 'first-session'}
+                disabled={busy === 'enrollment-issue'}
                 onClick={() =>
-                  void act('first-session', async () => {
-                    const issued = await client.issueFirstSession()
-                    const url = buildFirstSessionUrl(issued.payload.reference)
+                  void act('enrollment-issue', async () => {
+                    const issued = await client.issueEnrollment()
+                    const url = buildEnrollmentUrl(issued.reference)
                     const image = await QRCode.toDataURL(url, {
                       margin: 2,
                       width: 240,
                       errorCorrectionLevel: 'Q',
                     })
-                    setFirstSession(issued.payload)
-                    setFirstSessionImage(image)
+                    setInvitation(issued)
+                    setInvitationImage(image)
                   })
                 }
               >
-                Generate bootstrap QR
+                Generate invitation
               </Button>
             )}
           </CardContent>

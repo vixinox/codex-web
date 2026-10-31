@@ -58,18 +58,14 @@ test('lists paired devices and revokes one device without disturbing another', a
   })
 })
 
-test('persists a nine-digit owner code and rotates it', async () => {
+test('persists the internal Owner routing code without a rotation operation', async () => {
   await withDataRoot(async (dataRoot) => {
     const store = new RemoteTrustStore(dataRoot)
-    const first = await store.ownerCode()
+    const first = (await store.identity()).ownerCode
     assert.match(first, /^\d{9}$/)
 
     const reloaded = new RemoteTrustStore(dataRoot)
-    assert.equal(await reloaded.ownerCode(), first)
-    const second = await reloaded.rotateOwnerCode()
-    assert.match(second, /^\d{9}$/)
-    assert.notEqual(second, first)
-    assert.equal(await new RemoteTrustStore(dataRoot).ownerCode(), second)
+    assert.equal((await reloaded.identity()).ownerCode, first)
   })
 })
 

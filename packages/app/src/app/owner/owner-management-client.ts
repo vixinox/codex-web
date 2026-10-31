@@ -1,13 +1,10 @@
-import type {
-  FirstSessionPayload,
-  IssuedFirstSession,
-  OwnerManagementClient,
-  OwnerManagementSnapshot,
-} from './owner-management-model'
-import { remoteRelayUrl } from '@/lib/remote/relay-profile'
+import type { OwnerManagementClient, OwnerManagementSnapshot } from './owner-management-model'
+import { parseEnrollmentInvitation } from './owner-management-model'
+import { authenticateWithPasskey } from '@/lib/remote/admission'
 
 type OwnerRpc = {
-  request(method: string, params?: Record<string, unknown>): Promise<unknown>
+  requirePasskeyStepUp?: boolean
+  request<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>
   close(): void
 }
 
@@ -15,9 +12,9 @@ function snapshot(value: unknown): OwnerManagementSnapshot {
   if (!value || typeof value !== 'object') throw new Error('Invalid owner security response')
   const body = value as Record<string, unknown>
   const devices = Array.isArray(body.devices)
-    ? body.devices.flatMap((value) => {
-        if (!value || typeof value !== 'object') return []
-        const device = value as Record<string, unknown>
+    ? body.devices.flatMap((deviceValue) => {
+        if (!deviceValue || typeof deviceValue !== 'object') return []
+        const device = deviceValue as Record<string, unknown>
         if (typeof device.id !== 'string' || typeof device.createdAt !== 'string') return []
         if (!(device.lastSeenAt === null || typeof device.lastSeenAt === 'string')) return []
         return [{ id: device.id, createdAt: device.createdAt, lastSeenAt: device.lastSeenAt }]
@@ -26,15 +23,17 @@ function snapshot(value: unknown): OwnerManagementSnapshot {
   return {
     remotePasskeyAvailable: body.remotePasskeyAvailable === true,
     localPasskeyAvailable: body.localPasskeyAvailable === true,
-    recoveryCodesAvailable: body.recoveryCodesAvailable === true,
     devices,
   }
 }
 
 export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClient {
+  let remotePasskeyAvailable = false
   return {
     async getSnapshot() {
-      return snapshot(await rpc.request('owner.security.status'))
+      const value = snapshot(await rpc.request('owner.security.status'))
+      remotePasskeyAvailable = value.remotePasskeyAvailable
+      return value
     },
     async registerPasskey(ticket) {
       const options = (await rpc.request(
@@ -56,15 +55,6 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
         response: registrationToJson(credential),
         ...(ticket ? { ticket } : {}),
       })
-    },
-    async generateRecoveryCodes() {
-      const result = (await rpc.request('owner.recovery.generate')) as { recoveryCodes?: unknown }
-      if (
-        !Array.isArray(result.recoveryCodes) ||
-        !result.recoveryCodes.every((code) => typeof code === 'string')
-      )
-        throw new Error('Invalid recovery code response')
-      return result.recoveryCodes
     },
     async issueLocalEnrollmentTicket() {
       const value = (await rpc.request('owner.localEnrollment.issue')) as Record<string, unknown>
@@ -88,75 +78,24 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
     async resetTrust() {
       await rpc.request('remote.trust.reset')
     },
-    async issueFirstSession() {
-      const value = (await rpc.request('owner.bootstrap.issue')) as Record<string, unknown>
-      const source =
-        value.payload && typeof value.payload === 'object'
-          ? (value.payload as Record<string, unknown>)
-          : value
-      const payload = source as Partial<FirstSessionPayload>
-      if (
-        payload.version !== 1 ||
-        payload.type !== 'first_session' ||
-        typeof payload.reference !== 'string' ||
-        !/^[A-Za-z0-9_-]{16,256}$/u.test(payload.reference) ||
-        typeof payload.expiresAt !== 'string'
-      )
-        throw new Error('Invalid first-session response')
-      return {
-        payload: {
-          version: 1,
-          type: 'first_session',
-          reference: payload.reference,
-          relayUrl: remoteRelayUrl(),
-          expiresAt: payload.expiresAt,
-        },
-      } satisfies IssuedFirstSession
-    },
-    async issueManagementQr() {
-      const value = (await rpc.request('remote.loginQr.issue')) as Record<string, unknown>
-      const reference =
-        typeof value.reference === 'string'
-          ? value.reference
-          : typeof value.capability === 'string'
-            ? value.capability
-            : null
-      if (
-        !reference ||
-        !/^[A-Za-z0-9_-]{16,256}$/u.test(reference) ||
-        typeof value.expiresAt !== 'string'
-      )
-        throw new Error('Invalid management QR response')
-      return {
-        reference,
-        expiresAt: value.expiresAt,
+    async issueEnrollment() {
+      if (rpc.requirePasskeyStepUp && remotePasskeyAvailable) {
+        await authenticateWithPasskey(rpc, 'remote')
       }
+      const value = await rpc.request('owner.enrollment.issue')
+      return parseEnrollmentInvitation(value)
     },
-    async cancelManagementQr() {
-      const value = (await rpc.request('remote.loginQr.cancel')) as Record<string, unknown>
-      if (typeof value.cancelled !== 'boolean') throw new Error('Invalid management QR response')
+    async getEnrollmentStatus() {
+      const value = (await rpc.request('owner.enrollment.status')) as Record<string, unknown>
+      if (value.active === false) return null
+      if (value.active === true) return parseEnrollmentInvitation(value.invitation ?? value)
+      throw new Error('Invalid enrollment status response')
+    },
+    async cancelEnrollment() {
+      const value = (await rpc.request('owner.enrollment.cancel')) as Record<string, unknown>
+      if (typeof value.cancelled !== 'boolean')
+        throw new Error('Invalid enrollment cancellation response')
       return value.cancelled
-    },
-    async consumeManagementQr(reference) {
-      if (!/^[A-Za-z0-9_-]{16,256}$/u.test(reference))
-        throw new Error('Invalid management QR reference')
-      const value = (await rpc.request('remote.loginQr.consume', { reference })) as Record<
-        string,
-        unknown
-      >
-      if (
-        value.consumed !== true ||
-        typeof value.ownerId !== 'string' ||
-        typeof value.nodeId !== 'string' ||
-        !Number.isSafeInteger(value.trustEpoch)
-      )
-        throw new Error('Invalid management QR consumption response')
-      return {
-        consumed: true as const,
-        ownerId: value.ownerId,
-        nodeId: value.nodeId,
-        trustEpoch: value.trustEpoch as number,
-      }
     },
     close() {
       rpc.close()

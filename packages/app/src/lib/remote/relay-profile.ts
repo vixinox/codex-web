@@ -24,12 +24,12 @@ export function remoteRelayUrl(): string {
   return parsed.toString()
 }
 
-export function buildFirstSessionUrl(reference: string, appOrigin = window.location.origin) {
+export function buildEnrollmentUrl(reference: string, appOrigin = window.location.origin) {
   if (!/^[A-Za-z0-9_-]{16,256}$/u.test(reference))
-    throw new Error('Bootstrap reference is invalid.')
+    throw new Error('Enrollment reference is invalid.')
   const origin = new URL(appOrigin)
   if (!['http:', 'https:'].includes(origin.protocol)) throw new Error('App origin is invalid.')
-  const url = new URL('/app/first-session', origin)
+  const url = new URL('/app/enroll', origin)
   url.searchParams.set('ref', reference)
   return url.toString()
 }

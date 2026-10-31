@@ -13,7 +13,7 @@ class FakeTransport implements OwnerTransport {
   closed: { code?: number; reason?: string } | undefined
   pairedDeviceId?: string
   e2eeVerified?: boolean
-  loginCandidate?: boolean
+  enrollmentCandidate?: boolean
   kind: 'local' | 'relay' = 'local'
   private messageListener: ((frame: string | Uint8Array) => void) | undefined
   private closeListener: ((reason?: string) => void) | undefined
@@ -196,27 +196,53 @@ test('gates local and authenticated methods and prevents request replay', async 
   assert.equal(runtime !== undefined, true)
 })
 
-test('keeps an encrypted login candidate limited to authentication methods', async () => {
+test('keeps an encrypted enrollment candidate limited to redemption', async () => {
   const transport = new FakeTransport()
   transport.kind = 'relay'
   transport.e2eeVerified = true
-  transport.loginCandidate = true
+  transport.enrollmentCandidate = true
   let businessCalls = 0
   createRuntime(
     transport,
     new Map([
+      [
+        'owner.enrollment.redeem',
+        { access: 'public' as const, handle: () => ({ redeemed: true }) },
+      ],
       ['owner.status', { access: 'public' as const, handle: () => ({ ownerExists: true }) }],
       ['threads.list', { access: 'authenticated' as const, handle: () => ++businessCalls }],
     ]),
   )
   transport.receive({ type: 'hello', version: 1, clientId: 'login-1', capabilities: [] })
   await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
-  transport.receive({ type: 'request', requestId: 'business-1', method: 'threads.list' })
+  transport.receive({
+    type: 'request',
+    requestId: 'status-1',
+    method: 'owner.status',
+  })
   await waitFor(() => readFrames(transport).some((frame) => frame.type === 'response'))
-  const response = readFrames(transport).find((frame) => frame.type === 'response')
+  const statusResponse = readFrames(transport).find((frame) => frame.type === 'response')
+  assert.equal(statusResponse?.type, 'response')
+  if (statusResponse?.type === 'response') assert.equal(statusResponse.error?.code, 'UNAUTHORIZED')
+  transport.receive({ type: 'request', requestId: 'business-1', method: 'threads.list' })
+  await waitFor(
+    () => readFrames(transport).filter((frame) => frame.type === 'response').length === 2,
+  )
+  const response = readFrames(transport).find(
+    (frame) => frame.type === 'response' && frame.requestId === 'business-1',
+  )
   assert.equal(response?.type, 'response')
   if (response?.type === 'response') assert.equal(response.error?.code, 'UNAUTHORIZED')
   assert.equal(businessCalls, 0)
+  transport.receive({ type: 'request', requestId: 'redeem-1', method: 'owner.enrollment.redeem' })
+  await waitFor(
+    () => readFrames(transport).filter((frame) => frame.type === 'response').length === 3,
+  )
+  const redeemed = readFrames(transport).find(
+    (frame) => frame.type === 'response' && frame.requestId === 'redeem-1',
+  )
+  assert.equal(redeemed?.type, 'response')
+  if (redeemed?.type === 'response') assert.deepEqual(redeemed.result, { redeemed: true })
 })
 
 test('rejects invalid session resumption before accessing Owner methods', async () => {

@@ -14,15 +14,12 @@ test('Owner IPC management allowlist matches the fixed local command surface', a
   const services = {
     localManagement: {
       authStatus: invoke('auth.status'),
-      bootstrapRotate: invoke('bootstrap.rotate'),
-      bootstrapRecover: invoke('bootstrap.recover'),
-      rotateRecoveryCodes: invoke('recovery.rotate'),
+      enrollmentIssue: invoke('enrollment.issue'),
+      enrollmentRecover: invoke('enrollment.recover'),
       revokeAllSessions: invoke('sessions.revoke-all'),
       listDevices: invoke('devices.list'),
       revokeDevice: invoke('devices.revoke'),
       revokeAllDevices: invoke('devices.revoke-all'),
-      ownerCodeShow: invoke('owner-code.show'),
-      ownerCodeRotate: invoke('owner-code.rotate'),
       trustReset: invoke('trust.reset'),
     },
   }

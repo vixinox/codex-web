@@ -4,7 +4,6 @@ import {
   cancel,
   confirm as clackConfirm,
   isCancel,
-  log,
   note,
   select as clackSelect,
   spinner,
@@ -12,15 +11,12 @@ import {
 
 export type OwnerCliCommand =
   | { kind: 'auth-status' }
-  | { kind: 'bootstrap-rotate' }
-  | { kind: 'bootstrap-recover' }
-  | { kind: 'recovery-rotate' }
+  | { kind: 'enrollment-issue' }
+  | { kind: 'enrollment-recover' }
   | { kind: 'sessions-revoke-all' }
   | { kind: 'devices-list' }
   | { kind: 'devices-revoke'; deviceId: string }
   | { kind: 'devices-revoke-all' }
-  | { kind: 'owner-code-show' }
-  | { kind: 'owner-code-rotate' }
   | { kind: 'trust-reset' }
 
 export type OwnerCliMenuAction =
@@ -29,47 +25,38 @@ export type OwnerCliMenuAction =
   | { kind: 'menu-exit' }
 
 export const OWNER_CLI_USAGE =
-  'Usage: codex-web-owner <auth status|bootstrap rotate|bootstrap recover|auth recovery rotate|auth sessions revoke-all|devices list|devices revoke <device-id>|devices revoke-all|owner-code show|owner-code rotate|trust reset>'
+  'Usage: codex-web-owner <auth status|enrollment issue|enrollment recover|auth sessions revoke-all|devices list|devices revoke <device-id>|devices revoke-all|trust reset>'
 
 const MENU_LABELS: Record<OwnerCliCommand['kind'], string> = {
   'auth-status': '认证 · 查看状态',
-  'bootstrap-rotate': '远程接入 · 重新生成首次连接码',
-  'bootstrap-recover': '远程接入 · 恢复所有远程访问',
-  'recovery-rotate': '认证 · 轮换恢复码',
+  'enrollment-issue': '远程接入 · 生成设备邀请',
+  'enrollment-recover': '远程接入 · 本机恢复并生成设备邀请',
   'sessions-revoke-all': '会话 · 撤销所有 Owner 会话',
   'devices-list': '设备 · 列出已登记设备',
   'devices-revoke': '设备 · 撤销指定设备',
   'devices-revoke-all': '设备 · 撤销所有设备',
-  'owner-code-show': 'Owner code · 查看连接码',
-  'owner-code-rotate': 'Owner code · 轮换连接码',
   'trust-reset': '信任 · 重置远程信任',
 }
 
 const MENU_ACTIONS: Array<{ kind: OwnerCliMenuAction['kind']; label: string }> = [
   { kind: 'auth-status', label: MENU_LABELS['auth-status'] },
-  { kind: 'bootstrap-rotate', label: MENU_LABELS['bootstrap-rotate'] },
-  { kind: 'bootstrap-recover', label: MENU_LABELS['bootstrap-recover'] },
-  { kind: 'recovery-rotate', label: MENU_LABELS['recovery-rotate'] },
+  { kind: 'enrollment-issue', label: MENU_LABELS['enrollment-issue'] },
+  { kind: 'enrollment-recover', label: MENU_LABELS['enrollment-recover'] },
   { kind: 'sessions-revoke-all', label: MENU_LABELS['sessions-revoke-all'] },
   { kind: 'devices-list', label: MENU_LABELS['devices-list'] },
   { kind: 'devices-revoke-menu', label: MENU_LABELS['devices-revoke'] },
   { kind: 'devices-revoke-all', label: MENU_LABELS['devices-revoke-all'] },
-  { kind: 'owner-code-show', label: MENU_LABELS['owner-code-show'] },
-  { kind: 'owner-code-rotate', label: MENU_LABELS['owner-code-rotate'] },
   { kind: 'trust-reset', label: MENU_LABELS['trust-reset'] },
   { kind: 'menu-exit', label: '退出' },
 ]
 
 const COMMAND_ACTIONS: OwnerCliCommand[] = [
   { kind: 'auth-status' },
-  { kind: 'bootstrap-rotate' },
-  { kind: 'bootstrap-recover' },
-  { kind: 'recovery-rotate' },
+  { kind: 'enrollment-issue' },
+  { kind: 'enrollment-recover' },
   { kind: 'sessions-revoke-all' },
   { kind: 'devices-list' },
   { kind: 'devices-revoke-all' },
-  { kind: 'owner-code-show' },
-  { kind: 'owner-code-rotate' },
   { kind: 'trust-reset' },
 ]
 
@@ -78,27 +65,24 @@ export function requiresRemoteServices(command: OwnerCliCommand) {
     'devices-list',
     'devices-revoke',
     'devices-revoke-all',
-    'owner-code-show',
-    'owner-code-rotate',
+    'enrollment-issue',
+    'enrollment-recover',
     'trust-reset',
   ].includes(command.kind)
 }
 
 export function requiresRelayConnection(command: OwnerCliCommand) {
-  return command.kind === 'owner-code-rotate'
+  return command.kind === 'enrollment-issue' || command.kind === 'enrollment-recover'
 }
 
 export const OWNER_CLI_IPC_COMMANDS: Readonly<Record<OwnerCliCommand['kind'], string>> = {
   'auth-status': 'auth.status',
-  'bootstrap-rotate': 'bootstrap.rotate',
-  'bootstrap-recover': 'bootstrap.recover',
-  'recovery-rotate': 'recovery.rotate',
+  'enrollment-issue': 'enrollment.issue',
+  'enrollment-recover': 'enrollment.recover',
   'sessions-revoke-all': 'sessions.revoke-all',
   'devices-list': 'devices.list',
   'devices-revoke': 'devices.revoke',
   'devices-revoke-all': 'devices.revoke-all',
-  'owner-code-show': 'owner-code.show',
-  'owner-code-rotate': 'owner-code.rotate',
   'trust-reset': 'trust.reset',
 }
 
@@ -224,22 +208,16 @@ export function parseOwnerCliCommand(args: string[]): OwnerCliCommand {
   switch (key) {
     case 'auth status':
       return { kind: 'auth-status' }
-    case 'bootstrap rotate':
-      return { kind: 'bootstrap-rotate' }
-    case 'bootstrap recover':
-      return { kind: 'bootstrap-recover' }
-    case 'auth recovery rotate':
-      return { kind: 'recovery-rotate' }
+    case 'enrollment issue':
+      return { kind: 'enrollment-issue' }
+    case 'enrollment recover':
+      return { kind: 'enrollment-recover' }
     case 'auth sessions revoke-all':
       return { kind: 'sessions-revoke-all' }
     case 'devices list':
       return { kind: 'devices-list' }
     case 'devices revoke-all':
       return { kind: 'devices-revoke-all' }
-    case 'owner-code show':
-      return { kind: 'owner-code-show' }
-    case 'owner-code rotate':
-      return { kind: 'owner-code-rotate' }
     case 'trust reset':
       return { kind: 'trust-reset' }
     default:
@@ -254,20 +232,13 @@ export function parseOwnerCliCommand(args: string[]): OwnerCliCommand {
   throw new Error(OWNER_CLI_USAGE)
 }
 
-function recoveryCodesFrom(value: unknown): string[] | null {
-  if (value === null || typeof value !== 'object' || !('recoveryCodes' in value)) return null
-  const codes = value.recoveryCodes
-  if (!Array.isArray(codes) || !codes.every((code) => typeof code === 'string')) return null
-  return codes
-}
-
-type BootstrapIssueResult = {
+type EnrollmentIssueResult = {
   reference: string
   expiresAt: string
   appOrigin?: string
 }
 
-function isBootstrapIssueResult(value: unknown): value is BootstrapIssueResult {
+function isEnrollmentIssueResult(value: unknown): value is EnrollmentIssueResult {
   if (value === null || typeof value !== 'object') return false
   return (
     'reference' in value &&
@@ -280,28 +251,27 @@ function isBootstrapIssueResult(value: unknown): value is BootstrapIssueResult {
   )
 }
 
-function bootstrapUrl(result: BootstrapIssueResult) {
+function enrollmentUrl(result: EnrollmentIssueResult) {
   if (!/^[A-Za-z0-9_-]{16,256}$/u.test(result.reference))
-    throw new Error('Bootstrap reference is invalid.')
-  if (!result.appOrigin) throw new Error('Bootstrap app origin is unavailable.')
+    throw new Error('Enrollment reference is invalid.')
+  if (!result.appOrigin) throw new Error('App origin is unavailable.')
   let origin: URL
   try {
     origin = new URL(result.appOrigin)
   } catch {
-    throw new Error('Bootstrap app origin is invalid.')
+    throw new Error('App origin is invalid.')
   }
-  if (!['http:', 'https:'].includes(origin.protocol))
-    throw new Error('Bootstrap app origin is invalid.')
-  const url = new URL('/app/first-session', origin)
+  if (!['http:', 'https:'].includes(origin.protocol)) throw new Error('App origin is invalid.')
+  const url = new URL('/app/enroll', origin)
   url.searchParams.set('ref', result.reference)
   return url.toString()
 }
 
-async function printBootstrapIssue(value: unknown, io: Pick<typeof process, 'stdout'>) {
-  if (!isBootstrapIssueResult(value)) throw new Error('Bootstrap issue response is invalid.')
-  const url = bootstrapUrl(value)
+async function printEnrollmentIssue(value: unknown, io: Pick<typeof process, 'stdout'>) {
+  if (!isEnrollmentIssueResult(value)) throw new Error('Enrollment issue response is invalid.')
+  const url = enrollmentUrl(value)
   const qr = await renderTerminal(url, { small: true })
-  io.stdout.write(`First-session URL (expires at ${value.expiresAt}):\n${url}\n${qr}\n`)
+  io.stdout.write(`Enrollment URL (expires at ${value.expiresAt}):\n${url}\n${qr}\n`)
 }
 
 export async function runOwnerCliCommand(
@@ -309,15 +279,12 @@ export async function runOwnerCliCommand(
   services: {
     localManagement: {
       authStatus(): Promise<unknown>
-      bootstrapRotate(): Promise<unknown>
-      bootstrapRecover(): Promise<unknown>
-      rotateRecoveryCodes(): Promise<unknown>
+      enrollmentIssue(): Promise<unknown>
+      enrollmentRecover(): Promise<unknown>
       revokeAllSessions(): Promise<unknown>
       listDevices(): Promise<unknown>
       revokeAllDevices(): Promise<unknown>
       revokeDevice(deviceId: string): Promise<unknown>
-      ownerCodeShow(): Promise<unknown>
-      ownerCodeRotate(): Promise<unknown>
       trustReset(): Promise<unknown>
     }
   },
@@ -364,33 +331,18 @@ export async function runOwnerCliCommand(
         ),
       )
       break
-    case 'bootstrap-rotate':
-      await printBootstrapIssue(
-        await run('Generating first-session URL', () => services.localManagement.bootstrapRotate()),
+    case 'enrollment-issue':
+      await printEnrollmentIssue(
+        await run('Generating enrollment URL', () => services.localManagement.enrollmentIssue()),
         io,
       )
       break
-    case 'bootstrap-recover':
-      if (await confirm('Revoke all remote sessions and issue a new first-session URL?'))
+    case 'enrollment-recover':
+      if (await confirm('Reset remote trust and issue a new device enrollment URL?'))
         print(
-          await run('Recovering remote access', () => services.localManagement.bootstrapRecover()),
+          await run('Recovering remote access', () => services.localManagement.enrollmentRecover()),
         )
       break
-    case 'recovery-rotate': {
-      if (!(await confirm('Rotate recovery codes? Existing unused codes will stop working.'))) break
-      const result = await run('Rotating recovery codes', () =>
-        services.localManagement.rotateRecoveryCodes(),
-      )
-      if (interactive)
-        log.warn('Save these recovery codes now. They will not be shown again.', {
-          output: io.stdout,
-        })
-      else io.stderr.write('Save these recovery codes now. They will not be shown again.\n')
-      const recoveryCodes = recoveryCodesFrom(result)
-      if (recoveryCodes) io.stdout.write(`${recoveryCodes.join('\n')}\n`)
-      else throw new Error('Recovery rotation did not return recovery codes.')
-      break
-    }
     case 'sessions-revoke-all':
       if (await confirm('Revoke every Owner session?'))
         print(
@@ -413,19 +365,6 @@ export async function runOwnerCliCommand(
         print(
           await run('Revoking all remote devices', () =>
             services.localManagement.revokeAllDevices(),
-          ),
-        )
-      break
-    case 'owner-code-show':
-      print(
-        await run('Loading Owner connection code', () => services.localManagement.ownerCodeShow()),
-      )
-      break
-    case 'owner-code-rotate':
-      if (await confirm('Rotate the Owner connection code?'))
-        print(
-          await run('Rotating Owner connection code', () =>
-            services.localManagement.ownerCodeRotate(),
           ),
         )
       break

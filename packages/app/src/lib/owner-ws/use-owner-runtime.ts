@@ -12,9 +12,9 @@ import {
 } from './runtime-controller'
 import { setOwnerBridge } from '@/lib/bridge/owner-runtime'
 import {
-  clearDeviceKey,
-  loadDeviceKey,
-  loadRemoteOwnerSession,
+  clearConnectionProfileSession,
+  loadConnectionProfile,
+  loadConnectionProfileSession,
 } from '@/lib/remote/device-key-store'
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
 
@@ -34,8 +34,15 @@ export type OwnerRuntimeController = {
 
 const runtimes = new Map<string, SessionController>()
 const runtimeDisposalTimers = new Map<SessionController, number>()
-export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeController {
-  const key = sessionToken ? `local:${sessionToken}` : 'remote-paired'
+export function useOwnerRuntime(
+  sessionToken: string | undefined,
+  connectionProfileId?: string,
+): OwnerRuntimeController {
+  const key = sessionToken
+    ? `local:${sessionToken}`
+    : connectionProfileId
+      ? `remote-profile:${connectionProfileId}`
+      : 'remote-paired'
   const remoteSocketRef = React.useRef<WebSocket | null>(null)
   const remoteSocketBuilderRef = React.useRef<(() => WebSocket) | null>(null)
   const [connectionRevision, setConnectionRevision] = React.useState(0)
@@ -68,7 +75,7 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
   const error = snapshot.error
 
   React.useEffect(() => {
-    if (!sessionToken && key !== 'remote-paired') return
+    if (!sessionToken && !connectionProfileId && key !== 'remote-paired') return
     const pendingDisposal = runtimeDisposalTimers.get(runtime)
     if (pendingDisposal !== undefined) {
       window.clearTimeout(pendingDisposal)
@@ -87,7 +94,8 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
     })
     const unsubscribeNotification = runtime.subscribeNotification((method) => {
       if (!active || method !== 'remote.device.revoked') return
-      void clearDeviceKey().catch(() => undefined)
+      if (connectionProfileId)
+        void clearConnectionProfileSession(connectionProfileId).catch(() => undefined)
     })
     const connect = async () => {
       if (sessionToken) {
@@ -99,37 +107,38 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
         })
         return
       }
-      const record = await loadDeviceKey()
-      if (!record?.pairedClientToken || !record.deviceId || !record.nodeId || !record.relayUrl)
+      if (connectionProfileId) {
+        const profile = await loadConnectionProfile(connectionProfileId)
+        const session = await loadConnectionProfileSession(connectionProfileId)
+        if (
+          !profile?.deviceId ||
+          !profile.pairedClientToken ||
+          profile.trustEpoch === null ||
+          !session
+        )
+          throw new Error('Saved connection is unavailable. Re-enroll this browser.')
+        const socketTarget = {
+          nodeId: profile.nodeId,
+          trustEpoch: profile.trustEpoch,
+          clientToken: profile.pairedClientToken,
+          deviceId: profile.deviceId,
+          publicKey: profile.publicKey,
+          privateKey: profile.privateKey,
+          expectedOwnerPublicKey: profile.ownerPublicKey,
+        }
+        remoteSocketRef.current = createRelayOwnerSocket(profile.relayUrl, socketTarget)
+        remoteSocketBuilderRef.current = () =>
+          createRelayOwnerSocket(profile.relayUrl, socketTarget)
+        await runtime.connect({
+          url: profile.relayUrl,
+          sessionToken: session.token,
+          clientId: 'owner-remote-app',
+          capabilities: ['owner', 'remote-administration'],
+        })
+        await runtime.waitForConnection(connectionAbort.signal)
         return
-      const pairedDeviceId = record.deviceId
-      const socketTarget = {
-        nodeId: record.nodeId,
-        trustEpoch: record.trustEpoch ?? 0,
-        clientToken: record.pairedClientToken,
-        deviceId: pairedDeviceId,
-        publicKey: record.publicKey,
-        privateKey: record.privateKey,
       }
-      const socketUrl = record.relayUrl
-      remoteSocketRef.current = createRelayOwnerSocket(socketUrl, socketTarget)
-      remoteSocketBuilderRef.current = () => createRelayOwnerSocket(socketUrl, socketTarget)
-      const savedSession = record.ownerCode
-        ? await loadRemoteOwnerSession({
-            relayUrl: record.relayUrl,
-            ownerCode: record.ownerCode,
-            nodeId: record.nodeId,
-            deviceId: pairedDeviceId,
-            ownerId: record.ownerId ?? undefined,
-          })
-        : null
-      await runtime.connect({
-        url: record.relayUrl,
-        ...(savedSession ? { sessionToken: savedSession.token } : {}),
-        clientId: 'owner-remote-app',
-        capabilities: ['owner', 'remote-administration'],
-      })
-      await runtime.waitForConnection(connectionAbort.signal)
+      return
     }
     // React StrictMode replays effects in development. Deferring connection start lets the
     // first setup be cancelled during that replay instead of opening a socket that cleanup
@@ -137,15 +146,17 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
     const connectTimer = window.setTimeout(() => {
       void connect()
         .then(() => {
-          if (!active) return
+          if (!active) return undefined
           setOwnerBridge(runtime)
+          return undefined
         })
         .catch((cause: unknown) => {
-          if (!active) return
+          if (!active) return undefined
           setSnapshot({
             ...runtime.state,
             error: cause instanceof Error ? cause.message : 'Owner connection failed',
           })
+          return undefined
         })
     }, 0)
     return () => {
@@ -169,14 +180,27 @@ export function useOwnerRuntime(sessionToken: string | undefined): OwnerRuntimeC
       }, 0)
       runtimeDisposalTimers.set(runtime, disposalTimer)
     }
-  }, [key, runtime, sessionToken, connectionRevision])
+  }, [connectionProfileId, key, runtime, sessionToken, connectionRevision])
+
+  const request = React.useCallback<OwnerRuntimeController['request']>(
+    (method, params, options) => runtime.request(method, params, options),
+    [runtime],
+  )
+  const openStream = React.useCallback<OwnerRuntimeController['openStream']>(
+    (streamRequest, handlers) => runtime.openStream(streamRequest, handlers),
+    [runtime],
+  )
+  const close = React.useCallback<OwnerRuntimeController['close']>(
+    (reason) => runtime.close(reason),
+    [runtime],
+  )
 
   return {
     status,
     error,
-    isRemote: key === 'remote-paired',
-    request: (method, params, options) => runtime.request(method, params, options),
-    openStream: (request, handlers) => runtime.openStream(request, handlers),
-    close: (reason) => runtime.close(reason),
+    isRemote: key === 'remote-paired' || key.startsWith('remote-profile:'),
+    request,
+    openStream,
+    close,
   }
 }

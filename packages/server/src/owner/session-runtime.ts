@@ -12,9 +12,8 @@ export type OwnerTransport = {
   origin?: string
   pairedDeviceId?: string
   e2eeVerified?: boolean
-  loginCandidate?: boolean
-  firstSessionCandidate?: boolean
-  bootstrapReference?: string
+  enrollmentCandidate?: boolean
+  enrollmentReference?: string
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
   enrollmentTicket?: string
@@ -32,9 +31,8 @@ export class VirtualOwnerTransport implements OwnerTransport {
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
   promoted = false
-  loginCandidate = false
-  firstSessionCandidate = false
-  bootstrapReference?: string
+  enrollmentCandidate = false
+  enrollmentReference?: string
   private readonly sendFrame: (frame: string | Uint8Array) => void
   private readonly closeTransport: (code?: number, reason?: string) => void
   private readonly messageListeners = new Set<(frame: string | Uint8Array) => void>()
@@ -90,7 +88,7 @@ export type OwnerContext = {
   ownerId: string
   sessionId: string
   sessionToken?: string
-  scope?: 'bootstrap' | 'full'
+  stepUpAt?: number
   clientId: string
   connectionId: string
   transport: { kind: OwnerTransport['kind']; pairedDeviceId?: string }
@@ -100,7 +98,7 @@ export type OwnerAdmission = {
   ownerId: string
   sessionId: string
   sessionToken?: string
-  scope?: 'bootstrap' | 'full'
+  stepUpAt?: number
 }
 
 export type OwnerStream = {
@@ -214,7 +212,7 @@ export class OwnerSessionRuntime {
 
     if (
       this.transport.kind === 'relay' &&
-      ((!this.transport.pairedDeviceId && !this.transport.loginCandidate) ||
+      ((!this.transport.pairedDeviceId && !this.transport.enrollmentCandidate) ||
         this.transport.e2eeVerified !== true)
     ) {
       void this.rejectConnection('UNAUTHORIZED', 'Remote admission is not valid.', 1008)
@@ -285,8 +283,6 @@ export class OwnerSessionRuntime {
   }
 
   private async execute(requestId: string, methodName: string, params: unknown): Promise<void> {
-    if (this.transport.kind === 'relay' && methodName === 'owner.firstSession.redeem')
-      log.info('Remote first-session redeem request received')
     if (this.seenRequestIds.has(requestId)) {
       await this.respondError(requestId, {
         code: 'DUPLICATE_REQUEST_ID',
@@ -324,14 +320,9 @@ export class OwnerSessionRuntime {
     }
     if (
       this.transport.kind === 'relay' &&
-      this.transport.loginCandidate &&
+      this.transport.enrollmentCandidate &&
       !this.transport.promoted &&
-      ![
-        'owner.status',
-        'owner.firstSession.redeem',
-        'owner.passkey.authentication.options',
-        'owner.passkey.authentication.verify',
-      ].includes(methodName)
+      !['owner.enrollment.redeem'].includes(methodName)
     ) {
       await this.respondError(requestId, AUTH_FAILURE)
       return
@@ -348,52 +339,6 @@ export class OwnerSessionRuntime {
       await this.respondError(requestId, AUTH_FAILURE)
       return
     }
-    if (
-      this.session?.scope === 'bootstrap' &&
-      ![
-        'owner.status',
-        'owner.passkey.registration.options',
-        'owner.passkey.registration.verify',
-        'owner.recovery.generate',
-        'owner.security.status',
-        'owner.session.close',
-        'credentials.list',
-        'credentials.create',
-        'credentials.test',
-        'credentials.select',
-        'credentials.delete',
-        'projects.list',
-        'projects.create',
-        'projects.rename',
-        'projects.delete',
-        'codex.status',
-        'capabilities.list',
-        'configuration.contextWindow.read',
-        'configuration.contextWindow.write',
-        'codex.start',
-        'codex.restart',
-        'skills.list',
-        'threads.list',
-        'threads.create',
-        'threads.read',
-        'threads.status',
-        'threads.send',
-        'threads.cancel',
-        'threads.compact',
-        'threads.archive',
-        'threads.unarchive',
-        'threads.delete',
-        'threads.deleteAll',
-        'userInput.respond',
-        'approvals.resolve',
-        'events.subscribe',
-        'events.resume',
-      ].includes(methodName)
-    ) {
-      await this.respondError(requestId, AUTH_FAILURE)
-      return
-    }
-
     const controller = new AbortController()
     const timeout = setTimeout(
       () => {
@@ -435,8 +380,6 @@ export class OwnerSessionRuntime {
       }
     } catch (error) {
       const safeError = projectError(error, state.abortCode)
-      if (this.transport.kind === 'relay' && methodName === 'owner.firstSession.redeem')
-        log.warn(`Remote first-session redeem request failed (${safeError.code})`)
       if (methodName.startsWith('owner.passkey.'))
         log.warn(
           `Owner Passkey method failed (${methodName}, ${safeError.code}, ${this.transport.kind})`,
@@ -470,7 +413,7 @@ export class OwnerSessionRuntime {
       authenticate: async (admission) => {
         if (
           this.transport.kind === 'relay' &&
-          ((!this.transport.pairedDeviceId && !this.transport.loginCandidate) ||
+          ((!this.transport.pairedDeviceId && !this.transport.enrollmentCandidate) ||
             this.transport.e2eeVerified !== true)
         ) {
           throw new OwnerMethodError('UNAUTHORIZED')
@@ -673,8 +616,6 @@ const SAFE_ERROR_MESSAGES: Record<OwnerErrorCode, string> = {
   REMOTE_UNAVAILABLE: 'Remote administration is unavailable.',
   REMOTE_RELAY_REQUIRED: 'A relay URL is required for pairing.',
   DEVICE_NOT_FOUND: 'Paired device was not found.',
-  FIRST_SESSION_ALREADY_USED: 'This first-session link has already been used.',
-  FIRST_SESSION_GRANT_INVALID: 'This first-session link is invalid or expired.',
 }
 
 function isOwnerErrorCode(code: string): code is OwnerErrorCode {

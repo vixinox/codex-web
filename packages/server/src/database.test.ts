@@ -33,11 +33,9 @@ test('creates the Owner schema and rejects legacy authentication tables', () => 
     for (const name of [
       'owner',
       'passkey_credential',
-      'recovery_code',
       'local_enrollment_ticket',
       'remote_device',
       'owner_session',
-      'auth_throttle',
       'project',
       'credential',
       'codex_event',

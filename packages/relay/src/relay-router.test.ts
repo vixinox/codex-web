@@ -526,18 +526,26 @@ test('owner code changes and stale owner detach do not remove the active mapping
   })
 })
 
-test('attaches login candidates by online owner code and applies normal node limits', () => {
+test('routes enrollment candidates by reference and applies normal node limits', () => {
   const router = new RelayRouter({ ownerToken, maxClientsPerNode: 1 })
   const owner = fakeSocket()
-  router.attach(ownerAttach({ ownerCode: '123456789' }), owner.socket)
+  const ownerResult = router.attach(ownerAttach({ ownerCode: '123456789' }), owner.socket)
+  assert.equal(ownerResult.ok, true)
+  if (!ownerResult.ok) return
+  router.registerEnrollmentReference(ownerResult.session.sessionId, {
+    type: 'relay.enrollment.register',
+    version: RELAY_PROTOCOL_VERSION,
+    reference: 'ref-one',
+    expiresAt: Date.now() + 60_000,
+  })
   const candidate = router.attach(
     {
       type: 'relay.attach',
       version: RELAY_PROTOCOL_VERSION,
       role: 'client',
-      admission: 'login',
-      connectionId: 'login-1',
-      ownerCode: '123456789',
+      admission: 'enrollment',
+      connectionId: 'enrollment-1',
+      reference: 'ref-one',
     },
     fakeSocket().socket,
   )
@@ -546,18 +554,19 @@ test('attaches login candidates by online owner code and applies normal node lim
     type: 'relay.client.connected',
     version: RELAY_PROTOCOL_VERSION,
     nodeId: 'node-1',
-    connectionId: 'login-1',
-    admission: 'login',
-    ownerCode: '123456789',
+    connectionId: 'enrollment-1',
+    admission: 'enrollment',
+    reference: 'ref-one',
+    ownerPublicKey: 'owner-public-key',
   })
   const overflow = router.attach(
     {
       type: 'relay.attach',
       version: RELAY_PROTOCOL_VERSION,
       role: 'client',
-      admission: 'login',
-      connectionId: 'login-2',
-      ownerCode: '123456789',
+      admission: 'enrollment',
+      connectionId: 'enrollment-2',
+      reference: 'ref-one',
     },
     fakeSocket().socket,
   )
@@ -567,33 +576,33 @@ test('attaches login candidates by online owner code and applies normal node lim
       type: 'relay.attach',
       version: RELAY_PROTOCOL_VERSION,
       role: 'client',
-      admission: 'login',
-      connectionId: 'login-3',
-      ownerCode: '999999999',
+      admission: 'enrollment',
+      connectionId: 'enrollment-3',
+      reference: 'unknown-ref',
     },
     fakeSocket().socket,
   )
   assert.deepEqual(offline, { ok: false, reason: 'unauthorized' })
 })
 
-test('routes bootstrap references through an owner registration and clears them on unregister', () => {
+test('routes enrollment references through an Owner registration and clears them on unregister', () => {
   const router = createRouter()
   const owner = fakeSocket()
   const ownerResult = router.attach(ownerAttach(), owner.socket)
   assert.equal(ownerResult.ok, true)
   if (!ownerResult.ok) return
 
-  const reference = 'ref-bootstrap-1'
+  const reference = 'ref-enrollment-1'
   assert.equal(
-    router.registerBootstrapReference(ownerResult.session.sessionId, {
-      type: 'relay.bootstrap.register',
+    router.registerEnrollmentReference(ownerResult.session.sessionId, {
+      type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference,
       expiresAt: Date.now() + 60_000,
     }),
     true,
   )
-  assert.deepEqual(router.resolveBootstrapReference(reference), {
+  assert.deepEqual(router.resolveEnrollmentReference(reference), {
     online: true,
     nodeId: 'node-1',
     trustEpoch: 0,
@@ -605,8 +614,8 @@ test('routes bootstrap references through an owner registration and clears them 
       type: 'relay.attach',
       version: RELAY_PROTOCOL_VERSION,
       role: 'client',
-      admission: 'bootstrap_reference',
-      connectionId: 'bootstrap-1',
+      admission: 'enrollment',
+      connectionId: 'enrollment-1',
       reference,
     },
     client.socket,
@@ -616,21 +625,21 @@ test('routes bootstrap references through an owner registration and clears them 
     type: 'relay.client.connected',
     version: RELAY_PROTOCOL_VERSION,
     nodeId: 'node-1',
-    connectionId: 'bootstrap-1',
-    admission: 'bootstrap_reference',
+    connectionId: 'enrollment-1',
+    admission: 'enrollment',
     reference,
     ownerPublicKey: 'owner-public-key',
   })
 
-  assert.equal(router.unregisterBootstrapReference(ownerResult.session.sessionId, reference), true)
-  assert.deepEqual(router.resolveBootstrapReference(reference), { online: false })
+  assert.equal(router.unregisterEnrollmentReference(ownerResult.session.sessionId, reference), true)
+  assert.deepEqual(router.resolveEnrollmentReference(reference), { online: false })
   const rejected = router.attach(
     {
       type: 'relay.attach',
       version: RELAY_PROTOCOL_VERSION,
       role: 'client',
-      admission: 'bootstrap_reference',
-      connectionId: 'bootstrap-2',
+      admission: 'enrollment',
+      connectionId: 'enrollment-2',
       reference,
     },
     fakeSocket().socket,
@@ -638,7 +647,7 @@ test('routes bootstrap references through an owner registration and clears them 
   assert.deepEqual(rejected, { ok: false, reason: 'unauthorized' })
 })
 
-test('replaces and expires bootstrap references, and owner detach removes them', async () => {
+test('replaces and expires enrollment references, and owner detach removes them', async () => {
   const router = createRouter()
   const owner = fakeSocket()
   const ownerResult = router.attach(ownerAttach(), owner.socket)
@@ -646,8 +655,8 @@ test('replaces and expires bootstrap references, and owner detach removes them',
   if (!ownerResult.ok) return
 
   assert.equal(
-    router.registerBootstrapReference(ownerResult.session.sessionId, {
-      type: 'relay.bootstrap.register',
+    router.registerEnrollmentReference(ownerResult.session.sessionId, {
+      type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference: 'ref-old',
       expiresAt: Date.now() + 60_000,
@@ -655,18 +664,18 @@ test('replaces and expires bootstrap references, and owner detach removes them',
     true,
   )
   assert.equal(
-    router.registerBootstrapReference(ownerResult.session.sessionId, {
-      type: 'relay.bootstrap.register',
+    router.registerEnrollmentReference(ownerResult.session.sessionId, {
+      type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference: 'ref-new',
       expiresAt: Date.now() + 60_000,
     }),
     true,
   )
-  assert.deepEqual(router.resolveBootstrapReference('ref-old'), { online: false })
+  assert.deepEqual(router.resolveEnrollmentReference('ref-old'), { online: false })
   assert.equal(
-    router.registerBootstrapReference(ownerResult.session.sessionId, {
-      type: 'relay.bootstrap.register',
+    router.registerEnrollmentReference(ownerResult.session.sessionId, {
+      type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference: 'ref-expiring',
       expiresAt: Date.now() + 2,
@@ -674,10 +683,10 @@ test('replaces and expires bootstrap references, and owner detach removes them',
     true,
   )
   await new Promise((resolve) => setTimeout(resolve, 5))
-  assert.deepEqual(router.resolveBootstrapReference('ref-expiring'), { online: false })
+  assert.deepEqual(router.resolveEnrollmentReference('ref-expiring'), { online: false })
 
   router.detach(ownerResult.session.sessionId)
-  assert.deepEqual(router.resolveBootstrapReference('ref-new'), { online: false })
+  assert.deepEqual(router.resolveEnrollmentReference('ref-new'), { online: false })
 })
 
 test('allows replacing a routing slot at the global connection limit', () => {

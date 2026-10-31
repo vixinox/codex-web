@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   emptyOwnerManagementSnapshot,
   formatDeviceDate,
-  parseManagementQrPayload,
+  parseEnrollmentInvitation,
 } from './owner-management-model'
 
 describe('owner management model', () => {
@@ -10,7 +10,6 @@ describe('owner management model', () => {
     expect(emptyOwnerManagementSnapshot()).toEqual({
       remotePasskeyAvailable: false,
       localPasskeyAvailable: false,
-      recoveryCodesAvailable: false,
       devices: [],
     })
   })
@@ -18,16 +17,16 @@ describe('owner management model', () => {
     expect(formatDeviceDate(null)).toBe('Never')
     expect(formatDeviceDate('invalid')).toBe('Unknown')
   })
-  it('accepts only short, unexpired management references', () => {
-    const payload = {
-      version: 1,
-      type: 'management_request',
-      reference: 'management-reference-1234',
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  it('accepts a reference-only enrollment invitation', () => {
+    const invitation = {
+      reference: 'enrollment-reference-1234',
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
     }
-    expect(parseManagementQrPayload(JSON.stringify(payload))).toEqual(payload)
+    expect(parseEnrollmentInvitation(invitation)).toEqual(invitation)
+    expect(parseEnrollmentInvitation({ invitation })).toEqual(invitation)
     expect(() =>
-      parseManagementQrPayload(JSON.stringify({ ...payload, ownerId: 'identity-material' })),
+      parseEnrollmentInvitation({ ...invitation, relayUrl: 'https://example.test' }),
     ).toThrow()
+    expect(() => parseEnrollmentInvitation({ ...invitation, reference: 'short' })).toThrow()
   })
 })

@@ -66,17 +66,21 @@ function assertCurrentSchema(driver: DatabaseDriver.Database) {
   const missingTables = [
     'owner',
     'passkey_credential',
-    'recovery_code',
     'local_enrollment_ticket',
     'remote_device',
     'owner_session',
-    'auth_throttle',
     'project',
     'credential',
     'codex_event',
   ].filter((table) => !tables.has(table))
-  const legacyTables = ['user', 'session', 'account', 'verification', 'twoFactor', 'owner_security_state']
-    .filter((table) => tables.has(table))
+  const legacyTables = [
+    'user',
+    'session',
+    'account',
+    'verification',
+    'twoFactor',
+    'owner_security_state',
+  ].filter((table) => tables.has(table))
   const hasLegacyMigrationTable = tables.has('schema_migrations')
   if (missingTables.length > 0 || legacyTables.length > 0 || hasLegacyMigrationTable) {
     throw new Error(

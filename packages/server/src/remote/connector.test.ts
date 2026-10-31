@@ -49,6 +49,8 @@ class FakeSocket {
   closed = false
   closeCode?: number
   closeReason?: string
+  pingCount = 0
+  pongListener?: () => void
   send(data: string) {
     this.sent.push(data)
   }
@@ -58,6 +60,13 @@ class FakeSocket {
     this.closeCode = code
     this.closeReason = reason
     this.onclose?.()
+  }
+  ping() {
+    this.pingCount += 1
+    this.pongListener?.()
+  }
+  on(event: 'pong', listener: () => void) {
+    if (event === 'pong') this.pongListener = listener
   }
   deliver(frame: string) {
     this.onmessage?.(frame)
@@ -138,29 +147,12 @@ function methodRegistry(connector: OwnerConnector, submittedFactors: string[]) {
       },
     ],
     [
-      'owner.session.open',
+      'owner.enrollment.redeem',
       {
         access: 'public',
-        handle: (params, context) => {
-          if (context.transport.kind !== 'relay' || context.transport.loginCandidate !== true)
-            throw new Error('Login candidate required')
-          submittedFactors.push(String((params as { password?: unknown }).password))
-          return { pendingTwoFactor: { challengeId: 'candidate-challenge', expiresAt: 'later' } }
-        },
-      },
-    ],
-    [
-      'owner.login.verifyTotp',
-      {
-        access: 'public',
-        handle: async (params, context) => {
-          if (
-            context.transport.kind !== 'relay' ||
-            context.transport.loginCandidate !== true ||
-            (params as { challengeId?: unknown }).challengeId !== 'candidate-challenge'
-          )
-            throw new Error('Candidate challenge mismatch')
-          submittedFactors.push(String((params as { code?: unknown }).code))
+        handle: async (_params, context) => {
+          if (context.transport.kind !== 'relay' || context.transport.enrollmentCandidate !== true)
+            throw new Error('Enrollment candidate required')
           const publicKey = context.transport.clientPublicKey
           if (!publicKey || !context.transport.promote) throw new Error('Candidate key missing')
           const { deviceId } = await connector.trust.trustPeerWithStatus(publicKey)
@@ -171,7 +163,7 @@ function methodRegistry(connector: OwnerConnector, submittedFactors: string[]) {
             sessionToken: SESSION_TOKEN,
           })
           context.transport.promote(deviceId, clientToken)
-          return { ownerId: 'owner-1', sessionToken: SESSION_TOKEN, deviceId, clientToken }
+          return { ownerId: 'owner-1', deviceId, clientToken }
         },
       },
     ],
@@ -228,7 +220,7 @@ type Harness = {
 async function createHarness(
   connector: OwnerConnector,
   sockets: FakeSocket[],
-  loginCandidate = false,
+  enrollmentCandidate = false,
   submittedFactors: string[] = [],
 ): Promise<Harness> {
   connector.configureRemoteSessions(methodRegistry(connector, submittedFactors), async (token) =>
@@ -255,8 +247,8 @@ async function createHarness(
   await waitFor(() => connector.isConnected(), 'the relay to become ready')
 
   const clientKeys = await serializeKeyPair(await generateKeyPair())
-  const deviceId = loginCandidate
-    ? 'login'
+  const deviceId = enrollmentCandidate
+    ? 'enrollment'
     : (await connector.trust.trustPeerWithStatus(clientKeys.publicKey)).deviceId
 
   const identity = await connector.trust.identity()
@@ -267,8 +259,8 @@ async function createHarness(
       version: RELAY_PROTOCOL_VERSION,
       nodeId: attach.nodeId,
       connectionId: 'client-connection',
-      ...(loginCandidate
-        ? { admission: 'login' as const, ownerCode: attach.ownerCode }
+      ...(enrollmentCandidate
+        ? { admission: 'enrollment' as const, reference: 'ref-123456789' }
         : { deviceId }),
     }),
   )
@@ -333,7 +325,7 @@ function helloFrame(sessionToken = SESSION_TOKEN): OwnerFrame {
  * are always released: `stop()` clears the heartbeat/ready timers and closes the socket, which is
  * what lets the trust store's write chain settle before the directory is removed.
  */
-async function withHarness(fn: (harness: Harness) => Promise<void>, loginCandidate = false) {
+async function withHarness(fn: (harness: Harness) => Promise<void>, enrollmentCandidate = false) {
   const dataRoot = await mkdtemp(join(tmpdir(), 'codex-web-connector-'))
   // Every dial gets its own socket, like the real relay client: a closed socket is never reused.
   const sockets: FakeSocket[] = []
@@ -349,15 +341,24 @@ async function withHarness(fn: (harness: Harness) => Promise<void>, loginCandida
       sockets.push(socket)
       return socket as never
     },
+    { intervalMs: 10, staleTimeoutMs: 100 },
   )
   try {
     const submittedFactors: string[] = []
-    await fn(await createHarness(connector, sockets, loginCandidate, submittedFactors))
+    await fn(await createHarness(connector, sockets, enrollmentCandidate, submittedFactors))
   } finally {
     await connector.stop()
     await rm(dataRoot, { recursive: true, force: true })
   }
 }
+
+test('keeps the relay owner connection alive while pong responses arrive', async (t) => {
+  await withHarness(async ({ socket }) => {
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    assert.ok(socket.pingCount >= 4)
+    assert.equal(socket.closeReason, undefined)
+  })
+})
 
 test('admits a registered device, confirms the session key, and carries Owner frames both ways', async () => {
   await withHarness(async (harness) => {
@@ -431,137 +432,39 @@ test('admits a registered device, confirms the session key, and carries Owner fr
   })
 })
 
-test('rejects legacy password and TOTP login methods for an E2EE candidate', async () => {
+test('enrollment promotes the E2EE candidate after the redeem response', async () => {
   await withHarness(async (harness) => {
-    const { socket, connector, clientKeys, clientKey, submittedFactors } = harness
-    const confirmation = (
-      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
-    )[0]?.relay
-    if (!isHandshakeOkFrame(confirmation ?? null))
-      throw new Error('Expected an encrypted login-candidate confirmation.')
-    assert.equal(confirmation.clientPublicKey, clientKeys.publicKey)
-    assert.equal(confirmation.ownerPublicKey, (await connector.trust.identity()).ownerPublicKey)
-
-    await sendClientFrame(
-      harness,
-      {
-        type: 'hello',
-        version: OWNER_PROTOCOL_VERSION,
-        clientId: 'login-candidate',
-        capabilities: ['owner'],
-      },
-      1,
-    )
-    await waitFor(
-      () => encryptedSequences(socket, 'client-connection').length === 2,
-      'the unauthenticated login-candidate ready frame',
-    )
-    await sendClientFrame(
-      harness,
-      {
-        type: 'request',
-        requestId: 'login-open',
-        method: 'owner.session.open',
-        params: { email: 'owner@example.com', password: 'owner-password' },
-      },
-      2,
-    )
-    await waitFor(
-      () => encryptedSequences(socket, 'client-connection').length === 3,
-      'the encrypted login challenge',
-    )
-    const challenge = (
-      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
-    ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'login-open')
-    if (challenge?.owner?.type !== 'response')
-      throw new Error('Expected a login challenge response.')
-    assert.equal((challenge.owner.error as { code?: string } | undefined)?.code, 'UNAUTHORIZED')
-
-    await sendClientFrame(
-      harness,
-      { type: 'request', requestId: 'business-before-factor', method: 'owner.workspace.read' },
-      3,
-    )
-    await waitFor(
-      () => encryptedSequences(socket, 'client-connection').length === 4,
-      'the pre-auth business denial',
-    )
-    const denied = (
-      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
-    ).find(
-      (frame) =>
-        frame.owner?.type === 'response' && frame.owner.requestId === 'business-before-factor',
-    )
-    if (denied?.owner?.type !== 'response') throw new Error('Expected a business denial response.')
-    assert.equal(denied.owner.error?.code, 'UNAUTHORIZED')
-
-    assert.deepEqual(submittedFactors, [])
-    assert.deepEqual(await connector.listDevices(), [])
-    await sendClientFrame(
-      harness,
-      {
-        type: 'request',
-        requestId: 'legacy-totp',
-        method: 'owner.login.verifyTotp',
-        params: { challengeId: 'candidate-challenge', code: '123456' },
-      },
-      4,
-    )
-    await waitFor(
-      () => encryptedSequences(socket, 'client-connection').length === 5,
-      'legacy TOTP RPC rejection',
-    )
-    const legacy = (
-      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
-    ).find((frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'legacy-totp')
-    assert.equal(legacy?.owner?.type === 'response' && legacy.owner.error?.code, 'UNAUTHORIZED')
-  }, true)
-})
-
-test('flushes a promoted response before closing the remote candidate', async () => {
-  await withHarness(async (harness) => {
-    const { socket, clientKey } = harness
+    const { socket, clientKey, connector, clientKeys } = harness
 
     await sendClientFrame(harness, helloFrame(), 1)
     await waitFor(
       () => encryptedSequences(socket, 'client-connection').length === 2,
-      'the login candidate to receive ready',
+      'the enrollment candidate to receive ready',
     )
     await sendClientFrame(
       harness,
       {
         type: 'request',
-        requestId: 'open-1',
-        method: 'owner.session.open',
-        params: { password: 'ignored' },
+        requestId: 'redeem-1',
+        method: 'owner.enrollment.redeem',
       },
       2,
     )
     await waitFor(
-      () => encryptedSequences(socket, 'client-connection').length === 3,
-      'the login challenge response',
-    )
-    await sendClientFrame(
-      harness,
-      {
-        type: 'request',
-        requestId: 'verify-1',
-        method: 'owner.passkey.authentication.verify',
-      },
-      3,
-    )
-    await waitFor(
-      () => encryptedSequences(socket, 'client-connection').length === 5,
-      'the promoted response and close notification',
+      () => encryptedSequences(socket, 'client-connection').length === 4,
+      'the enrollment response and paired close notification',
     )
 
     const frames = await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
     const responseIndex = frames.findIndex(
-      (frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'verify-1',
+      (frame) => frame.owner?.type === 'response' && frame.owner.requestId === 'redeem-1',
     )
     const closeIndex = frames.findIndex((frame) => frame.relay?.type === 'connection.close')
     assert.ok(responseIndex >= 0)
     assert.ok(closeIndex > responseIndex)
+    const [device] = await connector.listDevices()
+    assert.ok(device)
+    assert.equal(await connector.trust.deviceId(clientKeys.publicKey), device.id)
   }, true)
 })
 

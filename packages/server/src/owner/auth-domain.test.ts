@@ -21,31 +21,6 @@ function config(dataRoot: string): ServerConfig {
   }
 }
 
-test('recovery codes reserve, consume once, and rotate transactionally', async () => {
-  const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-auth-domain-'))
-  try {
-    prepareOwnerDatabase(config(dataRoot))
-    const database = createDatabase(config(dataRoot))
-    const ownerId = 'owner-test'
-    database.db.insert(owner).values({ id: ownerId }).run()
-    const domain = createOwnerAuthDomain(database.db, ownerId)
-    const codes = await domain.generateRecoveryCodes()
-    const reservation = await domain.reserveRecoveryCode(codes[0])
-    await assert.rejects(
-      domain.reserveRecoveryCode(codes[0]),
-      (error: unknown) =>
-        error instanceof AuthDomainError && error.code === 'RECOVERY_CODE_RESERVED',
-    )
-    const rotated = await domain.finishRecoveryReservation(reservation.challengeId, true)
-    assert.equal(rotated.completed, true)
-    assert.equal(rotated.recoveryCodes?.length, 10)
-    await assert.rejects(domain.consumeRecoveryCode(codes[0]), /RECOVERY_CODE_INVALID/u)
-    database.driver.close()
-  } finally {
-    rmSync(dataRoot, { recursive: true, force: true })
-  }
-})
-
 test('remote sessions bind to devices and revoke on device removal', async () => {
   const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-auth-session-'))
   try {

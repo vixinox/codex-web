@@ -28,58 +28,35 @@ export type RelayPairedClientAttachFrame = RelayAttachBase & {
   admission?: undefined
 }
 
-export type RelayLoginClientAttachFrame = {
+export type RelayEnrollmentClientAttachFrame = {
   type: 'relay.attach'
   version: typeof RELAY_PROTOCOL_VERSION
   role: 'client'
-  admission: 'login'
+  admission: 'enrollment'
   connectionId: string
-  ownerCode: string
-}
-
-export type RelayBootstrapReferenceClientAttachFrame = {
-  type: 'relay.attach'
-  version: typeof RELAY_PROTOCOL_VERSION
-  role: 'client'
-  admission: 'bootstrap_reference'
-  connectionId: string
-  /** Short-lived reference registered by the Owner for first-session routing. */
+  /** Short-lived Owner-issued enrollment reference. */
   reference: string
-}
-
-export type RelayFirstSessionClientAttachFrame = {
-  type: 'relay.attach'
-  version: typeof RELAY_PROTOCOL_VERSION
-  role: 'client'
-  admission: 'first_session'
-  connectionId: string
-  ownerCode: string
-  grant: string
 }
 
 export type RelayAttachFrame =
   | RelayOwnerAttachFrame
   | RelayPairedClientAttachFrame
-  | RelayLoginClientAttachFrame
-  | RelayFirstSessionClientAttachFrame
-  | RelayBootstrapReferenceClientAttachFrame
+  | RelayEnrollmentClientAttachFrame
 
-export type RelayBootstrapReferenceRegisterFrame = {
-  type: 'relay.bootstrap.register'
+export type RelayEnrollmentRegisterFrame = {
+  type: 'relay.enrollment.register'
   version: typeof RELAY_PROTOCOL_VERSION
   reference: string
   expiresAt: number
 }
 
-export type RelayBootstrapReferenceUnregisterFrame = {
-  type: 'relay.bootstrap.unregister'
+export type RelayEnrollmentUnregisterFrame = {
+  type: 'relay.enrollment.unregister'
   version: typeof RELAY_PROTOCOL_VERSION
   reference?: string
 }
 
-export type RelayBootstrapReferenceFrame =
-  | RelayBootstrapReferenceRegisterFrame
-  | RelayBootstrapReferenceUnregisterFrame
+export type RelayEnrollmentFrame = RelayEnrollmentRegisterFrame | RelayEnrollmentUnregisterFrame
 
 export type RelayReadyFrame = {
   type: 'relay.ready'
@@ -87,7 +64,7 @@ export type RelayReadyFrame = {
   nodeId: string
   role: ConnectionRole
   connectionId: string
-  /** Present for client attachments so a reference-only bootstrap can derive its session key. */
+  /** Present for enrollment clients so they can derive their session key. */
   trustEpoch?: number
   /** Owner public key needed by a reference-only client to derive the session context. */
   ownerPublicKey?: string
@@ -105,22 +82,8 @@ export type RelayPairedClientConnectedFrame = RelayClientConnectedBase & {
   admission?: undefined
 }
 
-export type RelayLoginClientConnectedFrame = RelayClientConnectedBase & {
-  admission: 'login'
-  ownerCode: string
-  ownerPublicKey?: string
-  deviceId?: never
-}
-
-export type RelayFirstSessionClientConnectedFrame = RelayClientConnectedBase & {
-  admission: 'first_session'
-  ownerCode: string
-  ownerPublicKey?: string
-  deviceId?: never
-}
-
-export type RelayBootstrapReferenceClientConnectedFrame = RelayClientConnectedBase & {
-  admission: 'bootstrap_reference'
+export type RelayEnrollmentClientConnectedFrame = RelayClientConnectedBase & {
+  admission: 'enrollment'
   reference: string
   ownerPublicKey: string
   deviceId?: never
@@ -128,9 +91,7 @@ export type RelayBootstrapReferenceClientConnectedFrame = RelayClientConnectedBa
 
 export type RelayClientConnectedFrame =
   | RelayPairedClientConnectedFrame
-  | RelayLoginClientConnectedFrame
-  | RelayFirstSessionClientConnectedFrame
-  | RelayBootstrapReferenceClientConnectedFrame
+  | RelayEnrollmentClientConnectedFrame
 
 export type RelayClientDisconnectedFrame = {
   type: 'relay.client.disconnected'
@@ -184,7 +145,7 @@ export type ConnectionCloseFrame = {
 
 export type RelayFrame =
   | RelayAttachFrame
-  | RelayBootstrapReferenceFrame
+  | RelayEnrollmentFrame
   | RelayReadyFrame
   | RelayClientConnectedFrame
   | RelayClientDisconnectedFrame
@@ -196,8 +157,8 @@ export type RelayFrame =
 
 const frameTypes = new Set<RelayFrame['type']>([
   'relay.attach',
-  'relay.bootstrap.register',
-  'relay.bootstrap.unregister',
+  'relay.enrollment.register',
+  'relay.enrollment.unregister',
   'relay.ready',
   'relay.client.connected',
   'relay.client.disconnected',
@@ -230,39 +191,13 @@ export function isRelayAttachFrame(frame: RelayFrame | null): frame is RelayAtta
     frame.type === 'relay.attach' &&
     frame.version === RELAY_PROTOCOL_VERSION &&
     frame.role === 'client' &&
-    (frame.admission === 'login' ||
-      frame.admission === 'first_session' ||
-      frame.admission === 'bootstrap_reference')
+    frame.admission === 'enrollment'
   )
-    return frame.admission === 'login'
-      ? hasOnlyKeys(frame, ['type', 'version', 'role', 'admission', 'connectionId', 'ownerCode']) &&
-          isRouteIdentifier(frame.connectionId) &&
-          isOwnerCode(frame.ownerCode)
-      : frame.admission === 'bootstrap_reference'
-        ? hasOnlyKeys(frame, [
-            'type',
-            'version',
-            'role',
-            'admission',
-            'connectionId',
-            'reference',
-          ]) &&
-          isRouteIdentifier(frame.connectionId) &&
-          isRouteIdentifier(frame.reference)
-        : hasOnlyKeys(frame, [
-            'type',
-            'version',
-            'role',
-            'admission',
-            'connectionId',
-            'ownerCode',
-            'grant',
-          ]) &&
-          isRouteIdentifier(frame.connectionId) &&
-          isOwnerCode(frame.ownerCode) &&
-          typeof frame.grant === 'string' &&
-          frame.grant.length >= 32 &&
-          frame.grant.length <= 512
+    return (
+      hasOnlyKeys(frame, ['type', 'version', 'role', 'admission', 'connectionId', 'reference']) &&
+      isRouteIdentifier(frame.connectionId) &&
+      isRouteIdentifier(frame.reference)
+    )
   if (!frame || frame.type !== 'relay.attach' || frame.version !== RELAY_PROTOCOL_VERSION)
     return false
   if (
@@ -329,55 +264,7 @@ export function isRelayClientConnectedFrame(
   )
     return false
 
-  if ('admission' in frame && frame.admission === 'login')
-    return (
-      (hasOnlyKeys(frame, [
-        'type',
-        'version',
-        'nodeId',
-        'connectionId',
-        'admission',
-        'ownerCode',
-      ]) ||
-        hasOnlyKeys(frame, [
-          'type',
-          'version',
-          'nodeId',
-          'connectionId',
-          'admission',
-          'ownerCode',
-          'ownerPublicKey',
-        ])) &&
-      isOwnerCode(frame.ownerCode) &&
-      (!('ownerPublicKey' in frame) ||
-        (typeof frame.ownerPublicKey === 'string' && frame.ownerPublicKey.length > 0))
-    )
-
-  if ('admission' in frame && frame.admission === 'first_session')
-    return (
-      (hasOnlyKeys(frame, [
-        'type',
-        'version',
-        'nodeId',
-        'connectionId',
-        'admission',
-        'ownerCode',
-      ]) ||
-        hasOnlyKeys(frame, [
-          'type',
-          'version',
-          'nodeId',
-          'connectionId',
-          'admission',
-          'ownerCode',
-          'ownerPublicKey',
-        ])) &&
-      isOwnerCode(frame.ownerCode) &&
-      (!('ownerPublicKey' in frame) ||
-        (typeof frame.ownerPublicKey === 'string' && frame.ownerPublicKey.length > 0))
-    )
-
-  if ('admission' in frame && frame.admission === 'bootstrap_reference')
+  if ('admission' in frame && frame.admission === 'enrollment')
     return (
       hasOnlyKeys(frame, [
         'type',
@@ -400,12 +287,12 @@ export function isRelayClientConnectedFrame(
   )
 }
 
-export function isRelayBootstrapReferenceRegisterFrame(
+export function isRelayEnrollmentRegisterFrame(
   frame: RelayFrame | null,
-): frame is RelayBootstrapReferenceRegisterFrame {
+): frame is RelayEnrollmentRegisterFrame {
   return Boolean(
     frame &&
-    frame.type === 'relay.bootstrap.register' &&
+    frame.type === 'relay.enrollment.register' &&
     frame.version === RELAY_PROTOCOL_VERSION &&
     hasOnlyKeys(frame, ['type', 'version', 'reference', 'expiresAt']) &&
     isRouteIdentifier(frame.reference) &&
@@ -414,12 +301,12 @@ export function isRelayBootstrapReferenceRegisterFrame(
   )
 }
 
-export function isRelayBootstrapReferenceUnregisterFrame(
+export function isRelayEnrollmentUnregisterFrame(
   frame: RelayFrame | null,
-): frame is RelayBootstrapReferenceUnregisterFrame {
+): frame is RelayEnrollmentUnregisterFrame {
   return Boolean(
     frame &&
-    frame.type === 'relay.bootstrap.unregister' &&
+    frame.type === 'relay.enrollment.unregister' &&
     frame.version === RELAY_PROTOCOL_VERSION &&
     hasOnlyKeys(frame, ['type', 'version', 'reference']) &&
     (frame.reference === undefined || isRouteIdentifier(frame.reference)),

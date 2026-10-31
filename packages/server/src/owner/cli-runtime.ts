@@ -21,15 +21,12 @@ type AdaptiveRuntime = {
   services: {
     localManagement: {
       authStatus(): Promise<unknown>
-      bootstrapRotate(): Promise<unknown>
-      bootstrapRecover(): Promise<unknown>
-      rotateRecoveryCodes(): Promise<unknown>
+      enrollmentIssue(): Promise<unknown>
+      enrollmentRecover(): Promise<unknown>
       revokeAllSessions(): Promise<unknown>
       listDevices(): Promise<unknown>
       revokeAllDevices(): Promise<unknown>
       revokeDevice(deviceId: string): Promise<unknown>
-      ownerCodeShow(): Promise<unknown>
-      ownerCodeRotate(): Promise<unknown>
       trustReset(): Promise<unknown>
     }
   }
@@ -151,16 +148,13 @@ function ipcRuntime(endpoint: string, command: OwnerCliCommand) {
   const request = () => sendOwnerIpcRequest(endpoint, ipcCommand, commandParams(command))
   const localManagement = {
     authStatus: () => sendOwnerIpcRequest(endpoint, 'auth.status'),
-    bootstrapRotate: () => request(),
-    bootstrapRecover: () => request(),
-    rotateRecoveryCodes: () => request(),
+    enrollmentIssue: () => request(),
+    enrollmentRecover: () => request(),
     revokeAllSessions: () => request(),
     listDevices: () => request(),
     revokeAllDevices: () => request(),
     revokeDevice: (deviceId: string) =>
       sendOwnerIpcRequest(endpoint, 'devices.revoke', { deviceId }),
-    ownerCodeShow: () => request(),
-    ownerCodeRotate: () => request(),
     trustReset: () => request(),
   }
   return { services: { localManagement }, async close() {} }
