@@ -1,7 +1,39 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { createDomainEvent } from './domain-events.js'
 import { EventHub } from './event-hub.js'
+
+function storedEvent(id: number, method: string, threadId: string) {
+  return {
+    id,
+    message: {
+      ...createDomainEvent(`codex.${method}`, { threadId }, { threadId }),
+      eventId: id,
+    },
+  }
+}
+
+test('assigns one global sequence and stores a domain envelope before notifying listeners', () => {
+  const hub = new EventHub()
+  const received: Array<{ id: number; message: Record<string, unknown> }> = []
+  hub.subscribe('user-a', undefined, 0, (event) => received.push(event))
+  hub.publish('user-a', { method: 'thread/closed', params: { threadId: 'thread-a' } })
+  hub.publish('user-a', { method: 'thread/closed', params: { threadId: 'thread-b' } })
+
+  assert.deepEqual(
+    received.map(({ id, message }) => ({
+      id,
+      eventId: message.eventId,
+      type: message.type,
+      threadId: message.threadId,
+    })),
+    [
+      { id: 1, eventId: 1, type: 'codex.thread/closed', threadId: 'thread-a' },
+      { id: 2, eventId: 2, type: 'codex.thread/closed', threadId: 'thread-b' },
+    ],
+  )
+})
 
 test('isolates users, filters threads, and replays after Last-Event-ID', () => {
   const hub = new EventHub()
@@ -119,11 +151,11 @@ test('merges persisted and in-memory history for one thread without leaking othe
     append: async () => {},
     loadThread: async (_userId, threadId) => {
       const all = [
-        { id: 1, message: { method: 'turn/started', params: { threadId: 'thread-a' } } },
-        { id: 3, message: { method: 'turn/completed', params: { threadId: 'thread-a' } } },
-        { id: 7, message: { method: 'turn/started', params: { threadId: 'thread-b' } } },
+        storedEvent(1, 'turn/started', 'thread-a'),
+        storedEvent(3, 'turn/completed', 'thread-a'),
+        storedEvent(7, 'turn/started', 'thread-b'),
       ]
-      return all.filter((event) => event.message.params?.threadId === threadId)
+      return all.filter((event) => event.message.threadId === threadId)
     },
   })
   hub.restore({ nextId: 6, events: {} })
@@ -138,16 +170,14 @@ test('merges persisted and in-memory history for one thread without leaking othe
 test('dedupes restored in-memory events that also exist in the store', async () => {
   const hub = new EventHub({
     append: async () => {},
-    loadThread: async () => [
-      { id: 2, message: { method: 'turn/started', params: { threadId: 'thread-a' } } },
-    ],
+    loadThread: async () => [storedEvent(2, 'turn/started', 'thread-a')],
   })
   hub.restore({
     nextId: 3,
     events: {
       'user-a': [
-        { id: 2, message: { method: 'turn/started', params: { threadId: 'thread-a' } } },
-        { id: 1, message: { method: 'turn/started', params: { threadId: 'thread-a' } } },
+        storedEvent(2, 'turn/started', 'thread-a'),
+        storedEvent(1, 'turn/started', 'thread-a'),
       ],
     },
   })

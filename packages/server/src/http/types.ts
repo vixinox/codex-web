@@ -1,5 +1,5 @@
 import type { ServerConfig } from '../config.js'
-import type { NativeCodexMessage } from '../codex/native-protocol.js'
+import type { DomainEventEnvelope } from '../codex/domain-events.js'
 import type { ThreadRuntimeStatus } from '../codex/event-hub.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { RuntimeModel } from '../codex/model-catalog.js'
@@ -68,19 +68,19 @@ export type CodexBridge = {
       userId: string,
       threadId: string | undefined,
       afterId: number,
-      listener: (event: { id: number; message: Record<string, unknown> }) => void,
+      listener: (event: { id: number; message: DomainEventEnvelope }) => void,
     ) => Promise<() => void>
     threadHistory?: (
       userId: string,
       threadId: string,
-    ) => Promise<Array<{ id: number; message: NativeCodexMessage }>>
+    ) => Promise<Array<{ id: number; message: DomainEventEnvelope }>>
     isHealthy?: () => boolean
     threadRuntimeStatus?: (userId: string, threadId: string) => ThreadRuntimeStatus
     subscribe(
       userId: string,
       threadId: string | undefined,
       afterId: number,
-      listener: (event: { id: number; message: Record<string, unknown> }) => void,
+      listener: (event: { id: number; message: DomainEventEnvelope }) => void,
     ): () => unknown
   }
 }

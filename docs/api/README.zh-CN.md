@@ -48,4 +48,6 @@ localhost 与远程 App origin 是独立的 WebAuthn profile：
 
 Owner code、普通 `remote.loginQr` management request 和 fingerprint 人工确认不属于新 API 契约。协议内部可以保留节点路由和 Owner public key 绑定，但不能把它们重新暴露为远程登录输入。
 
-浏览器不会收到 API key、宿主路径、原始 runtime payload、Passkey 私钥或未投影的 Owner/Relay 内部状态。
+浏览器不会收到 API key、未脱敏的宿主路径、未限制大小的 runtime payload、Passkey 私钥或未投影的 Owner/Relay 内部状态。合法但尚未归一化的 runtime 事件以版本化 `runtime.extension` event envelope 发送；字段名递归过滤凭据和路径，payload 限制为 128,000 UTF-8 字节。
+
+事件正文使用 `schemaVersion`、`eventId`、`type`、runtime 关联 ID、`createdAt` 和 `payload`。`events.subscribe`/`events.resume` 的 cursor 生命周期保持不变。

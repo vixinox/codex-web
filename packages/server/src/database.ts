@@ -71,7 +71,7 @@ function assertCurrentSchema(driver: DatabaseDriver.Database) {
     'owner_session',
     'project',
     'credential',
-    'codex_event',
+    'domain_events',
   ].filter((table) => !tables.has(table))
   const legacyTables = [
     'user',

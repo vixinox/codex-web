@@ -8,6 +8,7 @@ import type {
   ThreadSnapshot,
   ThreadSummary,
   ThreadEventCursor,
+  DomainEventEnvelope,
 } from '@/lib/bridge/interfaces/thread'
 
 type EventEnvelope = { cursor?: unknown; event?: unknown; method?: unknown; params?: unknown }
@@ -91,19 +92,10 @@ export const ownerThreadDomainAdapter: ThreadClient = {
       if (seen.has(eventKey)) return
       seen.add(eventKey)
       if (seen.size > 2048) seen.delete(seen.values().next().value as string)
-      const method = message.method
-      const params = message.params
-      if (typeof method !== 'string' || !isRecord(params)) return
       onEvent({
         id: nextCursor.sequence,
         cursor: nextCursor,
-        message: {
-          method,
-          params,
-          ...(typeof message.id === 'number' || typeof message.id === 'string'
-            ? { id: message.id }
-            : {}),
-        },
+        event: normalizeDomainEvent(message, nextCursor.sequence),
       })
     }
 
@@ -166,6 +158,36 @@ function parseCursor(value: unknown): ThreadEventCursor | null {
 
 function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isDomainEvent(value: Record<string, any>): value is DomainEventEnvelope {
+  return (
+    typeof value.schemaVersion === 'number' &&
+    typeof value.eventId === 'number' &&
+    typeof value.type === 'string' &&
+    typeof value.runtime === 'string' &&
+    typeof value.createdAt === 'string' &&
+    isRecord(value.payload)
+  )
+}
+
+function normalizeDomainEvent(value: Record<string, any>, eventId: number): DomainEventEnvelope {
+  if (isDomainEvent(value)) return value
+  const method = typeof value.method === 'string' ? value.method : 'runtime.diagnostic'
+  const payload = isRecord(value.params) ? value.params : {}
+  const id = value.id
+  return {
+    schemaVersion: 1,
+    eventId,
+    type: method.startsWith('codex.') ? method : `codex.${method}`,
+    runtime: 'codex',
+    createdAt: new Date().toISOString(),
+    ...(typeof payload.threadId === 'string' ? { threadId: payload.threadId } : {}),
+    ...(typeof payload.turnId === 'string' ? { turnId: payload.turnId } : {}),
+    ...(typeof payload.itemId === 'string' ? { itemId: payload.itemId } : {}),
+    ...(typeof id === 'number' || typeof id === 'string' ? { requestId: id } : {}),
+    payload,
+  }
 }
 
 function isThreadSummary(value: unknown): value is ThreadSummary {

@@ -13,7 +13,15 @@ describe('owner thread domain adapter', () => {
         handlers.onOpen?.({ subscriptionId: 'sub-1', cursor: { epoch: 'e1', sequence: 3 } })
         handlers.onEvent({
           cursor: { epoch: 'e1', sequence: 4 },
-          event: { method: 'thread/updated', params: {} },
+          event: {
+            schemaVersion: 1,
+            eventId: 4,
+            type: 'codex.thread/closed',
+            runtime: 'codex',
+            threadId: 'thread-1',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            payload: { threadId: 'thread-1' },
+          },
         })
         handlers.onError?.(new Error('closed'))
         return { streamId: 'stream-1', cancel: vi.fn() }
@@ -21,11 +29,27 @@ describe('owner thread domain adapter', () => {
       .mockImplementationOnce((_request, handlers) => {
         handlers.onEvent({
           cursor: { epoch: 'e1', sequence: 4 },
-          event: { method: 'thread/updated', params: {} },
+          event: {
+            schemaVersion: 1,
+            eventId: 4,
+            type: 'codex.thread/closed',
+            runtime: 'codex',
+            threadId: 'thread-1',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            payload: { threadId: 'thread-1' },
+          },
         })
         handlers.onEvent({
           cursor: { epoch: 'e1', sequence: 5 },
-          event: { method: 'thread/closed', params: {} },
+          event: {
+            schemaVersion: 1,
+            eventId: 5,
+            type: 'codex.thread/closed',
+            runtime: 'codex',
+            threadId: 'thread-1',
+            createdAt: '2026-01-01T00:00:01.000Z',
+            payload: { threadId: 'thread-1' },
+          },
         })
         return { streamId: 'stream-2', cancel: vi.fn() }
       })
@@ -45,6 +69,7 @@ describe('owner thread domain adapter', () => {
       { epoch: 'e1', sequence: 4 },
       { epoch: 'e1', sequence: 5 },
     ])
+    expect(onEvent.mock.calls.map(([event]) => event.event.eventId)).toEqual([4, 5])
     unsubscribe()
     setOwnerBridge(null)
   })
@@ -69,6 +94,35 @@ describe('owner thread domain adapter', () => {
     )
     expect(onError).toHaveBeenCalledWith({ epoch: 'e2', sequence: 1 }, true)
     expect(onEvent).not.toHaveBeenCalled()
+    unsubscribe()
+    setOwnerBridge(null)
+  })
+
+  it('converts a legacy transport notification to a domain envelope at the adapter edge', () => {
+    const openStream = vi.fn((_request, handlers) => {
+      handlers.onEvent({
+        cursor: { epoch: 'e1', sequence: 6 },
+        event: { method: 'thread/closed', params: { threadId: 'thread-1' } },
+      })
+      return { streamId: 'stream-1', cancel: vi.fn() }
+    })
+    setOwnerBridge({ request: vi.fn(), openStream })
+    const onEvent = vi.fn()
+    const unsubscribe = ownerThreadDomainAdapter.subscribe(
+      'thread-1',
+      { epoch: 'e1', sequence: 5 },
+      onEvent,
+    )
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          schemaVersion: 1,
+          eventId: 6,
+          type: 'codex.thread/closed',
+          threadId: 'thread-1',
+        }),
+      }),
+    )
     unsubscribe()
     setOwnerBridge(null)
   })

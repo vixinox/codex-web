@@ -130,23 +130,25 @@ export const credential = sqliteTable(
   (table) => [index('credential_owner_idx').on(table.ownerId)],
 )
 
-export const codexEvent = sqliteTable(
-  'codex_event',
+export const domainEvent = sqliteTable(
+  'domain_events',
   {
     id: integer('id').primaryKey(),
     ownerId: text('owner_id')
       .notNull()
       .references(() => owner.id, { onDelete: 'cascade' }),
     threadId: text('thread_id'),
-    message: text('message', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    type: text('type').notNull(),
+    schemaVersion: integer('schema_version').notNull(),
+    payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
     createdAt: timestamp('created_at')
       .notNull()
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    index('codex_event_owner_idx').on(table.ownerId),
-    index('codex_event_owner_id_idx').on(table.ownerId, table.id),
-    index('codex_event_owner_thread_id_idx').on(table.ownerId, table.threadId, table.id),
+    index('domain_events_owner_idx').on(table.ownerId),
+    index('domain_events_owner_id_idx').on(table.ownerId, table.id),
+    index('domain_events_owner_thread_id_idx').on(table.ownerId, table.threadId, table.id),
   ],
 )
 
@@ -158,5 +160,5 @@ export const schema = {
   ownerSession,
   project,
   credential,
-  codexEvent,
+  domainEvent,
 }

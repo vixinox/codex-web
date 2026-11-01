@@ -38,7 +38,7 @@ test('creates the Owner schema and rejects legacy authentication tables', () => 
       'owner_session',
       'project',
       'credential',
-      'codex_event',
+      'domain_events',
     ])
       assert.ok(names.includes(name), `missing ${name}`)
     for (const name of ['user', 'account', 'verification', 'twoFactor', 'owner_security_state'])

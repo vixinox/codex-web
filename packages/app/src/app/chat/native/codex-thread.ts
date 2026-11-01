@@ -9,6 +9,18 @@ export type CodexHistoryEvent = {
   id: number
   message: CodexNotification
 }
+export type DomainEventEnvelope = {
+  schemaVersion: number
+  eventId: number
+  type: string
+  runtime: string
+  threadId?: string
+  turnId?: string
+  itemId?: string
+  requestId?: number | string
+  createdAt: string
+  payload: CodexRecord
+}
 export type CodexThreadState = {
   projectId: string | null
   thread: CodexThread
@@ -34,6 +46,19 @@ export function createCodexThreadState(
   projectId: string | null,
 ): CodexThreadState {
   return { projectId, thread, seenEventIds: new Set(), protocolErrors: [] }
+}
+
+export function domainEventToCodexNotification(event: DomainEventEnvelope): CodexNotification {
+  return {
+    method: event.type.startsWith('codex.') ? event.type.slice('codex.'.length) : event.type,
+    params: {
+      ...event.payload,
+      ...(event.threadId ? { threadId: event.threadId } : {}),
+      ...(event.turnId ? { turnId: event.turnId } : {}),
+      ...(event.itemId ? { itemId: event.itemId } : {}),
+    },
+    ...(event.requestId !== undefined ? { id: event.requestId } : {}),
+  }
 }
 
 export function mergeCodexThreads(current: CodexThread, snapshot: CodexThread): CodexThread {
@@ -79,6 +104,11 @@ export function applyCodexNotification(
       state.seenEventIds.delete(state.seenEventIds.values().next().value!)
   }
   const params = notification.params
+  if (notification.method === 'runtime.extension') {
+    const method = safeCode(params.method).slice(0, 128)
+    appendError(state, `Unmapped runtime event: ${method}`)
+    return { scope: 'thread' }
+  }
   if (notification.method === 'webcodex/protocol-error') {
     appendError(state, `Codex protocol error: ${safeCode(params.code)}`)
     return { scope: 'thread' }
@@ -303,6 +333,10 @@ export function applyHistoryEvents(state: CodexThreadState, events: readonly Cod
     )
       continue
     const method = event.message.method
+    if (method === 'runtime.extension') {
+      applyCodexNotification(state, event.message, String(event.id))
+      continue
+    }
     const usageEvent = method === 'thread/tokenUsage/updated'
     const item = isRecord(params.item) ? params.item : undefined
     const questionnaireEvent =

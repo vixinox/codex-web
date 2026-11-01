@@ -1,8 +1,8 @@
 import { asc, desc, and, count, eq, gt, isNotNull, lte, min } from 'drizzle-orm'
-import { codexEvent } from '../db/schema.js'
+import { domainEvent } from '../db/schema.js'
 import type { Database } from '../database.js'
 import type { EventHubSnapshot } from './event-hub.js'
-import { projectNativeMessage, type NativeCodexMessage } from './native-protocol.js'
+import type { DomainEventEnvelope } from './domain-events.js'
 
 const THREAD_EVENT_LIMIT = 1_000
 
@@ -16,14 +16,14 @@ export class SqliteEventStore {
   async load(): Promise<EventHubSnapshot> {
     // EventHub replays a bounded window; loading the entire historical table
     // made restart time grow without bound despite the in-memory cap.
-    const rows = await this.db.select().from(codexEvent).orderBy(desc(codexEvent.id)).limit(500)
+    const rows = await this.db.select().from(domainEvent).orderBy(desc(domainEvent.id)).limit(500)
     const events: EventHubSnapshot['events'] = {}
     let nextId = 1
     for (const row of rows.reverse()) {
-      const projected = projectNativeMessage(row.message)
-      if (!projected.ok) continue
+      const message = row.payload as DomainEventEnvelope
       const list = events[row.ownerId] ?? (events[row.ownerId] = [])
-      list.push({ id: row.id, message: projected.value })
+      if (!message || typeof message.type !== 'string') continue
+      list.push({ id: row.id, message: { ...message, eventId: row.id } })
       nextId = Math.max(nextId, row.id + 1)
     }
     for (const list of Object.values(events))
@@ -34,28 +34,28 @@ export class SqliteEventStore {
   async loadThread(
     userId: string,
     threadId: string,
-  ): Promise<Array<{ id: number; message: NativeCodexMessage }>> {
+  ): Promise<Array<{ id: number; message: DomainEventEnvelope }>> {
     const rows = await this.db
       .select()
-      .from(codexEvent)
-      .where(and(eq(codexEvent.ownerId, userId), eq(codexEvent.threadId, threadId)))
-      .orderBy(desc(codexEvent.id))
+      .from(domainEvent)
+      .where(and(eq(domainEvent.ownerId, userId), eq(domainEvent.threadId, threadId)))
+      .orderBy(desc(domainEvent.id))
       .limit(THREAD_EVENT_LIMIT)
-    return rows.reverse().flatMap((row) => {
-      const projected = projectNativeMessage(row.message)
-      return projected.ok ? [{ id: row.id, message: projected.value }] : []
-    })
+    return rows.reverse().map((row) => ({
+      id: row.id,
+      message: { ...(row.payload as DomainEventEnvelope), eventId: row.id },
+    }))
   }
 
-  async append(userId: string, event: { id: number; message: NativeCodexMessage }) {
-    const projected = projectNativeMessage(event.message)
-    if (!projected.ok) return
-    const threadId = messageThreadId(projected.value)
-    await this.db.insert(codexEvent).values({
+  async append(userId: string, event: { id: number; message: DomainEventEnvelope }) {
+    const threadId = event.message.threadId ?? null
+    await this.db.insert(domainEvent).values({
       id: event.id,
       ownerId: userId,
       threadId,
-      message: projected.value,
+      type: event.message.type,
+      schemaVersion: event.message.schemaVersion,
+      payload: event.message,
     })
     if (threadId) await this.retainThread(userId, threadId)
   }
@@ -63,30 +63,30 @@ export class SqliteEventStore {
   async loadAfter(userId: string, afterId: number, filterThreadId?: string) {
     const rows = await this.db
       .select()
-      .from(codexEvent)
+      .from(domainEvent)
       .where(
         filterThreadId
           ? and(
-              eq(codexEvent.ownerId, userId),
-              eq(codexEvent.threadId, filterThreadId),
-              gt(codexEvent.id, afterId),
+              eq(domainEvent.ownerId, userId),
+              eq(domainEvent.threadId, filterThreadId),
+              gt(domainEvent.id, afterId),
             )
-          : and(eq(codexEvent.ownerId, userId), gt(codexEvent.id, afterId)),
+          : and(eq(domainEvent.ownerId, userId), gt(domainEvent.id, afterId)),
       )
-      .orderBy(asc(codexEvent.id))
+      .orderBy(asc(domainEvent.id))
       .limit(500)
-    return rows.flatMap((row) => {
-      const projected = projectNativeMessage(row.message)
-      return projected.ok ? [{ id: row.id, message: projected.value }] : []
-    })
+    return rows.map((row) => ({
+      id: row.id,
+      message: { ...(row.payload as DomainEventEnvelope), eventId: row.id },
+    }))
   }
 
   async cursorExpired(userId: string, filterThreadId: string | undefined, afterId: number) {
     if (filterThreadId) {
       const [result] = await this.db
-        .select({ count: count(), earliestId: min(codexEvent.id) })
-        .from(codexEvent)
-        .where(and(eq(codexEvent.ownerId, userId), eq(codexEvent.threadId, filterThreadId)))
+        .select({ count: count(), earliestId: min(domainEvent.id) })
+        .from(domainEvent)
+        .where(and(eq(domainEvent.ownerId, userId), eq(domainEvent.threadId, filterThreadId)))
       return (
         Number(result?.count ?? 0) >= THREAD_EVENT_LIMIT &&
         result?.earliestId !== null &&
@@ -96,10 +96,10 @@ export class SqliteEventStore {
     }
 
     const threads = await this.db
-      .select({ threadId: codexEvent.threadId, count: count(), earliestId: min(codexEvent.id) })
-      .from(codexEvent)
-      .where(and(eq(codexEvent.ownerId, userId), isNotNull(codexEvent.threadId)))
-      .groupBy(codexEvent.threadId)
+      .select({ threadId: domainEvent.threadId, count: count(), earliestId: min(domainEvent.id) })
+      .from(domainEvent)
+      .where(and(eq(domainEvent.ownerId, userId), isNotNull(domainEvent.threadId)))
+      .groupBy(domainEvent.threadId)
     return threads.some(
       (thread) =>
         Number(thread.count) >= THREAD_EVENT_LIMIT &&
@@ -110,49 +110,32 @@ export class SqliteEventStore {
 
   async retainPerThread(limit = THREAD_EVENT_LIMIT) {
     const threads = await this.db
-      .select({ ownerId: codexEvent.ownerId, threadId: codexEvent.threadId })
-      .from(codexEvent)
-      .where(isNotNull(codexEvent.threadId))
-      .groupBy(codexEvent.ownerId, codexEvent.threadId)
+      .select({ ownerId: domainEvent.ownerId, threadId: domainEvent.threadId })
+      .from(domainEvent)
+      .where(isNotNull(domainEvent.threadId))
+      .groupBy(domainEvent.ownerId, domainEvent.threadId)
     for (const thread of threads)
       if (thread.threadId) await this.retainThread(thread.ownerId, thread.threadId, limit)
   }
 
   private async retainThread(userId: string, threadId: string, limit = THREAD_EVENT_LIMIT) {
     const cutoff = await this.db
-      .select({ id: codexEvent.id })
-      .from(codexEvent)
-      .where(and(eq(codexEvent.ownerId, userId), eq(codexEvent.threadId, threadId)))
-      .orderBy(desc(codexEvent.id))
+      .select({ id: domainEvent.id })
+      .from(domainEvent)
+      .where(and(eq(domainEvent.ownerId, userId), eq(domainEvent.threadId, threadId)))
+      .orderBy(desc(domainEvent.id))
       .offset(limit)
       .limit(1)
     const id = cutoff[0]?.id
     if (id !== undefined)
       await this.db
-        .delete(codexEvent)
+        .delete(domainEvent)
         .where(
           and(
-            eq(codexEvent.ownerId, userId),
-            eq(codexEvent.threadId, threadId),
-            lte(codexEvent.id, id),
+            eq(domainEvent.ownerId, userId),
+            eq(domainEvent.threadId, threadId),
+            lte(domainEvent.id, id),
           ),
         )
   }
-}
-
-function messageThreadId(message: NativeCodexMessage) {
-  const params = message.params
-  if (!params) return undefined
-  if (typeof params.threadId === 'string') return params.threadId
-  const thread = params.thread
-  if (thread && typeof thread === 'object' && !Array.isArray(thread)) {
-    const id = (thread as Record<string, unknown>).id
-    if (typeof id === 'string') return id
-  }
-  const turn = params.turn
-  if (turn && typeof turn === 'object' && !Array.isArray(turn)) {
-    const id = (turn as Record<string, unknown>).threadId
-    if (typeof id === 'string') return id
-  }
-  return undefined
 }

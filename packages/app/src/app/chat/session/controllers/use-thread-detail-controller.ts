@@ -1,6 +1,10 @@
 import * as React from 'react'
 
-import type { CodexHistoryEvent, CodexNotification } from '@/app/chat/native/codex-thread'
+import {
+  domainEventToCodexNotification,
+  type CodexHistoryEvent,
+  type CodexNotification,
+} from '@/app/chat/native/codex-thread'
 import type { ChatSession, ChatSessionModel, ThreadLifecycleHandler } from '../interface'
 import {
   toThreadPresentationSnapshot,
@@ -63,7 +67,8 @@ export function useThreadDetailController(
           return
         }
       }
-      const parsed = parseNotification(event.message)
+      const notification = domainEventToCodexNotification(event.event)
+      const parsed = parseNotification(notification)
       if (
         event.id <= snapshotEventCursor.sequence &&
         sparseTurnIds.size > 0 &&
@@ -106,7 +111,7 @@ export function useThreadDetailController(
       if (!active) return
       const historyEvents: CodexHistoryEvent[] = (response.historyEvents ?? []).map((event) => ({
         id: event.id,
-        message: { ...event.message, params: event.message.params ?? {} },
+        message: domainEventToCodexNotification(event.event),
       }))
       const eventCursor = normalizeCursor(response.eventCursor)
       const hydration = session.hydrate(response.thread, eventCursor.sequence, historyEvents)

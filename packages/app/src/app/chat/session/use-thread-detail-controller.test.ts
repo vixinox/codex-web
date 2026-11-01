@@ -73,6 +73,7 @@ import {
   applyCodexNotification,
   applyHistoryEvents,
   createCodexThreadState,
+  domainEventToCodexNotification,
   mergeCodexThreads,
   reduceCodexNotification,
 } from '../native/codex-thread'
@@ -1348,6 +1349,41 @@ describe('Codex native thread reducer', () => {
 })
 
 describe('Codex persisted event hydration', () => {
+  it('presents a restricted extension summary from the same domain event in live and history paths', () => {
+    const event = {
+      schemaVersion: 1,
+      eventId: 7,
+      type: 'runtime.extension',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      payload: { method: 'future/notification', content: 'sensitive payload omitted' },
+    }
+    const live = createCodexThreadState(
+      { id: 'thread-1', turns: [{ id: 'turn-1', status: 'completed', items: [] }] },
+      null,
+    )
+    applyCodexNotification(live, domainEventToCodexNotification(event), String(event.eventId))
+
+    const history = createCodexThreadState(
+      { id: 'thread-1', turns: [{ id: 'turn-1', status: 'completed', items: [] }] },
+      null,
+    )
+    applyHistoryEvents(history, [
+      { id: event.eventId, message: domainEventToCodexNotification(event) },
+    ])
+
+    const liveBlock = toChatThreadPresentation(live).turns[0]?.blocks.at(-1)
+    const historyBlock = toChatThreadPresentation(history).turns[0]?.blocks.at(-1)
+    expect(liveBlock).toEqual({
+      id: 'turn-1-protocol-error',
+      type: 'error',
+      message: 'Unmapped runtime event: future/notification',
+    })
+    expect(historyBlock).toEqual(liveBlock)
+    expect(JSON.stringify(liveBlock)).not.toContain('sensitive payload omitted')
+  })
+
   it('restores Thread token usage from a persisted usage event', () => {
     const state = createCodexThreadState({ id: 'thread-1', turns: [] }, null)
     applyHistoryEvents(state, [

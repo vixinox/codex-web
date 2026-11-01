@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { CodexBridge } from '../http/types.js'
-import { projectNativeThread } from '../codex/native-protocol.js'
+import { projectThreadSnapshot, type DomainEventEnvelope } from '../codex/domain-events.js'
 import { parseRequestId } from '../codex/request-id.js'
 import { createThreadDomain } from '../threads/index.js'
 import { SkillHandleStore, skillsForCwd, turnInput } from '../skills.js'
@@ -785,12 +785,14 @@ export function createOwnerApplicationServices(
         mode: 'read',
       })
       if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
-      const thread = projectNativeThread(access.rawThread, access.cwd)
+      const thread = projectThreadSnapshot(access.rawThread, access.cwd)
       if (!thread) throw new OwnerMethodError('CODEX_PROTOCOL_ERROR', true)
       return {
         thread,
         eventCursor,
-        historyEvents: history.filter((event) => isReplayableThreadEvent(event.message)),
+        historyEvents: history
+          .filter((event) => isReplayableThreadEvent(event.message))
+          .map((event) => ({ id: event.id, event: event.message })),
       }
     },
 
@@ -1177,7 +1179,7 @@ export function createOwnerApplicationServices(
                   if (signal.aborted) return
                   void emit({
                     cursor: makeEventCursor(owner.ownerId, event.id),
-                    ...event.message,
+                    event: event.message,
                   })
                 },
               )
@@ -1421,18 +1423,23 @@ function authBinding(context: OwnerMethodContext) {
   }
 }
 
-function isReplayableThreadEvent(message: { method: string; params?: Record<string, unknown> }) {
+function isReplayableThreadEvent(message: DomainEventEnvelope) {
+  const method = message.type.startsWith('codex.')
+    ? message.type.slice('codex.'.length)
+    : message.type
+  const params = message.payload
+  if (method === 'runtime.extension' || method === 'runtime.diagnostic') return true
   if (
-    message.method === 'thread/settings/updated' ||
-    message.method === 'thread/tokenUsage/updated' ||
-    message.method === 'item/tool/requestUserInput' ||
-    message.method === 'webcodex/userInput/answered' ||
-    message.method === 'serverRequest/resolved' ||
-    message.method === 'item/commandExecution/outputDelta'
+    method === 'thread/settings/updated' ||
+    method === 'thread/tokenUsage/updated' ||
+    method === 'item/tool/requestUserInput' ||
+    method === 'webcodex/userInput/answered' ||
+    method === 'serverRequest/resolved' ||
+    method === 'item/commandExecution/outputDelta'
   )
     return true
-  if (message.method !== 'item/started' && message.method !== 'item/completed') return false
-  const item = message.params?.item
+  if (method !== 'item/started' && method !== 'item/completed') return false
+  const item = params.item
   return isRecord(item) && item.type === 'commandExecution'
 }
 

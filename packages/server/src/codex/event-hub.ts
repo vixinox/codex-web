@@ -1,7 +1,13 @@
-import type { NativeCodexMessage } from './native-protocol.js'
-import { projectNativeMessage, record as isRecord } from './native-protocol.js'
+import {
+  adaptCodexMessage,
+  createDomainEvent,
+  domainEventThreadId,
+  projectDomainEvent,
+  type DomainEventEnvelope,
+  type DomainEventInput,
+} from './domain-events.js'
 
-type StoredEvent = { id: number; message: NativeCodexMessage }
+export type StoredEvent = { id: number; message: DomainEventEnvelope }
 export type EventHubSnapshot = { nextId: number; events: Record<string, StoredEvent[]> }
 export type EventStore = {
   append(userId: string, event: StoredEvent): Promise<void>
@@ -18,15 +24,8 @@ export type ThreadRuntimeStatus = {
   activeTurnId: string | null
 }
 
-function threadId(message: NativeCodexMessage): string | undefined {
-  const params = message.params
-  if (!isRecord(params)) return undefined
-  const value = params.threadId
-  if (typeof value === 'string') return value
-  const thread = params.thread
-  if (isRecord(thread) && typeof thread.id === 'string') return thread.id
-  const turn = params.turn
-  return isRecord(turn) && typeof turn.threadId === 'string' ? turn.threadId : undefined
+function threadId(event: DomainEventEnvelope): string | undefined {
+  return domainEventThreadId(event)
 }
 
 export class EventHub {
@@ -74,17 +73,18 @@ export class EventHub {
       ),
     }
   }
+
   async threadHistory(userId: string, requestedThreadId: string) {
-    // A publish is committed to memory only after its durable append succeeds.
-    // Synchronize with writes that were already queued when history was requested
-    // so a just-observed command cannot disappear from an immediate Thread read.
     await this.pendingWrite
     const stored = this.events.get(userId) ?? []
     const memory = stored.filter((event) => threadId(event.message) === requestedThreadId)
     if (!this.store?.loadThread) return memory.map(cloneEvent)
     const persisted = await this.store.loadThread(userId, requestedThreadId)
     const byId = new Map<number, StoredEvent>()
-    for (const event of [...persisted, ...memory]) byId.set(event.id, event)
+    for (const event of [...persisted, ...memory]) {
+      const normalized = normalizeStoredEvent(event)
+      if (normalized) byId.set(event.id, normalized)
+    }
     return [...byId.values()].sort((left, right) => left.id - right.id).map(cloneEvent)
   }
 
@@ -104,23 +104,23 @@ export class EventHub {
             typeof event.message === 'object',
         )
         .slice(-500)
+      const normalized = bounded.flatMap((event) => normalizeStoredEvent(event) ?? [])
       for (const event of bounded) maxId = Math.max(maxId, event.id)
-      events.set(
-        userId,
-        bounded.map((event) => ({ id: event.id, message: structuredClone(event.message) })),
-      )
+      events.set(userId, normalized)
     }
     this.events.clear()
     for (const [userId, values] of events) this.events.set(userId, values)
     this.nextId = Math.max(snapshot.nextId, maxId + 1)
   }
 
-  publish(userId: string, message: unknown): Promise<void> {
-    const projected = projectNativeMessage(message)
-    const safeMessage: NativeCodexMessage = projected.ok
-      ? projected.value
-      : { method: 'webcodex/protocol-error', params: { code: projected.code } }
-    const event = { id: this.nextId++, message: safeMessage }
+  /** Raw Codex input is adapted at this ingress edge before entering the hub. */
+  publish(userId: string, value: unknown): Promise<void> {
+    return this.publishDomain(userId, toDomainEvent(value))
+  }
+
+  publishDomain(userId: string, input: DomainEventInput): Promise<void> {
+    const id = this.nextId++
+    const event = { id, message: projectDomainEvent({ ...input, eventId: id }) }
     if (!this.store) {
       this.commit(userId, event)
       return Promise.resolve()
@@ -141,13 +141,10 @@ export class EventHub {
     )
   }
 
-  publishWithId(userId: string, id: number, message: unknown): Promise<void> {
-    const projected = projectNativeMessage(message)
-    const safeMessage: NativeCodexMessage = projected.ok
-      ? projected.value
-      : { method: 'webcodex/protocol-error', params: { code: projected.code } }
+  publishWithId(userId: string, id: number, value: unknown): Promise<void> {
+    const input = toDomainEvent(value)
     this.nextId = Math.max(this.nextId, id + 1)
-    this.commit(userId, { id, message: safeMessage })
+    this.commit(userId, { id, message: projectDomainEvent({ ...input, eventId: id }) })
     return Promise.resolve()
   }
 
@@ -164,7 +161,7 @@ export class EventHub {
       }
     }
     this.events.set(userId, stored)
-    for (const listener of this.listeners.get(userId) ?? []) listener(event)
+    for (const listener of this.listeners.get(userId) ?? []) listener(cloneEvent(event))
   }
 
   latestEventId(userId: string, filterThreadId?: string) {
@@ -257,7 +254,6 @@ export class EventHub {
       } else {
         deliver((this.events.get(userId) ?? []).filter(matchesReplay).map(cloneEvent), true)
       }
-
       replaying = false
       flushing = true
       while (pendingLive.length) {
@@ -276,30 +272,29 @@ export class EventHub {
     let status: ThreadRuntimeStatus = { status: 'idle', activeTurnId: null }
     for (const event of this.events.get(userId) ?? []) {
       if (threadId(event.message) !== requestedThreadId) continue
-      const params = event.message.params
-      if (!params || typeof params !== 'object' || Array.isArray(params)) continue
-      const record = params
-      const turn = record.turn
+      const method = event.message.type.startsWith('codex.')
+        ? event.message.type.slice('codex.'.length)
+        : event.message.type
+      const payload = event.message.payload
+      const turn = payload.turn
       const turnId =
-        typeof record.turnId === 'string'
-          ? record.turnId
-          : turn && typeof turn === 'object' && !Array.isArray(turn)
-            ? typeof (turn as Record<string, unknown>).id === 'string'
-              ? ((turn as Record<string, unknown>).id as string)
-              : null
+        event.message.turnId ??
+        (typeof payload.turnId === 'string' ? payload.turnId : undefined) ??
+        (turn && typeof turn === 'object' && !Array.isArray(turn)
+          ? typeof (turn as Record<string, unknown>).id === 'string'
+            ? ((turn as Record<string, unknown>).id as string)
             : null
-      if (event.message.method === 'turn/started') {
-        status = { status: 'inProgress', activeTurnId: turnId }
-      } else if (event.message.method === 'turn/completed') {
-        status = { status: 'completed', activeTurnId: null }
-      } else if (event.message.method === 'turn/failed' || event.message.method === 'error') {
+          : null)
+      if (method === 'turn/started') status = { status: 'inProgress', activeTurnId: turnId ?? null }
+      else if (method === 'turn/completed') status = { status: 'completed', activeTurnId: null }
+      else if (method === 'turn/failed' || method === 'error')
         status = { status: 'failed', activeTurnId: null }
-      } else if (event.message.method === 'thread/status/changed') {
+      else if (method === 'thread/status/changed') {
         const value =
-          record.status && typeof record.status === 'object' && !Array.isArray(record.status)
-            ? (record.status as Record<string, unknown>).type
+          payload.status && typeof payload.status === 'object' && !Array.isArray(payload.status)
+            ? (payload.status as Record<string, unknown>).type
             : undefined
-        if (value === 'active') status = { status: 'inProgress', activeTurnId: turnId }
+        if (value === 'active') status = { status: 'inProgress', activeTurnId: turnId ?? null }
         else if (value === 'systemError') status = { status: 'failed', activeTurnId: null }
         else if (value === 'idle' || value === 'notLoaded')
           status = { status: 'idle', activeTurnId: null }
@@ -320,17 +315,17 @@ export class EventHub {
     const replayThrough = replay.reduce((latest, event) => Math.max(latest, event.id), afterId)
     let replaying = true
     let flushing = false
-
     const pendingLive: StoredEvent[] = []
     const wrapped = (event: StoredEvent) => {
       if (event.id <= replayThrough || !matches(event)) return
-      if (replaying || flushing) pendingLive.push(event)
-      else listener(event)
+      if (replaying || flushing) pendingLive.push(cloneEvent(event))
+      else listener(cloneEvent(event))
     }
     const listeners = this.listeners.get(userId) ?? new Set()
     listeners.add(wrapped)
     this.listeners.set(userId, listeners)
-    for (const event of replay) if (event.id > afterId && matches(event)) listener(event)
+    for (const event of replay)
+      if (event.id > afterId && matches(event)) listener(cloneEvent(event))
     replaying = false
     flushing = true
     while (pendingLive.length) listener(pendingLive.shift()!)
@@ -338,8 +333,42 @@ export class EventHub {
     return () => listeners.delete(wrapped)
   }
 }
+
+function toDomainEvent(value: unknown): DomainEventInput {
+  if (isDomainEvent(value)) return value
+  const adapted = adaptCodexMessage(value)
+  if (adapted.kind === 'event' || adapted.kind === 'extension') return adapted.event
+  return createDomainEvent('runtime.diagnostic', {
+    code: adapted.diagnostic.code,
+    method: adapted.diagnostic.method,
+    detail: adapted.diagnostic.detail,
+  })
+}
+
+function isDomainEvent(value: unknown): value is DomainEventInput {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).schemaVersion === 'number' &&
+    typeof (value as Record<string, unknown>).type === 'string' &&
+    typeof (value as Record<string, unknown>).runtime === 'string' &&
+    typeof (value as Record<string, unknown>).createdAt === 'string' &&
+    (value as Record<string, unknown>).payload !== null &&
+    typeof (value as Record<string, unknown>).payload === 'object'
+  )
+}
+
 function cloneEvent(event: StoredEvent): StoredEvent {
   return { id: event.id, message: structuredClone(event.message) }
+}
+
+function normalizeStoredEvent(value: { id: number; message: unknown }): StoredEvent | null {
+  if (isDomainEvent(value.message))
+    return { id: value.id, message: projectDomainEvent({ ...value.message, eventId: value.id }) }
+  const adapted = adaptCodexMessage(value.message)
+  if (adapted.kind === 'invalid') return null
+  return { id: value.id, message: projectDomainEvent({ ...adapted.event, eventId: value.id }) }
 }
 
 function eventScopeKey(userId: string, filterThreadId: string | undefined) {

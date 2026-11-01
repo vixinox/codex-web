@@ -6,7 +6,7 @@ import type { WorkspaceService } from '../workspace.js'
 import { CodexRpcClient, type RpcTransport } from './rpc-client.js'
 import { EventHub } from './event-hub.js'
 import { CodexStdioTransport } from './stdio-transport.js'
-import { projectNativeMessage } from './native-protocol.js'
+import { adaptCodexMessage, createDomainEvent } from './domain-events.js'
 import { requestIdCandidates, type RequestId } from './request-id.js'
 import { CodexRuntimeManager } from './runtime-manager.js'
 import type { CodexCommand } from './stdio-transport.js'
@@ -219,10 +219,14 @@ export class CodexManager {
 
   async restart(userId: string, projectId: string, credentialId: string) {
     for (const turn of this.activeTurnsByUser.get(userId)?.values() ?? [])
-      void this.events.publish(userId, {
-        method: 'turn/completed',
-        params: { threadId: turn.threadId, turn: { id: turn.turnId, status: 'interrupted' } },
-      })
+      void this.events.publishDomain(
+        userId,
+        createDomainEvent(
+          'codex.turn/completed',
+          { threadId: turn.threadId, turn: { id: turn.turnId, status: 'interrupted' } },
+          { threadId: turn.threadId, turnId: turn.turnId },
+        ),
+      )
     this.lifecycle.set(userId, {
       status: 'restarting',
       projectId,
@@ -537,23 +541,16 @@ export class CodexManager {
           map.delete(turnId)
         this.activeTurnsByUser.set(userId, map)
       }
-      const projected = projectNativeMessage(message)
-      if (!projected.ok)
+      const adapted = adaptCodexMessage(message)
+      if (adapted.kind === 'invalid')
         log.warn(
-          `Codex message rejected by browser projection (method=${safeError(message.method)}${threadId ? ` threadId=${safeError(threadId)}` : ''})`,
+          `Codex runtime event rejected (method=${safeError(message.method)}${threadId ? ` threadId=${safeError(threadId)}` : ''})`,
         )
-      void this.events.publish(
+      void this.events.publishDomain(
         userId,
-        projected.ok
-          ? projected.value
-          : {
-              method: 'webcodex/protocol-error',
-              params: {
-                code: projected.code,
-                ...(typeof params?.threadId === 'string' ? { threadId: params.threadId } : {}),
-                ...(typeof params?.turnId === 'string' ? { turnId: params.turnId } : {}),
-              },
-            },
+        adapted.kind === 'invalid'
+          ? createDomainEvent('runtime.diagnostic', adapted.diagnostic)
+          : adapted.event,
       )
     })
     client.onRequest((message) => {
@@ -570,18 +567,12 @@ export class CodexManager {
       const requests = this.serverRequests.get(userId) ?? new Map()
       requests.set(requestId, { client, threadId: params.threadId })
       this.serverRequests.set(userId, requests)
-      const projected = projectNativeMessage(message)
-      void this.events.publish(
+      const adapted = adaptCodexMessage(message)
+      void this.events.publishDomain(
         userId,
-        projected.ok
-          ? projected.value
-          : {
-              method: 'webcodex/protocol-error',
-              params: {
-                code: projected.code,
-                ...(typeof params?.threadId === 'string' ? { threadId: params.threadId } : {}),
-              },
-            },
+        adapted.kind === 'invalid'
+          ? createDomainEvent('runtime.diagnostic', adapted.diagnostic)
+          : adapted.event,
       )
     })
     try {

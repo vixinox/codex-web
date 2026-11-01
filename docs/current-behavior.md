@@ -16,11 +16,13 @@
 
 ## 仍需完成的验收
 
-- 自动化检查通过：服务端 109 项、协议 17 项、Relay 23 项、前端 250 项测试；全仓 TypeScript 类型检查和 47 个修改 TypeScript 文件格式检查通过。
+- 自动化检查通过：服务端 118 项、协议 17 项、Relay 23 项、前端 252 项测试；全仓 TypeScript 类型检查和本任务目标 TypeScript 文件格式检查通过。
 - `pnpm lint` 未通过：本轮 lint 结果报告 warning 并返回非零；没有 error 诊断。warning 包含仓库已有代码和迁移触及代码，提交前应通过 `pnpm lint:staged` 对 staged delta 判断是否引入新 warning。
 - 尚未执行实际浏览器/Relay 手工验收：local 与 remote origin 分离、发出邀请、陌生浏览器一次兑换、paired session 恢复/Passkey step-up、profile test/logout/remove、取消/过期/replay、Owner/Relay restart、trust reset 和设备撤销。
 - Enrollment UI 默认使用已配置的可信 Relay profile；本次不实现邀请自带自定义 Relay URL。
 
 ## 文档边界
 
-目标架构和安全边界见 [`owner-remote-architecture.md`](./owner-remote-architecture.md)，Owner 与前端契约见 [`api/README.zh-CN.md`](./api/README.zh-CN.md) 和 [`frontend/README.zh-CN.md`](./frontend/README.zh-CN.md)，实现规格见 [`impl/owner-device-enrollment.md`](./impl/owner-device-enrollment.md)。
+Server 事件链使用版本化 Codex domain event envelope；原生 runtime 消息只在 adapter 内解析，Owner WS 和历史回放使用统一事件正文。未映射的合法 runtime 消息以递归凭据/路径字段过滤、payload 最大 128,000 UTF-8 字节的 `runtime.extension` 事件保留；前端只显示受限的方法名摘要。
+
+目标架构和安全边界见 [`owner-remote-architecture.md`](./owner-remote-architecture.md)，Owner 与前端契约见 [`api/README.zh-CN.md`](./api/README.zh-CN.md) 和 [`frontend/README.zh-CN.md`](./frontend/README.zh-CN.md)，server 事件实现规格见 [`impl/server-event-architecture.md`](./impl/server-event-architecture.md)。

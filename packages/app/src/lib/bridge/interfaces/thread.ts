@@ -1,5 +1,18 @@
 import type { CodexThread } from '@/lib/protocol/protocol'
 
+export type DomainEventEnvelope = {
+  schemaVersion: number
+  eventId: number
+  type: string
+  runtime: string
+  threadId?: string
+  turnId?: string
+  itemId?: string
+  requestId?: number | string
+  createdAt: string
+  payload: Record<string, unknown>
+}
+
 /**
  * The browser-facing contract for a Thread runtime.
  *
@@ -33,7 +46,7 @@ export type StartedTurn = { turnId: string }
 
 export type ThreadHistoryEvent = {
   id: number
-  message: { method: string; params?: Record<string, unknown>; id?: number | string }
+  event: DomainEventEnvelope
 }
 
 export type ThreadEventCursor = { epoch: string; sequence: number }
@@ -55,7 +68,7 @@ export type ThreadRuntimeStatus = {
 export type ThreadEvent = {
   id: number
   cursor: ThreadEventCursor
-  message: Record<string, unknown>
+  event: DomainEventEnvelope
 }
 
 export type ThreadClient = {
