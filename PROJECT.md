@@ -13,7 +13,7 @@
 - 浏览器不会接收 API key、宿主机路径、`CODEX_HOME`、rollout 路径、Git remote 或 App Server 进程信息。敏感数据不得进入日志、错误、Owner WS、前端缓存或测试产物。
 - Project 是 Owner application 层的逻辑分组。Project/Thread/文件访问和写操作必须执行当前用户及受控根目录归属校验。
 - 用户级 `currentCredentialId` 是持久化的默认 Credential；runtime 的 `activeCredentialId` 只表示当前进程实际使用项。Credential 不绑定 Thread 或 Turn。
-- Thread 详情读取 Codex 原生 `thread/read { includeTurns: true }`；快照经过 client projection 后返回浏览器。runtime 事件先进入版本化 domain event adapter，EventHub/domain event store 保存 domain envelope，Owner WS stream 和 history 使用同一 client projection。
+- Thread 详情读取 Codex 原生 `thread/read { includeTurns: true }`；快照经过 client projection 后返回浏览器。runtime 事件先进入domain event adapter，EventHub/domain event store 保存 domain envelope，Owner WS stream 和 history 使用同一 client projection。Owner 应用协议和事件不维护版本号，前后端共同更新；共享 parser 校验结构与 cursor，Relay 等基础设施契约保持独立。
 - Thread model/reasoning effort 仅在满足安全标识符格式时投影到浏览器；创建 Thread 或 Turn 时按当前 App Server 模型目录校验支持的组合。`thread/settings/updated` 不透传原始 settings、路径、sandbox 或 provider 字段，并作为可回放 Thread 事件保持 Composer 真值同步。
 - 前端遵循“原生 DTO → native reducer → presentation model → renderer”的单向路径。页面和 renderer 只依赖 UI-facing model；原生 DTO 只存在于 transport、reducer 和 adapter。
 - App Server 未物化到 Thread 快照的命令与用户问答由 EventHub 安全投影后持久化并通过 `historyEvents` 重放；问答答案使用 bridge 自有事件补足 `serverRequest/resolved`，由 native reducer 统一生成 transcript summary。

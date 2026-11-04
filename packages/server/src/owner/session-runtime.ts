@@ -1,5 +1,6 @@
 import {
   encodeOwnerFrame,
+  parseOwnerEventStreamMessage,
   parseOwnerFrame,
   type OwnerError,
   type OwnerErrorCode,
@@ -227,7 +228,7 @@ export class OwnerSessionRuntime {
     if (this.closed) return
     const parsed = parseOwnerFrame(input)
     if (!parsed.ok) {
-      const closeCode = parsed.error.code === 'UNSUPPORTED_VERSION' ? 1002 : 1007
+      const closeCode = 1007
       await this.rejectConnection(parsed.error.code, parsed.error.message, closeCode)
       return
     }
@@ -275,7 +276,7 @@ export class OwnerSessionRuntime {
     }
     await this.send({
       type: 'ready',
-      version: 1,
+
       connectionId: this.options.connectionId,
       authenticated: this.session !== null,
       capabilities: this.options.capabilities ?? [],
@@ -442,7 +443,18 @@ export class OwnerSessionRuntime {
   private startStream(streamId: string, stream: OwnerStream, controller: AbortController): void {
     const emit = async (event: unknown) => {
       if (controller.signal.aborted || this.closed) return
-      await this.send({ type: 'stream.event', streamId, event })
+      const parsedEvent = parseOwnerEventStreamMessage(event)
+      if (!parsedEvent.ok) {
+        log.warn(`Owner stream event rejected (code=${parsedEvent.error.code})`)
+        controller.abort()
+        await this.send({
+          type: 'stream.close',
+          streamId,
+          reason: parsedEvent.error.code,
+        })
+        return
+      }
+      await this.send({ type: 'stream.event', streamId, event: parsedEvent.message })
     }
     void Promise.resolve()
       .then(() => stream.run(emit, controller.signal))
@@ -575,7 +587,6 @@ const SAFE_ERROR_MESSAGES: Record<OwnerErrorCode, string> = {
   INVALID_JSON: 'Frame is not valid JSON.',
   INVALID_FRAME: 'Frame is invalid.',
   UNSUPPORTED_FRAME: 'Frame type is not supported.',
-  UNSUPPORTED_VERSION: 'Protocol version is not supported.',
   FRAME_TOO_LARGE: 'Frame exceeds the maximum size.',
   NON_TEXT_FRAME: 'Text frames are required.',
   INVALID_HELLO: 'Hello frame is invalid.',
@@ -599,6 +610,10 @@ const SAFE_ERROR_MESSAGES: Record<OwnerErrorCode, string> = {
   BACKPRESSURE_LIMIT_EXCEEDED: 'Connection send queue exceeded its limit.',
   SUBSCRIPTION_EXPIRED: 'Event subscription has expired.',
   INVALID_EVENT_CURSOR: 'Event cursor is invalid.',
+  INVALID_EVENT_ENVELOPE: 'Owner event envelope is invalid.',
+  INVALID_STREAM_EVENT: 'Owner stream event is invalid.',
+  EVENT_CURSOR_MISMATCH: 'Owner event cursor does not match its event identity.',
+  EVENT_IDENTITY_MISMATCH: 'Owner event identity changed for an existing cursor.',
   OWNER_ALREADY_EXISTS: 'An Owner account already exists.',
   INVALID_CREDENTIAL: 'Credential input is invalid.',
   CREDENTIAL_NOT_FOUND: 'Credential was not found.',

@@ -27,6 +27,37 @@ function status(value: any) {
   return { ...value, eventCursor: cursor(value.eventCursor) }
 }
 
+function toDomainEvent(value: any, eventId: number) {
+  if (value && typeof value.type === 'string' && 'eventId' in value) return { ...value, eventId }
+  const method = typeof value?.method === 'string' ? value.method : 'runtime.diagnostic'
+  const params = value?.params && typeof value.params === 'object' ? value.params : {}
+  const turn = params.turn && typeof params.turn === 'object' ? params.turn : undefined
+  const item = params.item && typeof params.item === 'object' ? params.item : undefined
+  return {
+    eventId,
+    type: method.startsWith('runtime.') ? method : `codex.${method}`,
+    runtime: 'codex',
+    ...(typeof params.threadId === 'string' ? { threadId: params.threadId } : {}),
+    ...(typeof params.turnId === 'string'
+      ? { turnId: params.turnId }
+      : typeof turn?.id === 'string'
+        ? { turnId: turn.id }
+        : {}),
+    ...(typeof params.itemId === 'string'
+      ? { itemId: params.itemId }
+      : typeof item?.id === 'string'
+        ? { itemId: item.id }
+        : {}),
+    ...(typeof params.requestId === 'number' || typeof params.requestId === 'string'
+      ? { requestId: params.requestId }
+      : typeof value?.id === 'number' || typeof value?.id === 'string'
+        ? { requestId: value.id }
+        : {}),
+    createdAt: '2026-01-01T00:00:00.000Z',
+    payload: params,
+  }
+}
+
 function installOwnerBridge() {
   ownerBridge.request.mockImplementation((method, params, options) => {
     switch (method) {
@@ -58,9 +89,10 @@ function installOwnerBridge() {
       url: `/api/events?threadId=${threadId}&afterId=${afterId}`,
       onEvent: (event: MessageEvent) => {
         const sequence = Number(event.lastEventId)
+        const message = JSON.parse(String(event.data))
         handlers.onEvent({
           cursor: { epoch: 'e1', sequence },
-          event: JSON.parse(String(event.data)),
+          event: toDomainEvent(message, sequence),
         })
       },
       onError: handlers.onError,
@@ -179,8 +211,16 @@ describe('Thread detail event synchronization', () => {
       subscriptions[1]?.({
         cursor: { epoch: 'e2', sequence: 2 },
         event: {
-          method: 'turn/started',
-          params: { threadId: 'thread-1', turn: { id: 'turn-2', status: 'inProgress', items: [] } },
+          eventId: 2,
+          type: 'codex.turn/started',
+          runtime: 'codex',
+          threadId: 'thread-1',
+          turnId: 'turn-2',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          payload: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-2', status: 'inProgress', items: [] },
+          },
         },
       })
     })
@@ -1351,7 +1391,6 @@ describe('Codex native thread reducer', () => {
 describe('Codex persisted event hydration', () => {
   it('presents a restricted extension summary from the same domain event in live and history paths', () => {
     const event = {
-      schemaVersion: 1,
       eventId: 7,
       type: 'runtime.extension',
       runtime: 'codex',

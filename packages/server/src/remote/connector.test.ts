@@ -24,12 +24,7 @@ import {
   type RelayAttachFrame,
   type RelayFrame,
 } from '@codex-web/protocol/relay'
-import {
-  encodeOwnerFrame,
-  parseOwnerFrame,
-  OWNER_PROTOCOL_VERSION,
-  type OwnerFrame,
-} from '@codex-web/protocol/owner'
+import { encodeOwnerFrame, parseOwnerFrame, type OwnerFrame } from '@codex-web/protocol/owner'
 
 import type { ServerConfig } from '../config.js'
 import type { OwnerMethodDefinition } from '../owner/session-runtime.js'
@@ -313,7 +308,7 @@ async function sendClientFrame(
 function helloFrame(sessionToken = SESSION_TOKEN): OwnerFrame {
   return {
     type: 'hello',
-    version: OWNER_PROTOCOL_VERSION,
+
     clientId: 'remote-client',
     capabilities: ['owner'],
     sessionToken,

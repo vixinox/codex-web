@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  encodeOwnerFrame,
-  OWNER_PROTOCOL_VERSION,
-  parseOwnerFrame,
-} from '@codex-web/protocol/owner'
+import { encodeOwnerFrame, parseOwnerFrame } from '@codex-web/protocol/owner'
 import { createOwnerRuntime, OwnerRequestError } from './owner-runtime'
 
 class FakeSocket {
@@ -32,7 +28,7 @@ class FakeSocket {
 function ready(socket: FakeSocket) {
   socket.receive({
     type: 'ready',
-    version: OWNER_PROTOCOL_VERSION,
+
     connectionId: 'connection-1',
     authenticated: true,
     capabilities: ['owner'],
@@ -54,6 +50,87 @@ describe('Owner runtime transport', () => {
     if (!sent.ok || sent.frame.type !== 'request') throw new Error('request not sent')
     socket.receive({ type: 'response', requestId: sent.frame.requestId, result: { ok: true } })
     await expect(result).resolves.toEqual({ ok: true })
+  })
+
+  it('rejects an Owner handshake close without leaving connection pending', async () => {
+    const socket = new FakeSocket()
+    const runtime = createOwnerRuntime(() => socket)
+    const connection = runtime.connect({ url: 'ws://owner.test' })
+    socket.open()
+    socket.receive({
+      type: 'close',
+      code: 'INVALID_HELLO',
+      message: 'Hello frame is invalid.',
+    })
+    await expect(connection).rejects.toMatchObject({
+      code: 'INVALID_HELLO',
+      message: 'Hello frame is invalid.',
+    })
+    expect(runtime.state).toBe('disconnected')
+  })
+
+  it('fails active streams when the Owner sends an invalid event frame', async () => {
+    const socket = new FakeSocket()
+    const runtime = createOwnerRuntime(() => socket)
+    const connection = runtime.connect({ url: 'ws://owner.test' })
+    socket.open()
+    ready(socket)
+    await connection
+    const onError = vi.fn()
+    const onClose = vi.fn()
+    runtime.openStream({ method: 'events.subscribe' }, { onEvent: vi.fn(), onError, onClose })
+    socket.receive({
+      type: 'stream.open',
+      streamId: 'stream-1',
+      requestId: 'owner-1',
+    })
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'stream.event',
+        streamId: 'stream-1',
+        event: {
+          cursor: { epoch: 'epoch-1', sequence: 1 },
+          event: { method: 'legacy', params: {} },
+        },
+      }),
+    } as MessageEvent)
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'INVALID_EVENT_ENVELOPE' }),
+    )
+    expect(onClose).toHaveBeenCalledWith('CONNECTION_CLOSED')
+  })
+
+  it('reports contract failure before close so recovery cannot race the terminal error', async () => {
+    const socket = new FakeSocket()
+    const runtime = createOwnerRuntime(() => socket)
+    const connection = runtime.connect({ url: 'ws://owner.test' })
+    socket.open()
+    ready(socket)
+    await connection
+    const calls: string[] = []
+    runtime.openStream(
+      { method: 'events.subscribe' },
+      {
+        onEvent: vi.fn(),
+        onError: () => calls.push('error'),
+        onClose: () => calls.push('close'),
+      },
+    )
+    const request = socket.last()
+    if (!request.ok || request.frame.type !== 'request') throw new Error('request missing')
+    socket.receive({
+      type: 'stream.open',
+      streamId: 'stream-contract',
+      requestId: request.frame.requestId,
+    })
+    socket.receive({
+      type: 'stream.close',
+      streamId: 'stream-contract',
+      reason: 'INVALID_STREAM_EVENT',
+    })
+    expect(calls).toEqual(['error', 'close'])
+    runtime.close()
   })
 
   it('rejects pending requests and closes streams', async () => {

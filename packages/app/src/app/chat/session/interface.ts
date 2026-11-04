@@ -62,6 +62,7 @@ export type ChatSessionModel =
 /** Stable controller result for loading, following, and answering a native Thread. */
 export type ChatSession = {
   model: ChatSessionModel
+  eventError: string | null
   retry(): void
   followTurn(): void
   answerUserInput(answers: Record<string, { answers: string[] }>): Promise<void>
@@ -140,6 +141,7 @@ export type ThreadPageModel =
 
 export type ThreadPageSession = {
   model: ThreadPageModel
+  eventError: string | null
   session?: ThreadSession
   compacting: boolean
   detail: ChatSession

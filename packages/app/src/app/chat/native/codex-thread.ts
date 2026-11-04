@@ -1,25 +1,38 @@
 import type { CodexRecord, CodexThread } from '@/lib/protocol/protocol'
 import type { ChatQuestionnaireSummary } from '@/app/chat/model/types'
+import type { DomainEventEnvelope } from '@codex-web/protocol/owner'
 
 const MAX_ACCUMULATED_TEXT = 200_000
 const MAX_SEEN_EVENT_IDS = 2_000
+const INTENTIONALLY_IGNORED_METHODS = new Set([
+  'thread/archived',
+  'thread/unarchived',
+  'thread/closed',
+  'thread/deleted',
+  'item/commandExecution/requestApproval',
+])
+
+// These fields are already materialized by thread/read. History must not apply
+// stale lifecycle state or append retained tail deltas to a complete snapshot.
+const SNAPSHOT_OWNED_METHODS = new Set([
+  'thread/started',
+  'thread/status/changed',
+  'error',
+  'turn/plan/updated',
+  'turn/diff/updated',
+  'item/fileChange/patchUpdated',
+  'item/started',
+  'item/completed',
+  'item/plan/delta',
+  'item/reasoning/summaryTextDelta',
+  'item/reasoning/summaryPartAdded',
+  'item/mcpToolCall/progress',
+])
 
 export type CodexNotification = { method: string; params: CodexRecord; id?: number | string }
 export type CodexHistoryEvent = {
   id: number
   message: CodexNotification
-}
-export type DomainEventEnvelope = {
-  schemaVersion: number
-  eventId: number
-  type: string
-  runtime: string
-  threadId?: string
-  turnId?: string
-  itemId?: string
-  requestId?: number | string
-  createdAt: string
-  payload: CodexRecord
 }
 export type CodexThreadState = {
   projectId: string | null
@@ -105,12 +118,16 @@ export function applyCodexNotification(
   }
   const params = notification.params
   if (notification.method === 'runtime.extension') {
-    const method = safeCode(params.method).slice(0, 128)
+    const method = restrictedMethodName(params.method)
     appendError(state, `Unmapped runtime event: ${method}`)
     return { scope: 'thread' }
   }
   if (notification.method === 'webcodex/protocol-error') {
     appendError(state, `Codex protocol error: ${safeCode(params.code)}`)
+    return { scope: 'thread' }
+  }
+  if (notification.method === 'runtime.diagnostic') {
+    appendError(state, `Codex runtime diagnostic: ${safeCode(params.code).slice(0, 128)}`)
     return { scope: 'thread' }
   }
   if (notification.method === 'item/tool/requestUserInput') {
@@ -291,7 +308,9 @@ export function applyCodexNotification(
     item.progress = params.message
     return turnChange(params)
   }
-  return { scope: 'none' }
+  if (INTENTIONALLY_IGNORED_METHODS.has(notification.method)) return { scope: 'none' }
+  appendError(state, `Unmapped Codex event: ${restrictedMethodName(notification.method)}`)
+  return { scope: 'thread' }
 }
 export function applyHistoryEvents(state: CodexThreadState, events: readonly CodexHistoryEvent[]) {
   const knownTurnIds = new Set(
@@ -337,6 +356,7 @@ export function applyHistoryEvents(state: CodexThreadState, events: readonly Cod
       applyCodexNotification(state, event.message, String(event.id))
       continue
     }
+    if (INTENTIONALLY_IGNORED_METHODS.has(method)) continue
     const usageEvent = method === 'thread/tokenUsage/updated'
     const item = isRecord(params.item) ? params.item : undefined
     const questionnaireEvent =
@@ -383,7 +403,11 @@ export function applyHistoryEvents(state: CodexThreadState, events: readonly Cod
     )
       continue
     if (assistantEvent && (!turnId || !replayTurnIds.has(turnId))) continue
-    if (!questionnaireEvent && !commandEvent && !assistantEvent && !settingsEvent) continue
+    if (!questionnaireEvent && !commandEvent && !assistantEvent && !settingsEvent) {
+      if (SNAPSHOT_OWNED_METHODS.has(method)) continue
+      applyCodexNotification(state, event.message, String(event.id))
+      continue
+    }
     applyCodexNotification(state, event.message, String(event.id))
   }
 }
@@ -587,6 +611,16 @@ function stringValue(value: unknown) {
 }
 function safeCode(value: unknown) {
   return typeof value === 'string' && value ? value : 'invalid-message'
+}
+function restrictedMethodName(value: unknown) {
+  const method = Array.from(safeCode(value))
+    .filter((character) => {
+      const code = character.charCodeAt(0)
+      return code >= 32 && code !== 127
+    })
+    .join('')
+    .slice(0, 128)
+  return method || 'invalid-message'
 }
 function validRequestId(value: unknown): value is number | string {
   return typeof value === 'number' || typeof value === 'string'

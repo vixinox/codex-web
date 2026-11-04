@@ -1,5 +1,5 @@
 import type { ServerConfig } from '../config.js'
-import type { DomainEventEnvelope } from '../codex/domain-events.js'
+import type { DomainEventEnvelope } from '@codex-web/protocol/owner'
 import type { ThreadRuntimeStatus } from '../codex/event-hub.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { RuntimeModel } from '../codex/model-catalog.js'

@@ -1,17 +1,7 @@
 import type { CodexThread } from '@/lib/protocol/protocol'
+import type { DomainEventEnvelope, OwnerEventCursor } from '@codex-web/protocol/owner'
 
-export type DomainEventEnvelope = {
-  schemaVersion: number
-  eventId: number
-  type: string
-  runtime: string
-  threadId?: string
-  turnId?: string
-  itemId?: string
-  requestId?: number | string
-  createdAt: string
-  payload: Record<string, unknown>
-}
+export type { DomainEventEnvelope }
 
 /**
  * The browser-facing contract for a Thread runtime.
@@ -49,7 +39,7 @@ export type ThreadHistoryEvent = {
   event: DomainEventEnvelope
 }
 
-export type ThreadEventCursor = { epoch: string; sequence: number }
+export type ThreadEventCursor = OwnerEventCursor
 
 export type ThreadSnapshot = {
   thread: CodexThread
@@ -69,6 +59,11 @@ export type ThreadEvent = {
   id: number
   cursor: ThreadEventCursor
   event: DomainEventEnvelope
+}
+
+export type ThreadEventError = {
+  code: string
+  message: string
 }
 
 export type ThreadClient = {
@@ -100,6 +95,6 @@ export type ThreadClient = {
     threadId: string,
     cursor: ThreadEventCursor,
     onEvent: (event: ThreadEvent) => void,
-    onError?: (cursor?: ThreadEventCursor, reset?: boolean) => void,
+    onError?: (cursor?: ThreadEventCursor, reset?: boolean, error?: ThreadEventError) => void,
   ) => () => void
 }

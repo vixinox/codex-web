@@ -1,8 +1,13 @@
 import { projectNativeMessage, projectNativeThread, record } from './native-protocol.js'
+import {
+  DOMAIN_EVENT_RUNTIME,
+  MAX_DOMAIN_EVENT_PAYLOAD_BYTES,
+  type DomainEventEnvelope,
+  type DomainEventInput,
+} from '@codex-web/protocol/owner'
 
-export const DOMAIN_EVENT_SCHEMA_VERSION = 1
-export const DOMAIN_EVENT_RUNTIME = 'codex' as const
-export const MAX_EXTENSION_PAYLOAD_BYTES = 128_000
+export { DOMAIN_EVENT_RUNTIME, MAX_DOMAIN_EVENT_PAYLOAD_BYTES }
+export type { DomainEventEnvelope, DomainEventInput }
 
 export type RuntimeEventEnvelope = {
   runtime: typeof DOMAIN_EVENT_RUNTIME
@@ -10,21 +15,6 @@ export type RuntimeEventEnvelope = {
   id?: number | string
   params: Record<string, unknown>
 }
-
-export type DomainEventEnvelope = {
-  schemaVersion: number
-  eventId: number
-  type: string
-  runtime: typeof DOMAIN_EVENT_RUNTIME
-  threadId?: string
-  turnId?: string
-  itemId?: string
-  requestId?: number | string
-  createdAt: string
-  payload: Record<string, unknown>
-}
-
-export type DomainEventInput = Omit<DomainEventEnvelope, 'eventId'> & { eventId?: number }
 
 export type RuntimeDiagnostic = {
   runtime: typeof DOMAIN_EVENT_RUNTIME
@@ -41,8 +31,6 @@ export type RuntimeAdapterResult =
   | { kind: 'event'; event: DomainEventInput }
   | { kind: 'extension'; event: RuntimeExtensionEvent }
   | { kind: 'invalid'; diagnostic: RuntimeDiagnostic }
-
-export type ClientDomainEvent = DomainEventEnvelope
 
 export function adaptCodexMessage(
   value: unknown,
@@ -71,7 +59,6 @@ export function adaptCodexMessage(
     return {
       kind: 'event',
       event: {
-        schemaVersion: DOMAIN_EVENT_SCHEMA_VERSION,
         type: domainType(raw.method),
         runtime: DOMAIN_EVENT_RUNTIME,
         createdAt: now,
@@ -87,7 +74,6 @@ export function adaptCodexMessage(
   return {
     kind: 'extension',
     event: {
-      schemaVersion: DOMAIN_EVENT_SCHEMA_VERSION,
       type: 'runtime.extension',
       runtime: DOMAIN_EVENT_RUNTIME,
       createdAt: now,
@@ -107,7 +93,6 @@ export function createDomainEvent(
   now = new Date().toISOString(),
 ): DomainEventInput {
   return {
-    schemaVersion: DOMAIN_EVENT_SCHEMA_VERSION,
     type,
     runtime: DOMAIN_EVENT_RUNTIME,
     createdAt: now,
@@ -119,7 +104,7 @@ export function createDomainEvent(
   }
 }
 
-export function projectDomainEvent(event: DomainEventEnvelope): ClientDomainEvent {
+export function projectDomainEvent(event: DomainEventEnvelope): DomainEventEnvelope {
   return {
     ...event,
     payload: limitPayload(event.payload),
@@ -193,7 +178,7 @@ function extensionPayload(value: RuntimeEventEnvelope) {
 function limitPayload(value: Record<string, unknown>): Record<string, unknown> {
   const encoded = JSON.stringify(value)
   const bytes = Buffer.byteLength(encoded, 'utf8')
-  if (bytes <= MAX_EXTENSION_PAYLOAD_BYTES) return value
+  if (bytes <= MAX_DOMAIN_EVENT_PAYLOAD_BYTES) return value
   let low = 0
   let high = encoded.length
   let best: Record<string, unknown> = { truncated: true, payloadBytes: bytes, content: '' }
@@ -208,7 +193,7 @@ function limitPayload(value: Record<string, unknown>): Record<string, unknown> {
       payloadBytes: bytes,
       content: encoded.slice(0, end),
     }
-    if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= MAX_EXTENSION_PAYLOAD_BYTES) {
+    if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= MAX_DOMAIN_EVENT_PAYLOAD_BYTES) {
       best = candidate
       low = middle + 1
     } else {

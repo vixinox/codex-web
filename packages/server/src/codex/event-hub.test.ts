@@ -139,11 +139,15 @@ test('persists published events and reports write failures without poisoning lat
       saved.push(event.id)
     },
   })
-  hub.publish('user-a', { method: 'turn/started' })
+  const delivered: number[] = []
+  hub.subscribe('user-a', undefined, 0, (event) => delivered.push(event.id))
+  await hub.publish('user-a', { method: 'turn/started' })
+  assert.deepEqual(delivered, [])
   await assert.rejects(hub.flush(), /database unavailable/)
   hub.publish('user-a', { method: 'turn/completed' })
   await hub.flush()
   assert.deepEqual(saved, [2])
+  assert.deepEqual(delivered, [2])
 })
 
 test('merges persisted and in-memory history for one thread without leaking others', async () => {

@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import { setOwnerBridge } from '@/lib/bridge/owner-runtime'
-import { ownerThreadDomainAdapter } from './owner-thread-adapter'
+import {
+  ownerThreadDomainAdapter,
+  parseThreadSnapshot,
+  ThreadEventContractError,
+} from './owner-thread-adapter'
+
+const event = {
+  eventId: 4,
+  type: 'codex.thread/closed',
+  runtime: 'codex',
+  threadId: 'thread-1',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  payload: { threadId: 'thread-1' },
+}
 
 describe('owner thread domain adapter', () => {
   it('subscribes and resumes with complete cursors and deduplicates replayed events', async () => {
@@ -13,15 +26,7 @@ describe('owner thread domain adapter', () => {
         handlers.onOpen?.({ subscriptionId: 'sub-1', cursor: { epoch: 'e1', sequence: 3 } })
         handlers.onEvent({
           cursor: { epoch: 'e1', sequence: 4 },
-          event: {
-            schemaVersion: 1,
-            eventId: 4,
-            type: 'codex.thread/closed',
-            runtime: 'codex',
-            threadId: 'thread-1',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            payload: { threadId: 'thread-1' },
-          },
+          event,
         })
         handlers.onError?.(new Error('closed'))
         return { streamId: 'stream-1', cancel: vi.fn() }
@@ -29,20 +34,11 @@ describe('owner thread domain adapter', () => {
       .mockImplementationOnce((_request, handlers) => {
         handlers.onEvent({
           cursor: { epoch: 'e1', sequence: 4 },
-          event: {
-            schemaVersion: 1,
-            eventId: 4,
-            type: 'codex.thread/closed',
-            runtime: 'codex',
-            threadId: 'thread-1',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            payload: { threadId: 'thread-1' },
-          },
+          event,
         })
         handlers.onEvent({
           cursor: { epoch: 'e1', sequence: 5 },
           event: {
-            schemaVersion: 1,
             eventId: 5,
             type: 'codex.thread/closed',
             runtime: 'codex',
@@ -80,7 +76,6 @@ describe('owner thread domain adapter', () => {
         method: 'events.reset',
         params: { cursor: { epoch: 'e2', sequence: 1 }, reason: 'epoch_changed' },
       })
-      handlers.onEvent({ cursor: 2, event: { method: 'thread/updated', params: {} } })
       return { streamId: 'stream-1', cancel: vi.fn() }
     })
     setOwnerBridge({ request: vi.fn(), openStream })
@@ -98,32 +93,100 @@ describe('owner thread domain adapter', () => {
     setOwnerBridge(null)
   })
 
-  it('converts a legacy transport notification to a domain envelope at the adapter edge', () => {
+  it('rejects legacy notification shapes and stops without advancing the cursor', () => {
+    const cancel = vi.fn()
     const openStream = vi.fn((_request, handlers) => {
       handlers.onEvent({
         cursor: { epoch: 'e1', sequence: 6 },
         event: { method: 'thread/closed', params: { threadId: 'thread-1' } },
       })
-      return { streamId: 'stream-1', cancel: vi.fn() }
+      return { streamId: 'stream-1', cancel }
     })
+    const onError = vi.fn()
     setOwnerBridge({ request: vi.fn(), openStream })
     const onEvent = vi.fn()
     const unsubscribe = ownerThreadDomainAdapter.subscribe(
       'thread-1',
       { epoch: 'e1', sequence: 5 },
       onEvent,
+      onError,
     )
-    expect(onEvent).toHaveBeenCalledWith(
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith(
+      undefined,
+      false,
       expect.objectContaining({
-        event: expect.objectContaining({
-          schemaVersion: 1,
-          eventId: 6,
-          type: 'codex.thread/closed',
-          threadId: 'thread-1',
-        }),
+        code: 'INVALID_EVENT_ENVELOPE',
       }),
     )
+    expect(cancel).toHaveBeenCalledOnce()
     unsubscribe()
+    setOwnerBridge(null)
+  })
+
+  it('rejects invalid fields and mismatched event identity before delivery', () => {
+    const openStream = vi.fn((_request, handlers) => {
+      handlers.onEvent({
+        cursor: { epoch: 'e1', sequence: 6 },
+        event: { ...event, unexpected: true },
+      })
+      return { streamId: 'stream-1', cancel: vi.fn() }
+    })
+    setOwnerBridge({ request: vi.fn(), openStream })
+    const onEvent = vi.fn()
+    const onError = vi.fn()
+    ownerThreadDomainAdapter.subscribe('thread-1', { epoch: 'e1', sequence: 5 }, onEvent, onError)
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onError.mock.calls[0]?.[2]).toMatchObject({ code: 'INVALID_EVENT_ENVELOPE' })
+    setOwnerBridge(null)
+
+    const mismatch = vi.fn((_request, handlers) => {
+      handlers.onEvent({ cursor: { epoch: 'e1', sequence: 6 }, event })
+      return { streamId: 'stream-2', cancel: vi.fn() }
+    })
+    setOwnerBridge({ request: vi.fn(), openStream: mismatch })
+    const mismatchError = vi.fn()
+    ownerThreadDomainAdapter.subscribe(
+      'thread-1',
+      { epoch: 'e1', sequence: 5 },
+      vi.fn(),
+      mismatchError,
+    )
+    expect(mismatchError.mock.calls[0]?.[2]).toMatchObject({ code: 'EVENT_CURSOR_MISMATCH' })
+    setOwnerBridge(null)
+  })
+
+  it('validates history events with the same contract', () => {
+    const snapshot = parseThreadSnapshot({
+      thread: { id: 'thread-1', turns: [] },
+      eventCursor: { epoch: 'e1', sequence: 4 },
+      historyEvents: [{ id: 4, event }],
+    })
+    expect(snapshot.historyEvents?.[0]).toEqual({ id: 4, event })
+    expect(() =>
+      parseThreadSnapshot({
+        thread: { id: 'thread-1', turns: [] },
+        eventCursor: { epoch: 'e1', sequence: 4 },
+        historyEvents: [{ id: 4, event: { ...event, eventId: 3 } }],
+      }),
+    ).toThrowError(ThreadEventContractError)
+  })
+
+  it('fails closed if a cursor is replayed with a different event identity', () => {
+    const cancel = vi.fn()
+    const changed = { ...event, payload: { threadId: 'thread-1', changed: true } }
+    const openStream = vi.fn((_request, handlers) => {
+      handlers.onEvent({ cursor: { epoch: 'e1', sequence: 4 }, event })
+      handlers.onEvent({ cursor: { epoch: 'e1', sequence: 4 }, event: changed })
+      return { streamId: 'stream-1', cancel }
+    })
+    setOwnerBridge({ request: vi.fn(), openStream })
+    const onEvent = vi.fn()
+    const onError = vi.fn()
+    ownerThreadDomainAdapter.subscribe('thread-1', { epoch: 'e1', sequence: 3 }, onEvent, onError)
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]?.[2]).toMatchObject({ code: 'EVENT_IDENTITY_MISMATCH' })
+    expect(cancel).toHaveBeenCalledOnce()
     setOwnerBridge(null)
   })
 })

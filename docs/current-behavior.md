@@ -23,6 +23,14 @@
 
 ## 文档边界
 
-Server 事件链使用版本化 Codex domain event envelope；原生 runtime 消息只在 adapter 内解析，Owner WS 和历史回放使用统一事件正文。未映射的合法 runtime 消息以递归凭据/路径字段过滤、payload 最大 128,000 UTF-8 字节的 `runtime.extension` 事件保留；前端只显示受限的方法名摘要。
+Server 事件链使用Codex domain event envelope；原生 runtime 消息只在 adapter 内解析，Owner WS 和历史回放使用统一事件正文。未映射的合法 runtime 消息以递归凭据/路径字段过滤、payload 最大 128,000 UTF-8 字节的 `runtime.extension` 事件保留；前端只显示受限的方法名摘要。
 
-目标架构和安全边界见 [`owner-remote-architecture.md`](./owner-remote-architecture.md)，Owner 与前端契约见 [`api/README.zh-CN.md`](./api/README.zh-CN.md) 和 [`frontend/README.zh-CN.md`](./frontend/README.zh-CN.md)，server 事件实现规格见 [`impl/server-event-architecture.md`](./impl/server-event-architecture.md)。
+目标架构和安全边界见 [`owner-remote-architecture.md`](./owner-remote-architecture.md)，Owner 与前端契约见 [`api/README.zh-CN.md`](./api/README.zh-CN.md) 和 [`frontend/README.zh-CN.md`](./frontend/README.zh-CN.md)，server 事件实现规格见 [`impl/archived/server-event-architecture/readme.md`](./impl/archived/server-event-architecture/readme.md)。
+
+## Server event architecture 收尾（2026-11-04）
+
+Owner 应用协议和 domain event 已移除版本字段、版本专用错误与事件表 schema_version 列，前后端共同更新；Relay、IPC、runtime manifest 保持独立。共享 envelope parser、安全 projection、cursor 和 native reducer 保留。合法未知事件仍走 runtime.extension 安全降级；分页依据原始扫描位置，不因非法记录提前结束；历史补全不重复已物化 plan/reasoning 文本。
+
+事件 epoch 每次进程启动变化，旧 epoch 通过 reset 恢复快照；契约失败停止消费及后台自动恢复、保留 transcript。事件表直接使用当前结构，不提供旧结构迁移命令或专用启动检查；本次没有修改真实本地数据库。
+
+开发验证：server 121、protocol 20、Relay 23、App 261 项测试通过；全仓类型检查、35 个暂存 TS/TSX 格式检查和 lint:staged 通过。用户浏览器回归待执行，见 [事件验证记录](impl/archived/server-event-architecture/04-verification.md)。本节不改变上文设备 enrollment 手工验收状态。

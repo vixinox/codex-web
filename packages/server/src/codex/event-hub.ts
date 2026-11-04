@@ -3,16 +3,21 @@ import {
   createDomainEvent,
   domainEventThreadId,
   projectDomainEvent,
+} from './domain-events.js'
+import {
+  parseDomainEventEnvelope,
   type DomainEventEnvelope,
   type DomainEventInput,
-} from './domain-events.js'
+} from '@codex-web/protocol/owner'
+import { log } from '../logger.js'
 
 export type StoredEvent = { id: number; message: DomainEventEnvelope }
 export type EventHubSnapshot = { nextId: number; events: Record<string, StoredEvent[]> }
+export type EventPage = { events: StoredEvent[]; scannedThrough: number; hasMore: boolean }
 export type EventStore = {
   append(userId: string, event: StoredEvent): Promise<void>
   loadThread?(userId: string, threadId: string): Promise<StoredEvent[]>
-  loadAfter?(userId: string, afterId: number, filterThreadId?: string): Promise<StoredEvent[]>
+  loadAfter?(userId: string, afterId: number, filterThreadId?: string): Promise<EventPage>
   cursorExpired?(
     userId: string,
     filterThreadId: string | undefined,
@@ -244,11 +249,13 @@ export class EventHub {
         let cursor = afterId
         for (;;) {
           const page = await this.store.loadAfter(userId, cursor, filterThreadId)
-          const boundedPage = page.filter((event) => event.id <= replayThrough)
-          deliver(boundedPage, true)
-          const nextCursor = page.at(-1)?.id
-          if (!nextCursor || page.length < 500 || nextCursor <= cursor) break
-          cursor = nextCursor
+          const events = page.events.flatMap((event) => normalizeStoredEvent(event) ?? [])
+          deliver(
+            events.filter((event) => event.id <= replayThrough),
+            true,
+          )
+          if (!page.hasMore || page.scannedThrough <= cursor) break
+          cursor = page.scannedThrough
           if (cursor >= replayThrough) break
         }
       } else {
@@ -335,7 +342,6 @@ export class EventHub {
 }
 
 function toDomainEvent(value: unknown): DomainEventInput {
-  if (isDomainEvent(value)) return value
   const adapted = adaptCodexMessage(value)
   if (adapted.kind === 'event' || adapted.kind === 'extension') return adapted.event
   return createDomainEvent('runtime.diagnostic', {
@@ -345,30 +351,18 @@ function toDomainEvent(value: unknown): DomainEventInput {
   })
 }
 
-function isDomainEvent(value: unknown): value is DomainEventInput {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    typeof (value as Record<string, unknown>).schemaVersion === 'number' &&
-    typeof (value as Record<string, unknown>).type === 'string' &&
-    typeof (value as Record<string, unknown>).runtime === 'string' &&
-    typeof (value as Record<string, unknown>).createdAt === 'string' &&
-    (value as Record<string, unknown>).payload !== null &&
-    typeof (value as Record<string, unknown>).payload === 'object'
-  )
-}
-
 function cloneEvent(event: StoredEvent): StoredEvent {
   return { id: event.id, message: structuredClone(event.message) }
 }
 
 function normalizeStoredEvent(value: { id: number; message: unknown }): StoredEvent | null {
-  if (isDomainEvent(value.message))
-    return { id: value.id, message: projectDomainEvent({ ...value.message, eventId: value.id }) }
-  const adapted = adaptCodexMessage(value.message)
-  if (adapted.kind === 'invalid') return null
-  return { id: value.id, message: projectDomainEvent({ ...adapted.event, eventId: value.id }) }
+  const parsed = parseDomainEventEnvelope(value.message)
+  if (!parsed.ok || parsed.event.eventId !== value.id) {
+    const reason = parsed.ok ? 'EVENT_ID_MISMATCH' : parsed.error.code
+    log.warn(`Stored domain event rejected (eventId=${value.id} reason=${reason})`)
+    return null
+  }
+  return { id: value.id, message: projectDomainEvent(parsed.event) }
 }
 
 function eventScopeKey(userId: string, filterThreadId: string | undefined) {

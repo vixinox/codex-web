@@ -36,7 +36,9 @@ Relay URL 对标准部署来自受信任的应用 profile。自定义 Relay 只�
 
 ## Owner 管理页面
 
-管理页面只展示安全投影后的 Passkey presence、connection/device 状态、邀请生成、设备撤销、session 撤销和 trust reset。对话事件通过版本化 domain event envelope 进入前端 adapter；未知 runtime 事件只显示受限的方法名摘要，扩展 payload 不传给 renderer。页面不展示私钥、session token、Owner public key 原文、Owner code 或 fingerprint 字符串。
+管理页面只展示安全投影后的 Passkey presence、connection/device 状态、邀请生成、设备撤销、session 撤销和 trust reset。对话事件通过domain event envelope 进入前端 adapter；未知 runtime 事件只显示受限的方法名摘要，扩展 payload 不传给 renderer。页面不展示私钥、session token、Owner public key 原文、Owner code 或 fingerprint 字符串。
+
+Owner event envelope 由 `@codex-web/protocol/owner` 共享 parser 严格校验，应用协议不维护版本号。live/history 使用同一个 envelope-to-Codex adapter；完整快照为已物化内容真值，历史增量不能重复追加。非法结构或 cursor identity 冲突时停止消费、不推进 cursor，保留 transcript 并提示重连/重试；合法未处理事件仅显示方法名摘要。
 
 ## 本地数据边界
 

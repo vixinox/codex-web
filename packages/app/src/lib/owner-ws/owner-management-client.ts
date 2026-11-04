@@ -1,9 +1,4 @@
-import {
-  encodeOwnerFrame,
-  parseOwnerFrame,
-  OWNER_PROTOCOL_VERSION,
-  type OwnerError,
-} from '@codex-web/protocol/owner'
+import { encodeOwnerFrame, parseOwnerFrame, type OwnerError } from '@codex-web/protocol/owner'
 
 export type OwnerManagementRpc = {
   request(method: string, params?: Record<string, unknown>): Promise<unknown>
@@ -74,7 +69,7 @@ export function connectOwnerManagementRpc(sessionToken?: string): Promise<OwnerM
       socket.send(
         encodeOwnerFrame({
           type: 'hello',
-          version: OWNER_PROTOCOL_VERSION,
+
           clientId: 'owner-management',
           capabilities: ['owner', 'remote-administration'],
           ...(sessionToken ? { sessionToken } : {}),

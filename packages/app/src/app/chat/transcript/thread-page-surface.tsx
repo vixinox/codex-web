@@ -30,6 +30,18 @@ export function ThreadPageSurface({
   if (!('thread' in model)) return <div />
   return (
     <section className="relative flex min-h-full flex-col" aria-label="Chat conversation">
+      {controller.eventError ? (
+        <div className="mx-auto mb-4 w-full max-w-3xl px-4" role="alert">
+          <Alert variant="destructive">
+            <AlertDescription className="flex items-center justify-between gap-4">
+              <span>{controller.eventError}</span>
+              <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
       {inputErrors.length ? (
         <div className="mx-auto mb-4 w-full max-w-3xl px-4" role="alert">
           <Alert variant="destructive">

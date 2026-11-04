@@ -18,6 +18,7 @@ import type {
   ThreadSnapshot,
   ThreadEventCursor,
 } from '@/lib/bridge/interfaces/thread'
+import { ThreadEventContractError } from '@/app/chat/domain/owner-thread-adapter'
 import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 import { trackProductEvent } from '@/lib/connection/telemetry'
 
@@ -35,6 +36,7 @@ export function useThreadDetailController(
 ): ChatSession {
   const registry = useThreadSessionRegistry()
   const [retryKey, setRetryKey] = React.useState(0)
+  const [eventError, setEventError] = React.useState<string | null>(null)
   const requestKey =
     projectId !== undefined && threadId ? `${projectId ?? '<root>'}\0${threadId}` : null
   const session = requestKey && threadId ? registry.get(projectId ?? null, threadId) : null
@@ -53,6 +55,7 @@ export function useThreadDetailController(
     let recoveryTimer: number | null = null
     let recoveryAttempts = 0
     let recovering = false
+    let contractFailed = false
     let forceSnapshotRecovery = false
     let resetRecoveryEpoch: string | null = null
     const lifecycleMethods = new Set(['thread/archived', 'thread/deleted', 'thread/closed'])
@@ -104,11 +107,11 @@ export function useThreadDetailController(
     }
     const subscribe = (cursor: ThreadEventCursor) => {
       unsubscribe()
-      unsubscribe = client.subscribe(threadId, cursor, receive, scheduleRecovery)
+      unsubscribe = client.subscribe(threadId, cursor, receive, handleStreamError)
     }
     const hydrateAndSubscribe = (response: ThreadSnapshot) => {
       trackProductEvent('thread_opened')
-      if (!active) return
+      if (!active || contractFailed) return
       const historyEvents: CodexHistoryEvent[] = (response.historyEvents ?? []).map((event) => ({
         id: event.id,
         message: domainEventToCodexNotification(event.event),
@@ -119,10 +122,18 @@ export function useThreadDetailController(
       lastEventCursor = { ...eventCursor, sequence: hydration.replayAfterId }
       sparseTurnIds = hydration.sparseTurnIds
       lastEventId = hydration.replayAfterId
+      contractFailed = false
+      setEventError(null)
       subscribe({ ...response.eventCursor, sequence: hydration.replayAfterId })
     }
     const reconcileTimer = window.setInterval(() => {
-      if (!active || document.visibilityState !== 'visible' || !session.state.isBusy || recovering)
+      if (
+        !active ||
+        contractFailed ||
+        document.visibilityState !== 'visible' ||
+        !session.state.isBusy ||
+        recovering
+      )
         return
       void client
         .readThreadStatus(projectId, threadId, controller.signal)
@@ -138,11 +149,11 @@ export function useThreadDetailController(
         .catch(() => undefined)
     }, STATUS_RECONCILE_INTERVAL_MS)
     const recover = async () => {
-      if (!active || recovering) return
+      if (!active || recovering || contractFailed) return
       recovering = true
       try {
         const status = await client.readThreadStatus(projectId, threadId, controller.signal)
-        if (!active) return
+        if (!active || contractFailed) return
         const statusCursor = normalizeCursor(status.eventCursor)
         const mustReadSnapshot = forceSnapshotRecovery
         forceSnapshotRecovery = false
@@ -170,6 +181,10 @@ export function useThreadDetailController(
         recoveryAttempts = 0
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return
+        if (error instanceof ThreadEventContractError) {
+          failContract(error.message)
+          return
+        }
         if (isCodexUnavailable(error)) onUnavailable?.()
         if (recoveryAttempts >= 5) {
           session.setError(
@@ -187,8 +202,30 @@ export function useThreadDetailController(
         recovering = false
       }
     }
+    function failContract(message: string) {
+      contractFailed = true
+      if (recoveryTimer !== null) {
+        window.clearTimeout(recoveryTimer)
+        recoveryTimer = null
+      }
+      unsubscribe()
+      setEventError(message)
+      if (session && session.state.status !== 'ready') session.setError(message)
+    }
+    function handleStreamError(
+      resetCursor?: ThreadEventCursor,
+      reset = false,
+      error?: { code: string; message: string },
+    ) {
+      if (error) {
+        failContract(error.message)
+        return
+      }
+      scheduleRecovery(resetCursor, reset)
+    }
     function scheduleRecovery(resetCursor?: ThreadEventCursor, reset = false) {
       trackProductEvent('sse_reconnected')
+      if (contractFailed) return
       if (reset) {
         forceSnapshotRecovery = true
         resetRecoveryEpoch = resetCursor?.epoch ?? null
@@ -212,6 +249,10 @@ export function useThreadDetailController(
       .then(hydrateAndSubscribe)
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return
+        if (error instanceof ThreadEventContractError) {
+          failContract(error.message)
+          return
+        }
         if (isCodexUnavailable(error)) onUnavailable?.()
         session.setError(
           error instanceof Error ? error.message : 'Could not load this thread. Try again.',
@@ -280,6 +321,7 @@ export function useThreadDetailController(
     answerUserInput: answer,
     cancelUserInput,
     inputErrors: snapshot.inputErrors,
+    eventError,
   }
 }
 

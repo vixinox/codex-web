@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { encodeOwnerFrame, OWNER_PROTOCOL_VERSION } from '@codex-web/protocol/owner'
+import { encodeOwnerFrame } from '@codex-web/protocol/owner'
 import { createOwnerRuntime } from './owner-runtime'
 import { createOwnerRuntimeController } from './runtime-controller'
 
@@ -25,7 +25,7 @@ class FakeSocket {
 function ready(socket: FakeSocket) {
   socket.receive({
     type: 'ready',
-    version: OWNER_PROTOCOL_VERSION,
+
     connectionId: 'controller-connection',
     authenticated: true,
     capabilities: ['owner'],
@@ -125,7 +125,7 @@ describe('Owner runtime controller', () => {
     socket.open()
     socket.receive({
       type: 'ready',
-      version: OWNER_PROTOCOL_VERSION,
+
       connectionId: 'unauthenticated',
       authenticated: false,
       capabilities: ['owner'],

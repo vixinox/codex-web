@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  adaptCodexMessage,
-  createDomainEvent,
-  MAX_EXTENSION_PAYLOAD_BYTES,
-  projectDomainEvent,
-} from './domain-events.js'
+import { adaptCodexMessage, createDomainEvent, projectDomainEvent } from './domain-events.js'
+import { MAX_DOMAIN_EVENT_PAYLOAD_BYTES } from '@codex-web/protocol/owner'
+import { ownerDomainEventProducerFixture } from '../../../protocol/fixtures/owner-domain-events.js'
 
 const codexEventFixture = [
   {
@@ -66,7 +63,7 @@ const codexEventFixture = [
   },
 ]
 
-test('adapts a documented Codex notification into a versioned domain event', () => {
+test('adapts a documented Codex notification into a domain event', () => {
   const result = adaptCodexMessage(
     {
       method: 'item/agentMessage/delta',
@@ -82,7 +79,6 @@ test('adapts a documented Codex notification into a versioned domain event', () 
   assert.equal(result.kind, 'event')
   if (result.kind !== 'event') return
   assert.deepEqual(result.event, {
-    schemaVersion: 1,
     type: 'codex.item/agentMessage/delta',
     runtime: 'codex',
     threadId: 'thread-1',
@@ -91,6 +87,14 @@ test('adapts a documented Codex notification into a versioned domain event', () 
     createdAt: '2026-01-01T00:00:00.000Z',
     payload: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', delta: 'hello' },
   })
+})
+
+test('server producer matches the shared app-consumer fixture', () => {
+  const { event, notification } = ownerDomainEventProducerFixture
+  const result = adaptCodexMessage(notification, event.createdAt)
+  assert.equal(result.kind, 'event')
+  if (result.kind !== 'event') return
+  assert.deepEqual({ ...result.event, eventId: event.eventId }, event)
 })
 
 test('adapts interleaved lifecycle, command, approval, usage, and extension fixtures in order', () => {
@@ -155,13 +159,13 @@ test('redacts nested secrets and bounds extension payloads by UTF-8 bytes', () =
     method: 'future/notification',
     params: {
       nested: { authorization: 'Bearer secret' },
-      huge: '😀'.repeat(MAX_EXTENSION_PAYLOAD_BYTES),
+      huge: '😀'.repeat(MAX_DOMAIN_EVENT_PAYLOAD_BYTES),
     },
   })
   assert.equal(result.kind, 'extension')
   if (result.kind !== 'extension') return
   const encoded = JSON.stringify(result.event.payload)
-  assert.ok(Buffer.byteLength(encoded, 'utf8') <= MAX_EXTENSION_PAYLOAD_BYTES)
+  assert.ok(Buffer.byteLength(encoded, 'utf8') <= MAX_DOMAIN_EVENT_PAYLOAD_BYTES)
   assert.equal(encoded.includes('Bearer secret'), false)
   assert.equal(result.event.payload.truncated, true)
 })
@@ -174,5 +178,4 @@ test('turns malformed messages into diagnostics and assigns stable ids at projec
     eventId: 9,
   })
   assert.equal(projected.eventId, 9)
-  assert.equal(projected.schemaVersion, 1)
 })

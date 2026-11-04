@@ -1,5 +1,50 @@
-export const OWNER_PROTOCOL_VERSION = 1 as const
+export const DOMAIN_EVENT_RUNTIME = 'codex' as const
+export const MAX_DOMAIN_EVENT_PAYLOAD_BYTES = 128_000
 export const OWNER_MAX_FRAME_BYTES = 1024 * 1024
+
+export type DomainEventEnvelope = {
+  eventId: number
+  type: string
+  runtime: typeof DOMAIN_EVENT_RUNTIME
+  threadId?: string
+  turnId?: string
+  itemId?: string
+  requestId?: number | string
+  createdAt: string
+  payload: Record<string, unknown>
+}
+
+export type DomainEventInput = Omit<DomainEventEnvelope, 'eventId'> & { eventId?: number }
+
+export type OwnerEventCursor = { epoch: string; sequence: number }
+
+export type OwnerStreamEvent = {
+  cursor: OwnerEventCursor
+  event: DomainEventEnvelope
+}
+
+export type OwnerResetStreamEvent = {
+  method: 'events.reset'
+  params: { cursor: OwnerEventCursor; reason?: string }
+}
+
+export type OwnerEventStreamMessage = OwnerStreamEvent | OwnerResetStreamEvent
+
+export type DomainEventParseErrorCode = 'INVALID_EVENT_ENVELOPE'
+
+export type DomainEventParseResult =
+  | { ok: true; event: DomainEventEnvelope }
+  | { ok: false; error: { code: DomainEventParseErrorCode; message: string } }
+
+export type OwnerStreamEventParseResult =
+  | { ok: true; value: OwnerStreamEvent }
+  | {
+      ok: false
+      error: {
+        code: DomainEventParseErrorCode | 'EVENT_CURSOR_MISMATCH' | 'INVALID_STREAM_EVENT'
+        message: string
+      }
+    }
 
 export const OWNER_CAPABILITIES = [
   'owner',
@@ -21,7 +66,6 @@ export const OWNER_ERROR_CODES = [
   'INVALID_JSON',
   'INVALID_FRAME',
   'UNSUPPORTED_FRAME',
-  'UNSUPPORTED_VERSION',
   'FRAME_TOO_LARGE',
   'NON_TEXT_FRAME',
   'INVALID_HELLO',
@@ -45,6 +89,10 @@ export const OWNER_ERROR_CODES = [
   'BACKPRESSURE_LIMIT_EXCEEDED',
   'SUBSCRIPTION_EXPIRED',
   'INVALID_EVENT_CURSOR',
+  'INVALID_EVENT_ENVELOPE',
+  'EVENT_CURSOR_MISMATCH',
+  'EVENT_IDENTITY_MISMATCH',
+  'INVALID_STREAM_EVENT',
   'OWNER_ALREADY_EXISTS',
   'INVALID_CREDENTIAL',
   'CREDENTIAL_NOT_FOUND',
@@ -74,7 +122,6 @@ export type OwnerError = {
 
 export type OwnerHelloFrame = {
   type: 'hello'
-  version: number
   clientId: string
   capabilities: string[]
   sessionToken?: string
@@ -82,7 +129,6 @@ export type OwnerHelloFrame = {
 
 export type OwnerReadyFrame = {
   type: 'ready'
-  version: typeof OWNER_PROTOCOL_VERSION
   connectionId: string
   authenticated: boolean
   capabilities: string[]
@@ -166,6 +212,7 @@ const MAX_LABEL_LENGTH = 128
 const MAX_CAPABILITIES = 64
 const MAX_JSON_NODES = 100_000
 const MAX_JSON_DEPTH = 128
+const MAX_EVENT_TYPE_LENGTH = 256
 
 export function parseOwnerFrame(input: unknown): OwnerParseResult {
   if (input instanceof Uint8Array)
@@ -185,6 +232,10 @@ export function parseOwnerFrame(input: unknown): OwnerParseResult {
     return failure('INVALID_FRAME', 'Frame must be an object with a type.')
   if (!isSupportedFrameType(value.type))
     return failure('UNSUPPORTED_FRAME', 'Frame type is not supported.')
+  if (value.type === 'stream.event') {
+    const parsedEvent = parseOwnerEventStreamMessage(value.event)
+    if (!parsedEvent.ok) return failure(parsedEvent.error.code, parsedEvent.error.message)
+  }
 
   const issue = validateFrame(value)
   if (issue) return { ok: false, error: issue }
@@ -206,13 +257,131 @@ export function encodeOwnerFrame(frame: OwnerFrame): string {
   return encoded
 }
 
+export function parseOwnerEventCursor(value: unknown): OwnerEventCursor | null {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ['epoch', 'sequence']) ||
+    !isIdentifier(value.epoch) ||
+    !Number.isSafeInteger(value.sequence) ||
+    (value.sequence as number) < 0
+  )
+    return null
+  return { epoch: value.epoch, sequence: value.sequence as number }
+}
+
+export function parseDomainEventEnvelope(value: unknown): DomainEventParseResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      'eventId',
+      'type',
+      'runtime',
+      'threadId',
+      'turnId',
+      'itemId',
+      'requestId',
+      'createdAt',
+      'payload',
+    ]) ||
+    !Number.isSafeInteger(value.eventId) ||
+    (value.eventId as number) < 1 ||
+    !isBoundedString(value.type, MAX_EVENT_TYPE_LENGTH) ||
+    value.runtime !== DOMAIN_EVENT_RUNTIME ||
+    !isIsoDateTime(value.createdAt) ||
+    !isRecord(value.payload) ||
+    !isJsonValue(value.payload) ||
+    byteLength(JSON.stringify(value.payload)) > MAX_DOMAIN_EVENT_PAYLOAD_BYTES ||
+    !optionalIdentifier(value.threadId) ||
+    !optionalIdentifier(value.turnId) ||
+    !optionalIdentifier(value.itemId) ||
+    !optionalRequestId(value.requestId)
+  )
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_EVENT_ENVELOPE',
+        message: 'Owner event envelope is invalid.',
+      },
+    }
+
+  // The runtime checks above validate every field and the full JSON payload.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return { ok: true, event: value as DomainEventEnvelope }
+}
+
+export function parseOwnerStreamEvent(value: unknown): OwnerStreamEventParseResult {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['cursor', 'event']) || !('event' in value))
+    return {
+      ok: false,
+      error: { code: 'INVALID_STREAM_EVENT', message: 'Owner stream event is invalid.' },
+    }
+
+  const cursor = parseOwnerEventCursor(value.cursor)
+  if (!cursor)
+    return {
+      ok: false,
+      error: { code: 'INVALID_STREAM_EVENT', message: 'Owner stream cursor is invalid.' },
+    }
+
+  const parsedEvent = parseDomainEventEnvelope(value.event)
+  if (!parsedEvent.ok) return parsedEvent
+  if (parsedEvent.event.eventId !== cursor.sequence)
+    return {
+      ok: false,
+      error: {
+        code: 'EVENT_CURSOR_MISMATCH',
+        message: 'Owner event cursor does not match its event identity.',
+      },
+    }
+  return { ok: true, value: { cursor, event: parsedEvent.event } }
+}
+
+export function parseOwnerEventStreamMessage(value: unknown):
+  | { ok: true; message: OwnerEventStreamMessage }
+  | {
+      ok: false
+      error: {
+        code: DomainEventParseErrorCode | 'EVENT_CURSOR_MISMATCH' | 'INVALID_STREAM_EVENT'
+        message: string
+      }
+    } {
+  if (isRecord(value) && value.method === 'events.reset') {
+    const params = value.params
+    if (
+      !hasOnlyKeys(value, ['method', 'params']) ||
+      !isRecord(params) ||
+      !hasOnlyKeys(params, ['cursor', 'reason'])
+    )
+      return {
+        ok: false,
+        error: { code: 'INVALID_STREAM_EVENT', message: 'Owner reset event is invalid.' },
+      }
+    const cursor = parseOwnerEventCursor(params.cursor)
+    if (
+      !cursor ||
+      (params.reason !== undefined && !isBoundedString(params.reason, MAX_LABEL_LENGTH))
+    )
+      return {
+        ok: false,
+        error: { code: 'INVALID_STREAM_EVENT', message: 'Owner reset event is invalid.' },
+      }
+    return {
+      ok: true,
+      message: {
+        method: 'events.reset',
+        params: { cursor, ...(typeof params.reason === 'string' ? { reason: params.reason } : {}) },
+      },
+    }
+  }
+  const parsed = parseOwnerStreamEvent(value)
+  return parsed.ok ? { ok: true, message: parsed.value } : parsed
+}
+
 function validateFrame(value: Record<string, unknown>): OwnerProtocolIssue | null {
   switch (value.type) {
     case 'hello':
-      if (!hasOnlyKeys(value, ['type', 'version', 'clientId', 'capabilities', 'sessionToken']))
+      if (!hasOnlyKeys(value, ['type', 'clientId', 'capabilities', 'sessionToken']))
         return failureValue('INVALID_HELLO', 'Hello frame contains unsupported fields.')
-      if (!isSafeVersion(value.version))
-        return failureValue('UNSUPPORTED_VERSION', 'Protocol version is not supported.')
       if (!isIdentifier(value.clientId))
         return failureValue('INVALID_HELLO', 'Hello clientId is invalid.')
       if (!isCapabilities(value.capabilities))
@@ -222,8 +391,7 @@ function validateFrame(value: Record<string, unknown>): OwnerProtocolIssue | nul
       return null
     case 'ready':
       if (
-        !hasOnlyKeys(value, ['type', 'version', 'connectionId', 'authenticated', 'capabilities']) ||
-        value.version !== OWNER_PROTOCOL_VERSION ||
+        !hasOnlyKeys(value, ['type', 'connectionId', 'authenticated', 'capabilities']) ||
         !isIdentifier(value.connectionId) ||
         typeof value.authenticated !== 'boolean' ||
         !isCapabilities(value.capabilities)
@@ -367,8 +535,24 @@ function isBoundedString(value: unknown, maxLength: number): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= maxLength
 }
 
-function isSafeVersion(value: unknown): value is number {
-  return Number.isSafeInteger(value) && value === OWNER_PROTOCOL_VERSION
+function isIsoDateTime(value: unknown): value is string {
+  return (
+    isBoundedString(value, 64) &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(value) &&
+    Number.isFinite(Date.parse(value))
+  )
+}
+
+function optionalIdentifier(value: unknown) {
+  return value === undefined || isIdentifier(value)
+}
+
+function optionalRequestId(value: unknown) {
+  return (
+    value === undefined ||
+    (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) ||
+    (typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH)
+  )
 }
 
 function isSupportedFrameType(value: string): value is OwnerFrame['type'] {
@@ -404,4 +588,16 @@ function failure(code: OwnerErrorCode, message: string): OwnerParseResult {
 
 function failureValue(code: OwnerErrorCode, message: string): OwnerProtocolIssue {
   return { code, message }
+}
+
+export function isOwnerEventErrorCode(code: unknown): code is OwnerErrorCode {
+  return (
+    typeof code === 'string' &&
+    [
+      'INVALID_EVENT_ENVELOPE',
+      'EVENT_CURSOR_MISMATCH',
+      'EVENT_IDENTITY_MISMATCH',
+      'INVALID_STREAM_EVENT',
+    ].includes(code)
+  )
 }

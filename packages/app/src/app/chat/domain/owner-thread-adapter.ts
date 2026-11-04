@@ -1,5 +1,11 @@
 import type { StreamHandle } from '@/lib/owner-ws/owner-runtime'
 import { getOwnerBridge } from '@/lib/bridge/owner-runtime'
+import {
+  parseDomainEventEnvelope,
+  isOwnerEventErrorCode,
+  parseOwnerEventCursor,
+  parseOwnerEventStreamMessage,
+} from '@codex-web/protocol/owner'
 import type {
   StartedThread,
   StartedTurn,
@@ -7,11 +13,18 @@ import type {
   ThreadRuntimeStatus,
   ThreadSnapshot,
   ThreadSummary,
-  ThreadEventCursor,
-  DomainEventEnvelope,
+  ThreadEventError,
 } from '@/lib/bridge/interfaces/thread'
 
-type EventEnvelope = { cursor?: unknown; event?: unknown; method?: unknown; params?: unknown }
+export class ThreadEventContractError extends Error {
+  readonly code: string
+
+  constructor(code: string, message = eventContractMessage()) {
+    super(message)
+    this.name = 'ThreadEventContractError'
+    this.code = code
+  }
+}
 
 /** Owner-backed Thread domain adapter. It owns event cursor and subscription recovery. */
 export const ownerThreadDomainAdapter: ThreadClient = {
@@ -30,11 +43,12 @@ export const ownerThreadDomainAdapter: ThreadClient = {
     })
   },
   async readThread(projectId, threadId, signal) {
-    return getOwnerBridge().request<ThreadSnapshot>(
+    const response = await getOwnerBridge().request<unknown>(
       'threads.read',
       { projectId, threadId },
       { signal },
     )
+    return parseThreadSnapshot(response)
   },
   async readThreadStatus(projectId, threadId, signal) {
     return getOwnerBridge().request<ThreadRuntimeStatus>(
@@ -72,30 +86,48 @@ export const ownerThreadDomainAdapter: ThreadClient = {
     let current: StreamHandle | null = null
     let cancelled = false
     let recovering = false
-    const seen = new Set<string>()
+    const seen = new Map<string, string>()
+
+    const failContract = (error: ThreadEventError) => {
+      if (cancelled) return
+      cancelled = true
+      current?.cancel()
+      current = null
+      onError?.(undefined, false, error)
+    }
 
     const receive = (value: unknown) => {
-      const envelope = isRecord(value) ? (value as EventEnvelope) : {}
-      const resetParams =
-        envelope.method === 'events.reset' && isRecord(envelope.params) ? envelope.params : null
-      const nextCursor =
-        parseCursor(envelope.cursor) ?? (resetParams ? parseCursor(resetParams.cursor) : null)
-      if (envelope.method === 'events.reset') {
-        if (nextCursor) cursor = nextCursor
+      const parsed = parseOwnerEventStreamMessage(value)
+      if (!parsed.ok) {
+        failContract({ ...parsed.error, message: eventContractMessage() })
+        return
+      }
+      if ('method' in parsed.message) {
+        const nextCursor = parsed.message.params.cursor
+        cursor = nextCursor
         onError?.(nextCursor ?? undefined, true)
         return
       }
-      const message = envelope.event ?? value
-      if (!nextCursor || !isRecord(message)) return
+      const { cursor: nextCursor, event } = parsed.message
+      const eventKey = `${nextCursor.epoch}:${event.eventId}`
+      const encodedEvent = stableJson(event)
+      const previousEvent = seen.get(eventKey)
+      if (previousEvent && previousEvent !== encodedEvent) {
+        failContract({
+          code: 'EVENT_IDENTITY_MISMATCH',
+          message: eventContractMessage(),
+        })
+        return
+      }
+      if (previousEvent) return
+      if (nextCursor.epoch === cursor.epoch && nextCursor.sequence <= cursor.sequence) return
+      seen.set(eventKey, encodedEvent)
+      if (seen.size > 2048) seen.delete(seen.keys().next().value as string)
       cursor = nextCursor
-      const eventKey = `${nextCursor.epoch}:${nextCursor.sequence}`
-      if (seen.has(eventKey)) return
-      seen.add(eventKey)
-      if (seen.size > 2048) seen.delete(seen.values().next().value as string)
       onEvent({
-        id: nextCursor.sequence,
+        id: event.eventId,
         cursor: nextCursor,
-        event: normalizeDomainEvent(message, nextCursor.sequence),
+        event,
       })
     }
 
@@ -103,16 +135,30 @@ export const ownerThreadDomainAdapter: ThreadClient = {
       method: 'events.subscribe' | 'events.resume',
       params: Record<string, unknown>,
     ) => {
-      current = getOwnerBridge().openStream(
+      const handle = getOwnerBridge().openStream(
         { method, params },
         {
           onOpen: (meta) => {
             if (!isRecord(meta)) return
             if (typeof meta.subscriptionId === 'string') subscriptionId = meta.subscriptionId
-            cursor = parseCursor(meta.cursor) ?? cursor
+            if (meta.cursor !== undefined) {
+              const nextCursor = parseOwnerEventCursor(meta.cursor)
+              if (!nextCursor) {
+                failContract({
+                  code: 'INVALID_STREAM_EVENT',
+                  message: eventContractMessage(),
+                })
+                return
+              }
+              cursor = nextCursor
+            }
           },
           onEvent: receive,
-          onError: () => {
+          onError: (error) => {
+            if (isContractError(error)) {
+              failContract(error)
+              return
+            }
             if (cancelled || recovering || !subscriptionId) {
               if (!cancelled) onError?.()
               return
@@ -133,6 +179,11 @@ export const ownerThreadDomainAdapter: ThreadClient = {
           },
         },
       )
+      current = handle
+      if (cancelled) {
+        handle.cancel()
+        current = null
+      }
     }
 
     open('events.subscribe', { scope: 'thread', threadId, cursor: initialCursor })
@@ -144,50 +195,56 @@ export const ownerThreadDomainAdapter: ThreadClient = {
   },
 }
 
-function parseCursor(value: unknown): ThreadEventCursor | null {
-  if (
-    !isRecord(value) ||
-    typeof value.epoch !== 'string' ||
-    !value.epoch ||
-    !Number.isSafeInteger(value.sequence) ||
-    (value.sequence as number) < 0
-  )
-    return null
-  return { epoch: value.epoch, sequence: value.sequence as number }
+export function parseThreadSnapshot(value: unknown): ThreadSnapshot {
+  if (!isRecord(value) || !isRecord(value.thread) || typeof value.thread.id !== 'string')
+    throw new ThreadEventContractError('INVALID_EVENT_ENVELOPE')
+  const eventCursor = parseOwnerEventCursor(value.eventCursor)
+  if (!eventCursor) throw new ThreadEventContractError('INVALID_STREAM_EVENT')
+  const rawHistory = value.historyEvents ?? []
+  if (!Array.isArray(rawHistory)) throw new ThreadEventContractError('INVALID_EVENT_ENVELOPE')
+
+  let previousId = 0
+  const historyEvents = rawHistory.map((entry) => {
+    if (!isRecord(entry) || !Number.isSafeInteger(entry.id) || (entry.id as number) <= previousId)
+      throw new ThreadEventContractError('INVALID_EVENT_ENVELOPE')
+    const parsed = parseDomainEventEnvelope(entry.event)
+    if (!parsed.ok) throw new ThreadEventContractError(parsed.error.code, parsed.error.message)
+    if (parsed.event.eventId !== entry.id || parsed.event.eventId > eventCursor.sequence)
+      throw new ThreadEventContractError('EVENT_CURSOR_MISMATCH')
+    previousId = entry.id as number
+    return { id: previousId, event: parsed.event }
+  })
+
+  return {
+    thread: value.thread as ThreadSnapshot['thread'],
+    eventCursor,
+    historyEvents,
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function isDomainEvent(value: Record<string, any>): value is DomainEventEnvelope {
+function isContractError(error: Error): error is Error & ThreadEventError {
   return (
-    typeof value.schemaVersion === 'number' &&
-    typeof value.eventId === 'number' &&
-    typeof value.type === 'string' &&
-    typeof value.runtime === 'string' &&
-    typeof value.createdAt === 'string' &&
-    isRecord(value.payload)
+    error.name === 'OwnerRequestError' &&
+    isOwnerEventErrorCode((error as Error & { code?: string }).code)
   )
 }
 
-function normalizeDomainEvent(value: Record<string, any>, eventId: number): DomainEventEnvelope {
-  if (isDomainEvent(value)) return value
-  const method = typeof value.method === 'string' ? value.method : 'runtime.diagnostic'
-  const payload = isRecord(value.params) ? value.params : {}
-  const id = value.id
-  return {
-    schemaVersion: 1,
-    eventId,
-    type: method.startsWith('codex.') ? method : `codex.${method}`,
-    runtime: 'codex',
-    createdAt: new Date().toISOString(),
-    ...(typeof payload.threadId === 'string' ? { threadId: payload.threadId } : {}),
-    ...(typeof payload.turnId === 'string' ? { turnId: payload.turnId } : {}),
-    ...(typeof payload.itemId === 'string' ? { itemId: payload.itemId } : {}),
-    ...(typeof id === 'number' || typeof id === 'string' ? { requestId: id } : {}),
-    payload,
-  }
+function eventContractMessage() {
+  return 'Owner thread events could not be validated. The current transcript is preserved; reconnect and retry this thread.'
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (isRecord(value))
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`
+  return JSON.stringify(value) ?? 'null'
 }
 
 function isThreadSummary(value: unknown): value is ThreadSummary {

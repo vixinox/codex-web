@@ -123,6 +123,7 @@ export function useThreadPageController({
 
   return {
     model,
+    eventError: detail.eventError,
     session: detail.model.status === 'ready' ? detail.model.session : undefined,
     compacting: composer.compacting,
     detail,

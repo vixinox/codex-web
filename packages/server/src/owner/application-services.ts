@@ -1,6 +1,11 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { CodexBridge } from '../http/types.js'
-import { projectThreadSnapshot, type DomainEventEnvelope } from '../codex/domain-events.js'
+import { projectThreadSnapshot } from '../codex/domain-events.js'
+import {
+  parseOwnerEventCursor,
+  type DomainEventEnvelope,
+  type OwnerEventCursor,
+} from '@codex-web/protocol/owner'
 import { parseRequestId } from '../codex/request-id.js'
 import { createThreadDomain } from '../threads/index.js'
 import { SkillHandleStore, skillsForCwd, turnInput } from '../skills.js'
@@ -16,37 +21,21 @@ import { log } from '../logger.js'
 
 const MAX_INITIAL_MESSAGE_LENGTH = 256_000
 const SUBSCRIPTION_TTL_MS = 10 * 60 * 1000
+const PROCESS_EVENT_EPOCH = randomUUID()
 
-export type OwnerEventCursor = { epoch: string; sequence: number }
+export type { OwnerEventCursor } from '@codex-web/protocol/owner'
 
 function eventEpoch(ownerId: string) {
-  return createHash('sha256').update(`codex-web-owner-event-v1:${ownerId}`).digest('base64url')
+  return createHash('sha256').update(`${PROCESS_EVENT_EPOCH}:${ownerId}`).digest('base64url')
 }
 
 function makeEventCursor(ownerId: string, sequence: number): OwnerEventCursor {
   return { epoch: eventEpoch(ownerId), sequence }
 }
 
-function parseEventCursor(value: unknown, ownerId: string): OwnerEventCursor | null | undefined {
+function parseEventCursor(value: unknown): OwnerEventCursor | null | undefined {
   if (value === undefined) return undefined
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    Array.isArray(value) ||
-    !('epoch' in value) ||
-    !('sequence' in value) ||
-    Object.keys(value).some((key) => key !== 'epoch' && key !== 'sequence')
-  )
-    return null
-  const cursor = value as Partial<OwnerEventCursor>
-  if (
-    cursor.epoch !== eventEpoch(ownerId) ||
-    typeof cursor.sequence !== 'number' ||
-    !Number.isSafeInteger(cursor.sequence) ||
-    cursor.sequence < 0
-  )
-    return null
-  return { epoch: cursor.epoch, sequence: cursor.sequence }
+  return parseOwnerEventCursor(value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1119,7 +1108,7 @@ export function createOwnerApplicationServices(
         owner.ownerId,
         scope === 'thread' ? (threadId as string) : undefined,
       )
-      const cursor = parseEventCursor(input.cursor, owner.ownerId)
+      const cursor = parseEventCursor(input.cursor)
       if (cursor === null) throw new OwnerMethodError('INVALID_EVENT_CURSOR')
       const requestedSequence = cursor?.sequence ?? latestSequence
       const expired = cursor
@@ -1130,7 +1119,11 @@ export function createOwnerApplicationServices(
           )
         : false
       const effectiveResetReason =
-        cursor && (cursor.sequence > latestSequence || expired) ? 'cursor_gap' : undefined
+        cursor?.epoch !== undefined && cursor.epoch !== eventEpoch(owner.ownerId)
+          ? 'epoch_changed'
+          : cursor && (cursor.sequence > latestSequence || expired)
+            ? 'cursor_gap'
+            : undefined
       const subscriptionId = existing ? String(requestedSubscriptionId) : crypto.randomUUID()
       subscriptions.set(subscriptionId, {
         ownerId: owner.ownerId,
@@ -1419,7 +1412,6 @@ function authBinding(context: OwnerMethodContext) {
   return {
     connectionId: context.connectionId,
     clientPublicKey: context.transport.clientPublicKey ?? 'local',
-    requestId: context.requestId,
   }
 }
 

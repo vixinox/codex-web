@@ -139,7 +139,6 @@ export const domainEvent = sqliteTable(
       .references(() => owner.id, { onDelete: 'cascade' }),
     threadId: text('thread_id'),
     type: text('type').notNull(),
-    schemaVersion: integer('schema_version').notNull(),
     payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
     createdAt: timestamp('created_at')
       .notNull()

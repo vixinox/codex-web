@@ -2,7 +2,8 @@ import { asc, desc, and, count, eq, gt, isNotNull, lte, min } from 'drizzle-orm'
 import { domainEvent } from '../db/schema.js'
 import type { Database } from '../database.js'
 import type { EventHubSnapshot } from './event-hub.js'
-import type { DomainEventEnvelope } from './domain-events.js'
+import { parseDomainEventEnvelope, type DomainEventEnvelope } from '@codex-web/protocol/owner'
+import { log } from '../logger.js'
 
 const THREAD_EVENT_LIMIT = 1_000
 
@@ -20,11 +21,11 @@ export class SqliteEventStore {
     const events: EventHubSnapshot['events'] = {}
     let nextId = 1
     for (const row of rows.reverse()) {
-      const message = row.payload as DomainEventEnvelope
-      const list = events[row.ownerId] ?? (events[row.ownerId] = [])
-      if (!message || typeof message.type !== 'string') continue
-      list.push({ id: row.id, message: { ...message, eventId: row.id } })
       nextId = Math.max(nextId, row.id + 1)
+      const message = parseStoredMessage(row.payload, row.id, row.type)
+      if (!message) continue
+      const list = events[row.ownerId] ?? (events[row.ownerId] = [])
+      list.push({ id: row.id, message })
     }
     for (const list of Object.values(events))
       if (list.length > 500) list.splice(0, list.length - 500)
@@ -41,10 +42,10 @@ export class SqliteEventStore {
       .where(and(eq(domainEvent.ownerId, userId), eq(domainEvent.threadId, threadId)))
       .orderBy(desc(domainEvent.id))
       .limit(THREAD_EVENT_LIMIT)
-    return rows.reverse().map((row) => ({
-      id: row.id,
-      message: { ...(row.payload as DomainEventEnvelope), eventId: row.id },
-    }))
+    return rows.reverse().flatMap((row) => {
+      const message = parseStoredMessage(row.payload, row.id, row.type)
+      return message ? [{ id: row.id, message }] : []
+    })
   }
 
   async append(userId: string, event: { id: number; message: DomainEventEnvelope }) {
@@ -54,7 +55,6 @@ export class SqliteEventStore {
       ownerId: userId,
       threadId,
       type: event.message.type,
-      schemaVersion: event.message.schemaVersion,
       payload: event.message,
     })
     if (threadId) await this.retainThread(userId, threadId)
@@ -75,10 +75,14 @@ export class SqliteEventStore {
       )
       .orderBy(asc(domainEvent.id))
       .limit(500)
-    return rows.map((row) => ({
-      id: row.id,
-      message: { ...(row.payload as DomainEventEnvelope), eventId: row.id },
-    }))
+    return {
+      events: rows.flatMap((row) => {
+        const message = parseStoredMessage(row.payload, row.id, row.type)
+        return message ? [{ id: row.id, message }] : []
+      }),
+      scannedThrough: rows.at(-1)?.id ?? afterId,
+      hasMore: rows.length === 500,
+    }
   }
 
   async cursorExpired(userId: string, filterThreadId: string | undefined, afterId: number) {
@@ -138,4 +142,18 @@ export class SqliteEventStore {
           ),
         )
   }
+}
+
+function parseStoredMessage(
+  value: unknown,
+  id: number,
+  type: string,
+): DomainEventEnvelope | undefined {
+  const parsed = parseDomainEventEnvelope(value)
+  if (!parsed.ok || parsed.event.eventId !== id || parsed.event.type !== type) {
+    const reason = parsed.ok ? 'STORED_EVENT_METADATA_MISMATCH' : parsed.error.code
+    log.warn(`Stored domain event rejected (eventId=${id} reason=${reason})`)
+    return undefined
+  }
+  return parsed.event
 }

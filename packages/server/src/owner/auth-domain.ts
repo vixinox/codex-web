@@ -42,7 +42,6 @@ type Challenge = {
   profile: keyof WebAuthnProfiles
   connectionId: string
   clientPublicKey: string
-  requestId: string
   deviceId?: string
   userId?: string
   enrollmentTicketId?: string
@@ -175,7 +174,7 @@ export function createOwnerAuthDomain(
   async function register(
     challengeId: string,
     response: RegistrationResponseJSON,
-    binding: Pick<Challenge, 'profile' | 'connectionId' | 'clientPublicKey' | 'requestId'> & {
+    binding: Pick<Challenge, 'profile' | 'connectionId' | 'clientPublicKey'> & {
       ticket?: string
     },
   ) {
@@ -228,7 +227,7 @@ export function createOwnerAuthDomain(
   async function authenticate(
     challengeId: string,
     response: AuthenticationResponseJSON,
-    binding: Pick<Challenge, 'profile' | 'connectionId' | 'clientPublicKey' | 'requestId'>,
+    binding: Pick<Challenge, 'profile' | 'connectionId' | 'clientPublicKey'>,
     deviceId?: string,
   ) {
     const challenge = consumeChallenge(challengeId, 'authenticate', binding)
@@ -515,7 +514,7 @@ export function createOwnerAuthDomain(
   function consumeChallenge(
     id: string,
     purpose: Purpose,
-    binding: Pick<Challenge, 'profile' | 'connectionId' | 'clientPublicKey' | 'requestId'>,
+    binding: Pick<Challenge, 'profile' | 'connectionId' | 'clientPublicKey'>,
   ) {
     const entry = challenges.get(id)
     if (!entry || entry.expiresAt <= now()) {
@@ -527,8 +526,7 @@ export function createOwnerAuthDomain(
       entry.ownerId !== ownerId ||
       entry.profile !== binding.profile ||
       entry.connectionId !== binding.connectionId ||
-      entry.clientPublicKey !== binding.clientPublicKey ||
-      entry.requestId !== binding.requestId
+      entry.clientPublicKey !== binding.clientPublicKey
     ) {
       entry.failures = (entry.failures ?? 0) + 1
       if (entry.failures >= 3) challenges.delete(id)

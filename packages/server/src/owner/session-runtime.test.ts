@@ -76,7 +76,7 @@ function createRuntime(
   return runtime
 }
 
-test('requires hello first, rejects unsupported versions, and resumes sessions before ready', async () => {
+test('requires hello first, rejects unsupported fields, and resumes sessions before ready', async () => {
   const transport = new FakeTransport()
   createRuntime(transport, new Map(), {
     resumeSession: async (token) =>
@@ -89,13 +89,13 @@ test('requires hello first, rejects unsupported versions, and resumes sessions b
   const versionTransport = new FakeTransport()
   createRuntime(versionTransport, new Map())
   versionTransport.receive(
-    JSON.stringify({ type: 'hello', version: 99, clientId: 'c1', capabilities: [] }),
+    JSON.stringify({ type: 'hello', unexpected: true, clientId: 'c1', capabilities: [] }),
   )
   await waitFor(() => versionTransport.closed !== undefined)
   assert.deepEqual(readFrames(versionTransport)[0], {
     type: 'close',
-    code: 'UNSUPPORTED_VERSION',
-    message: 'Protocol version is not supported.',
+    code: 'INVALID_HELLO',
+    message: 'Hello frame contains unsupported fields.',
   })
 
   const resumedTransport = new FakeTransport()
@@ -105,7 +105,7 @@ test('requires hello first, rejects unsupported versions, and resumes sessions b
   })
   resumedTransport.receive({
     type: 'hello',
-    version: 1,
+
     clientId: 'c1',
     capabilities: ['threads'],
     sessionToken: 'valid',
@@ -113,7 +113,7 @@ test('requires hello first, rejects unsupported versions, and resumes sessions b
   await waitFor(() => readFrames(resumedTransport).some((frame) => frame.type === 'ready'))
   assert.deepEqual(readFrames(resumedTransport)[0], {
     type: 'ready',
-    version: 1,
+
     connectionId: 'connection-1',
     authenticated: true,
     capabilities: [],
@@ -150,7 +150,7 @@ test('gates local and authenticated methods and prevents request replay', async 
       ['counter.next', { access: 'public', handle: () => ({ count: ++calls }) }],
     ]),
   )
-  transport.receive({ type: 'hello', version: 1, clientId: 'client-1', capabilities: [] })
+  transport.receive({ type: 'hello', clientId: 'client-1', capabilities: [] })
   await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
 
   transport.receive({ type: 'request', requestId: 'private-1', method: 'private.read' })
@@ -213,7 +213,7 @@ test('keeps an encrypted enrollment candidate limited to redemption', async () =
       ['threads.list', { access: 'authenticated' as const, handle: () => ++businessCalls }],
     ]),
   )
-  transport.receive({ type: 'hello', version: 1, clientId: 'login-1', capabilities: [] })
+  transport.receive({ type: 'hello', clientId: 'login-1', capabilities: [] })
   await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
   transport.receive({
     type: 'request',
@@ -263,7 +263,7 @@ test('rejects invalid session resumption before accessing Owner methods', async 
   )
   transport.receive({
     type: 'hello',
-    version: 1,
+
     clientId: 'setup-client',
     capabilities: [],
     sessionToken: 'setup-token',
@@ -298,7 +298,17 @@ test('opens and explicitly cancels a stream, then cleans active work on disconne
               meta: { subscriptionId: 'sub-1' },
               run: async (emit, streamSignal) => {
                 signal = streamSignal
-                await emit({ event: 'first' })
+                await emit({
+                  cursor: { epoch: 'epoch-1', sequence: 1 },
+                  event: {
+                    eventId: 1,
+                    type: 'codex.thread/closed',
+                    runtime: 'codex',
+                    threadId: 'thread-1',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    payload: { threadId: 'thread-1' },
+                  },
+                })
                 await new Promise<void>((resolve) =>
                   streamSignal.addEventListener('abort', () => resolve(), { once: true }),
                 )
@@ -314,7 +324,7 @@ test('opens and explicitly cancels a stream, then cleans active work on disconne
   )
   transport.receive({
     type: 'hello',
-    version: 1,
+
     clientId: 'client-1',
     capabilities: [],
     sessionToken: 'x',
@@ -327,6 +337,47 @@ test('opens and explicitly cancels a stream, then cleans active work on disconne
   transport.receive({ type: 'cancel', streamId: open.streamId })
   await waitFor(() => readFrames(transport).some((frame) => frame.type === 'stream.close'))
   assert.equal(signal?.aborted, true)
+
+  const invalidTransport = new FakeTransport()
+  let invalidSignal: AbortSignal | undefined
+  createRuntime(
+    invalidTransport,
+    new Map([
+      [
+        'events.subscribe',
+        {
+          access: 'authenticated',
+          handle: () => ({
+            stream: {
+              run: async (_emit, streamSignal) => {
+                invalidSignal = streamSignal
+                await _emit({ event: { method: 'legacy' } })
+                await new Promise<void>((resolve) =>
+                  streamSignal.addEventListener('abort', () => resolve(), { once: true }),
+                )
+              },
+            },
+          }),
+        },
+      ],
+    ]),
+    { resumeSession: async () => ({ ownerId: 'owner-1', sessionId: 'session-1' }) },
+  )
+  invalidTransport.receive({
+    type: 'hello',
+
+    clientId: 'client-1',
+    capabilities: [],
+    sessionToken: 'x',
+  })
+  await waitFor(() => readFrames(invalidTransport).some((frame) => frame.type === 'ready'))
+  invalidTransport.receive({ type: 'request', requestId: 'events-2', method: 'events.subscribe' })
+  await waitFor(() =>
+    readFrames(invalidTransport).some(
+      (frame) => frame.type === 'stream.close' && frame.reason === 'INVALID_STREAM_EVENT',
+    ),
+  )
+  assert.equal(invalidSignal?.aborted, true)
 
   const disconnectTransport = new FakeTransport()
   let requestSignal: AbortSignal | undefined
@@ -350,7 +401,7 @@ test('opens and explicitly cancels a stream, then cleans active work on disconne
   )
   disconnectTransport.receive({
     type: 'hello',
-    version: 1,
+
     clientId: 'client-1',
     capabilities: [],
     sessionToken: 'valid',
@@ -380,7 +431,7 @@ test('times out methods and closes when slow consumers exceed the send queue lim
     ]),
     { defaultRequestTimeoutMs: 10 },
   )
-  timeoutTransport.receive({ type: 'hello', version: 1, clientId: 'c1', capabilities: [] })
+  timeoutTransport.receive({ type: 'hello', clientId: 'c1', capabilities: [] })
   await waitFor(() => readFrames(timeoutTransport).some((frame) => frame.type === 'ready'))
   timeoutTransport.receive({ type: 'request', requestId: 'timeout-1', method: 'slow' })
   await waitFor(() =>
@@ -404,7 +455,7 @@ test('times out methods and closes when slow consumers exceed the send queue lim
   const slowTransport = new FakeTransport()
   slowTransport.sendGate = new Promise<void>(() => undefined)
   createRuntime(slowTransport, new Map(), { maxQueuedBytes: 50 })
-  slowTransport.receive({ type: 'hello', version: 1, clientId: 'c1', capabilities: [] })
+  slowTransport.receive({ type: 'hello', clientId: 'c1', capabilities: [] })
   await waitFor(() => slowTransport.closed !== undefined)
   assert.equal(slowTransport.closed?.reason, 'BACKPRESSURE_LIMIT_EXCEEDED')
 })
@@ -431,7 +482,7 @@ test('limits in-flight requests and cancels only the explicitly targeted request
     ]),
     { maxInFlightRequests: 1 },
   )
-  transport.receive({ type: 'hello', version: 1, clientId: 'c1', capabilities: [] })
+  transport.receive({ type: 'hello', clientId: 'c1', capabilities: [] })
   await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
   transport.receive({ type: 'request', requestId: 'slow-1', method: 'slow' })
   await waitFor(() => firstSignal !== undefined)
@@ -488,7 +539,7 @@ test('keeps session close explicit and closes the socket after the response', as
   )
   transport.receive({
     type: 'hello',
-    version: 1,
+
     clientId: 'client-1',
     capabilities: [],
     sessionToken: 'opaque-token',

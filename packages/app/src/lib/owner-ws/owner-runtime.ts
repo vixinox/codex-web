@@ -1,7 +1,7 @@
 import {
   encodeOwnerFrame,
+  isOwnerEventErrorCode,
   parseOwnerFrame,
-  OWNER_PROTOCOL_VERSION,
   type OwnerCapability,
   type OwnerError,
   type OwnerFrame,
@@ -63,9 +63,12 @@ export class OwnerRequestError extends Error {
 }
 
 export class OwnerConnectionError extends Error {
-  constructor(message: string) {
+  readonly code?: string
+
+  constructor(message: string, code?: string) {
     super(message)
     this.name = 'OwnerConnectionError'
+    this.code = code
   }
 }
 
@@ -206,12 +209,25 @@ export function createOwnerRuntime(
       streams.delete(frame.streamId)
       clearTimeout(stream.timer)
       stream.abortCleanup?.()
+      if (isOwnerEventErrorCode(frame.reason))
+        stream.handlers.onError?.(
+          new OwnerRequestError({
+            code: frame.reason,
+            message: 'Owner event stream was rejected by contract validation.',
+            retryable: false,
+          }),
+        )
       stream.handlers.onClose?.(frame.reason)
       return
     }
-    if (frame.type === 'close')
-      shutdown(frame.code, new OwnerConnectionError(frame.message ?? frame.code))
+    if (frame.type === 'close') {
+      const error = new OwnerConnectionError(frame.message ?? frame.code, frame.code)
+      if (state === 'connecting') rejectConnection?.(error)
+      shutdown(frame.code, error)
+    }
   }
+
+  let rejectConnection: ((error: Error) => void) | undefined
 
   const attach = (next: OwnerTarget, resolve: () => void, reject: (error: Error) => void) => {
     const nextSocket = webSocketFactory(next.url)
@@ -221,7 +237,7 @@ export function createOwnerRuntime(
         nextSocket.send(
           encodeOwnerFrame({
             type: 'hello',
-            version: OWNER_PROTOCOL_VERSION,
+
             clientId: next.clientId ?? 'owner-runtime',
             capabilities: [...(next.capabilities ?? (['owner'] satisfies OwnerCapability[]))],
             ...(next.sessionToken ? { sessionToken: next.sessionToken } : {}),
@@ -235,10 +251,25 @@ export function createOwnerRuntime(
     }
     nextSocket.onmessage = (event) => {
       const parsed = parseOwnerFrame(typeof event.data === 'string' ? event.data : '')
-      if (!parsed.ok) return
+      if (!parsed.ok) {
+        const error = new OwnerRequestError({
+          code: parsed.error.code,
+          message: parsed.error.message,
+          retryable: false,
+        })
+        if (state === 'connecting') reject(error)
+        shutdown(parsed.error.code, error)
+        phase = 'failed'
+        authentication = 'failed'
+        setState('failed')
+        return
+      }
       const wasConnecting = state === 'connecting'
       handleFrame(parsed.frame)
-      if (wasConnecting && parsed.frame.type === 'ready') resolve()
+      if (wasConnecting && parsed.frame.type === 'ready') {
+        rejectConnection = undefined
+        resolve()
+      }
     }
     nextSocket.onerror = () => {
       const error = new OwnerConnectionError('Owner connection failed')
@@ -262,7 +293,10 @@ export function createOwnerRuntime(
     phase = next.sessionToken ? 'resuming' : 'idle'
     authentication = next.sessionToken ? 'unknown' : 'unauthenticated'
     setState('connecting')
-    return new Promise<void>((resolve, reject) => attach(next, resolve, reject))
+    return new Promise<void>((resolve, reject) => {
+      rejectConnection = reject
+      attach(next, resolve, reject)
+    })
   }
 
   const request = <T>(method: string, params?: unknown, options: RequestOptions = {}) => {

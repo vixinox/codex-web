@@ -30,7 +30,7 @@ test('local websocket admits a trusted origin and serves owner.status', async ()
   socket.send(
     JSON.stringify({
       type: 'hello',
-      version: 1,
+
       clientId: 'client-1',
       capabilities: ['owner'],
     }),

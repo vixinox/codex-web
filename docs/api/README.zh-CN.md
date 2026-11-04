@@ -48,6 +48,6 @@ localhost 与远程 App origin 是独立的 WebAuthn profile：
 
 Owner code、普通 `remote.loginQr` management request 和 fingerprint 人工确认不属于新 API 契约。协议内部可以保留节点路由和 Owner public key 绑定，但不能把它们重新暴露为远程登录输入。
 
-浏览器不会收到 API key、未脱敏的宿主路径、未限制大小的 runtime payload、Passkey 私钥或未投影的 Owner/Relay 内部状态。合法但尚未归一化的 runtime 事件以版本化 `runtime.extension` event envelope 发送；字段名递归过滤凭据和路径，payload 限制为 128,000 UTF-8 字节。
+浏览器不会收到 API key、未脱敏的宿主路径、未限制大小的 runtime payload、Passkey 私钥或未投影的 Owner/Relay 内部状态。合法但尚未归一化的 runtime 事件以`runtime.extension` event envelope 发送；字段名递归过滤凭据和路径，payload 限制为 128,000 UTF-8 字节。
 
-事件正文使用 `schemaVersion`、`eventId`、`type`、runtime 关联 ID、`createdAt` 和 `payload`。`events.subscribe`/`events.resume` 的 cursor 生命周期保持不变。
+Owner 应用协议与 domain event 不维护版本号，前后端共同调整。事件正文包含 `eventId`、`type`、`runtime`、可选关联 ID、`createdAt` 和 object `payload`，由 `@codex-web/protocol/owner` 统一校验。`events.subscribe`/`events.resume` 保留 epoch + sequence cursor；epoch 在进程重启时变化，旧 epoch、过期或超前 cursor 触发 `events.reset`。实时 eventId 必须等于 cursor sequence；非法契约或同 cursor 内容冲突停止消费。事件表直接使用当前结构，不提供旧结构迁移或兼容入口。Relay、IPC 和 runtime manifest 的版本不属于本契约。
