@@ -52,10 +52,11 @@ export function adaptCodexMessage(
     params: value.params,
     ...(typeof value.id === 'number' || typeof value.id === 'string' ? { id: value.id } : {}),
   }
+  const ids = correlationIds(raw.params, raw.params)
   const projected = projectNativeMessage(raw)
   if (projected.ok) {
     const params = projected.value.params ?? {}
-    const ids = correlationIds(raw.params, params)
+    const projectedIds = correlationIds(raw.params, params)
     return {
       kind: 'event',
       event: {
@@ -63,10 +64,10 @@ export function adaptCodexMessage(
         runtime: DOMAIN_EVENT_RUNTIME,
         createdAt: now,
         payload: params,
-        ...(ids.threadId ? { threadId: ids.threadId } : {}),
-        ...(ids.turnId ? { turnId: ids.turnId } : {}),
-        ...(ids.itemId ? { itemId: ids.itemId } : {}),
-        ...(ids.requestId !== undefined ? { requestId: ids.requestId } : {}),
+        ...(projectedIds.threadId ? { threadId: projectedIds.threadId } : {}),
+        ...(projectedIds.turnId ? { turnId: projectedIds.turnId } : {}),
+        ...(projectedIds.itemId ? { itemId: projectedIds.itemId } : {}),
+        ...(projectedIds.requestId !== undefined ? { requestId: projectedIds.requestId } : {}),
       },
     }
   }
@@ -78,9 +79,9 @@ export function adaptCodexMessage(
       runtime: DOMAIN_EVENT_RUNTIME,
       createdAt: now,
       payload: extensionPayload(raw),
-      ...(typeof raw.params.threadId === 'string' ? { threadId: raw.params.threadId } : {}),
-      ...(typeof raw.params.turnId === 'string' ? { turnId: raw.params.turnId } : {}),
-      ...(typeof raw.params.itemId === 'string' ? { itemId: raw.params.itemId } : {}),
+      ...(ids.threadId ? { threadId: ids.threadId } : {}),
+      ...(ids.turnId ? { turnId: ids.turnId } : {}),
+      ...(ids.itemId ? { itemId: ids.itemId } : {}),
       ...(typeof raw.id === 'number' || typeof raw.id === 'string' ? { requestId: raw.id } : {}),
     },
   }

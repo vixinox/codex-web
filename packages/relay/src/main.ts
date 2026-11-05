@@ -29,5 +29,3 @@ Bun.serve({
   hostname,
   port: Number.isSafeInteger(port) && port > 0 ? port : 8787,
 })
-
-console.log(`Relay listening at ws://${hostname}:${port}`)

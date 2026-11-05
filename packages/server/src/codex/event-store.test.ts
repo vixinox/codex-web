@@ -91,6 +91,46 @@ test('persists domain envelopes, retains each thread independently, and restores
   }
 })
 
+test('skips legacy non-thread envelopes during event-store restore', async (context) => {
+  const warnings = context.mock.method(log, 'warn', () => undefined)
+  const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-event-restore-warnings-'))
+  let driver: ReturnType<typeof createDatabase>['driver'] | undefined
+  try {
+    prepareOwnerDatabase(config(dataRoot))
+    const database = createDatabase(config(dataRoot))
+    driver = database.driver
+    database.db.insert(owner).values({ id: 'owner-legacy-events' }).run()
+    const insert = driver.prepare(
+      'INSERT INTO domain_events (id,owner_id,thread_id,type,payload,created_at) VALUES (?,?,?,?,?,?)',
+    )
+    driver.transaction(() => {
+      for (let id = 1; id <= 126; id++) {
+        const message = {
+          ...createDomainEvent('codex.item/agentMessage/delta', { delta: 'sample' }),
+          eventId: id,
+          schemaVersion: 1,
+        }
+        insert.run(
+          id,
+          'owner-legacy-events',
+          null,
+          message.type,
+          JSON.stringify(message),
+          Math.floor(Date.now() / 1000),
+        )
+      }
+    })()
+
+    const snapshot = await new SqliteEventStore(database.db).load()
+    assert.equal(warnings.mock.callCount(), 0)
+    assert.deepEqual(snapshot.events, {})
+    assert.equal(snapshot.nextId, 127)
+  } finally {
+    driver?.close()
+    rmSync(dataRoot, { recursive: true, force: true })
+  }
+})
+
 test('scans past rejected records across full pages and preserves replay/live order', async (context) => {
   const warnings = context.mock.method(log, 'warn', () => undefined)
   const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-event-pages-'))
@@ -150,7 +190,11 @@ test('scans past rejected records across full pages and preserves replay/live or
     stop()
     await hub.publish('owner-pages', { method: 'thread/closed', params: { threadId: 'thread-a' } })
     assert.equal(received.at(-1), 1101)
-    assert.ok(warnings.mock.callCount() >= rejected.size)
+    assert.ok(warnings.mock.callCount() < rejected.size)
+    assert.ok(
+      warnings.mock.calls.some((call) => String(call.arguments[0]).includes('count=500')),
+      'rejected rows should be summarized for each batch',
+    )
   } finally {
     driver?.close()
     rmSync(dataRoot, { recursive: true, force: true })

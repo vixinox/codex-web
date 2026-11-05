@@ -42,3 +42,52 @@ test('remote sessions bind to devices and revoke on device removal', async () =>
     rmSync(dataRoot, { recursive: true, force: true })
   }
 })
+
+test('requires a registered credential before creating authentication options', async () => {
+  const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-auth-requires-passkey-'))
+  let database: ReturnType<typeof createDatabase> | undefined
+  try {
+    prepareOwnerDatabase(config(dataRoot))
+    database = createDatabase(config(dataRoot))
+    const ownerId = 'owner-discoverable-test'
+    database.db.insert(owner).values({ id: ownerId }).run()
+    const domain = createOwnerAuthDomain(database.db, ownerId)
+
+    await assert.rejects(
+      domain.authenticationOptions('local', {
+        connectionId: 'local-login',
+        clientPublicKey: 'local',
+      }),
+      (error: unknown) => error instanceof AuthDomainError && error.code === 'PASSKEY_REQUIRED',
+    )
+  } finally {
+    database?.driver.close()
+    rmSync(dataRoot, { recursive: true, force: true })
+  }
+})
+
+test('preserves registration verification causes for server diagnostics', async () => {
+  const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-auth-registration-cause-'))
+  let database: ReturnType<typeof createDatabase> | undefined
+  try {
+    prepareOwnerDatabase(config(dataRoot))
+    database = createDatabase(config(dataRoot))
+    const ownerId = 'owner-registration-cause-test'
+    database.db.insert(owner).values({ id: ownerId }).run()
+    const domain = createOwnerAuthDomain(database.db, ownerId)
+    const binding = { connectionId: 'remote-registration', clientPublicKey: 'client-key' }
+    const options = await domain.registerOptions('remote', binding)
+
+    await assert.rejects(
+      domain.register(options.challengeId, {} as never, { ...binding, profile: 'remote' }),
+      (error: unknown) =>
+        error instanceof AuthDomainError &&
+        error.code === 'PASSKEY_INVALID' &&
+        error.cause instanceof Error &&
+        error.cause.message.length > 0,
+    )
+  } finally {
+    database?.driver.close()
+    rmSync(dataRoot, { recursive: true, force: true })
+  }
+})

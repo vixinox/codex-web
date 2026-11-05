@@ -141,13 +141,25 @@ test('persists published events and reports write failures without poisoning lat
   })
   const delivered: number[] = []
   hub.subscribe('user-a', undefined, 0, (event) => delivered.push(event.id))
-  await hub.publish('user-a', { method: 'turn/started' })
+  await hub.publish('user-a', { method: 'turn/started', params: { threadId: 'thread-a' } })
   assert.deepEqual(delivered, [])
   await assert.rejects(hub.flush(), /database unavailable/)
-  hub.publish('user-a', { method: 'turn/completed' })
+  hub.publish('user-a', { method: 'turn/completed', params: { threadId: 'thread-a' } })
   await hub.flush()
   assert.deepEqual(saved, [2])
   assert.deepEqual(delivered, [2])
+})
+
+test('delivers non-thread events live without writing them to the store', async () => {
+  const saved: number[] = []
+  const hub = new EventHub({
+    append: async (_userId, event) => saved.push(event.id),
+  })
+  const delivered: number[] = []
+  hub.subscribe('user-a', undefined, 0, (event) => delivered.push(event.id))
+  await hub.publish('user-a', { method: 'skills/updated', params: {} })
+  assert.deepEqual(delivered, [1])
+  assert.deepEqual(saved, [])
 })
 
 test('merges persisted and in-memory history for one thread without leaking others', async () => {

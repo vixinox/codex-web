@@ -1,3 +1,5 @@
+import { OwnerRequestError } from '@/lib/owner-ws/owner-runtime'
+
 export type AdmissionConnection = {
   request<T = unknown>(method: string, params?: unknown): Promise<T>
   close(reason?: string): void
@@ -7,10 +9,19 @@ export async function authenticateWithPasskey(
   connection: AdmissionConnection,
   originProfile: 'local' | 'remote',
 ) {
-  const options = await connection.request<{
-    challengeId: string
-    options: PublicKeyCredentialRequestOptionsJSON
-  }>('owner.passkey.authentication.options')
+  let options: { challengeId: string; options: PublicKeyCredentialRequestOptionsJSON }
+  try {
+    options = await connection.request('owner.passkey.authentication.options')
+  } catch (error) {
+    if (error instanceof OwnerRequestError && error.code === 'PASSKEY_REQUIRED') {
+      throw new Error(
+        originProfile === 'local'
+          ? 'No local Passkey is registered. Use a signed-in Owner device to issue a one-time localhost enrollment ticket, then register a Passkey in this browser.'
+          : 'No remote Passkey is registered. Register one from a signed-in Owner device, then try again.',
+      )
+    }
+    throw error
+  }
   const credential = await navigator.credentials.get({
     publicKey: browserRequestOptions(options.options),
   })

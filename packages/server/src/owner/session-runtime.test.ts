@@ -196,6 +196,55 @@ test('gates local and authenticated methods and prevents request replay', async 
   assert.equal(runtime !== undefined, true)
 })
 
+test('logs the sanitized cause of a Passkey method failure', async () => {
+  const transport = new FakeTransport()
+  const logLines: string[] = []
+  const originalConsoleError = console.error
+  console.error = (...values: unknown[]) => logLines.push(values.join(' '))
+  try {
+    createRuntime(
+      transport,
+      new Map([
+        [
+          'owner.passkey.authentication.options',
+          {
+            access: 'public',
+            handle: () => {
+              throw new Error('Unable to create passkey challenge', {
+                cause: new Error(
+                  'SQLITE_ERROR: no such table: passkey_credential apiKey=sk-test at C:\\Users\\Owner\\private.db',
+                ),
+              })
+            },
+          },
+        ],
+      ]),
+    )
+    transport.receive({ type: 'hello', clientId: 'passkey-client', capabilities: [] })
+    await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
+    transport.receive({
+      type: 'request',
+      requestId: 'passkey-options',
+      method: 'owner.passkey.authentication.options',
+    })
+    await waitFor(() =>
+      readFrames(transport).some(
+        (frame) => frame.type === 'response' && frame.requestId === 'passkey-options',
+      ),
+    )
+
+    const response = readFrames(transport).find(
+      (frame) => frame.type === 'response' && frame.requestId === 'passkey-options',
+    )
+    assert.ok(response && response.type === 'response')
+    assert.equal(response.error?.code, 'INTERNAL_ERROR')
+    assert.match(logLines.join('\n'), /SQLITE_ERROR: no such table: passkey_credential/u)
+    assert.doesNotMatch(logLines.join('\n'), /sk-test|C:\\Users\\Owner/u)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
 test('keeps an encrypted enrollment candidate limited to redemption', async () => {
   const transport = new FakeTransport()
   transport.kind = 'relay'

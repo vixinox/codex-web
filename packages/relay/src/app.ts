@@ -99,9 +99,6 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
           return
         }
         sessionId = result.session.sessionId
-        relayLog(
-          `Attach accepted (${frame.role}:${frame.role === 'client' ? (frame.admission ?? 'paired') : 'owner'})`,
-        )
         ws.send(
           encodeFrame({
             type: 'relay.ready',
@@ -144,7 +141,6 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
       return
     },
     onClose() {
-      relayLog('Relay WebSocket closed')
       if (sessionId) router.detach(sessionId)
     },
     onError() {

@@ -555,19 +555,16 @@ export class CodexManager {
     })
     client.onRequest((message) => {
       const requestId = message.id
-      const params = message.params as Record<string, unknown> | undefined
-      if (
-        (typeof requestId !== 'number' && typeof requestId !== 'string') ||
-        typeof params?.threadId !== 'string'
-      ) {
+      const adapted = adaptCodexMessage(message)
+      const threadId = adapted.kind === 'invalid' ? undefined : adapted.event.threadId
+      if ((typeof requestId !== 'number' && typeof requestId !== 'string') || !threadId) {
         if (typeof requestId === 'number')
           client.respondError(requestId, { code: -32602, message: 'threadId is required' })
         return
       }
       const requests = this.serverRequests.get(userId) ?? new Map()
-      requests.set(requestId, { client, threadId: params.threadId })
+      requests.set(requestId, { client, threadId })
       this.serverRequests.set(userId, requests)
-      const adapted = adaptCodexMessage(message)
       void this.events.publishDomain(
         userId,
         adapted.kind === 'invalid'

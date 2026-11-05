@@ -352,14 +352,14 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
     },
     applyEvent(notification, eventId) {
       if (disposed || !native) return
+      const reducerStartedAt = performance.now()
       transcriptDebug({ phase: 'event', eventId, method: notification.method })
-      syncChange(
-        applyCodexNotification(
-          native,
-          notification,
-          eventId === undefined ? undefined : String(eventId),
-        ),
+      const change = applyCodexNotification(
+        native,
+        notification,
+        eventId === undefined ? undefined : String(eventId),
       )
+      syncChange(change)
       const turnId =
         typeof notification.params.turnId === 'string' ? notification.params.turnId : undefined
       const turn = turnId ? state.turnsById[turnId] : undefined
@@ -368,6 +368,15 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
         turnId,
         status: turn?.status,
         blockCount: turn?.blocks.length,
+        eventId,
+        method: notification.method,
+        reducerMs: Number((performance.now() - reducerStartedAt).toFixed(2)),
+        changeScope: change.scope,
+        deltaChars:
+          typeof notification.params.delta === 'string' ? notification.params.delta.length : 0,
+        accumulatedTextLength: turn?.blocks
+          .filter((block) => block.type === 'assistant')
+          .reduce((total, block) => total + block.text.length, 0),
       })
     },
     interruptUserInput() {

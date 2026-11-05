@@ -1,11 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { CodexBridge } from '../http/types.js'
 import { projectThreadSnapshot } from '../codex/domain-events.js'
-import {
-  parseOwnerEventCursor,
-  type DomainEventEnvelope,
-  type OwnerEventCursor,
-} from '@codex-web/protocol/owner'
+import { parseOwnerEventCursor, type OwnerEventCursor } from '@codex-web/protocol/owner'
 import { parseRequestId } from '../codex/request-id.js'
 import { createThreadDomain } from '../threads/index.js'
 import { SkillHandleStore, skillsForCwd, turnInput } from '../skills.js'
@@ -15,7 +11,12 @@ import type { OwnerConnector } from '../remote/connector.js'
 import { EnrollmentInvitationStore } from '../remote/enrollment-invitation-store.js'
 import { OwnerMethodError } from './session-runtime.js'
 import type { OwnerContext, OwnerMethodContext, OwnerTransport } from './session-runtime.js'
-import { createOwnerAuthDomain, WEBAUTHN_PROFILES, type WebAuthnProfiles } from './auth-domain.js'
+import {
+  AuthDomainError,
+  createOwnerAuthDomain,
+  WEBAUTHN_PROFILES,
+  type WebAuthnProfiles,
+} from './auth-domain.js'
 import type { Database } from '../database.js'
 import { log } from '../logger.js'
 
@@ -209,17 +210,23 @@ export function createOwnerApplicationServices(
         log.info(`Owner Passkey registration succeeded (${profile})`)
         return result
       } catch (error) {
-        log.warn(
-          `Owner Passkey registration failed (${profile}, ${error instanceof Error ? error.name : 'unknown'})`,
+        throw new OwnerMethodError(
+          error instanceof Error ? error.message : 'PASSKEY_INVALID',
+          false,
+          { cause: error },
         )
-        throw new OwnerMethodError(error instanceof Error ? error.message : 'PASSKEY_INVALID')
       }
     },
 
     async passkeyAuthenticationOptions(context: OwnerMethodContext) {
       const profile = webauthnProfile(context.transport)
       if (!authDomain || !profile) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
-      return authDomain.authenticationOptions(profile, authBinding(context))
+      try {
+        return await authDomain.authenticationOptions(profile, authBinding(context))
+      } catch (error) {
+        if (error instanceof AuthDomainError) throw new OwnerMethodError(error.code)
+        throw error
+      }
     },
 
     async passkeyAuthenticate(context: OwnerMethodContext, input: Record<string, unknown>) {
@@ -251,7 +258,11 @@ export function createOwnerApplicationServices(
         })
         return { token: session.token, expiresAt: session.expiresAt }
       } catch (error) {
-        throw new OwnerMethodError(error instanceof Error ? error.message : 'PASSKEY_INVALID')
+        throw new OwnerMethodError(
+          error instanceof Error ? error.message : 'PASSKEY_INVALID',
+          false,
+          { cause: error },
+        )
       }
     },
 
@@ -779,9 +790,7 @@ export function createOwnerApplicationServices(
       return {
         thread,
         eventCursor,
-        historyEvents: history
-          .filter((event) => isReplayableThreadEvent(event.message))
-          .map((event) => ({ id: event.id, event: event.message })),
+        historyEvents: history.map((event) => ({ id: event.id, event: event.message })),
       }
     },
 
@@ -1413,26 +1422,6 @@ function authBinding(context: OwnerMethodContext) {
     connectionId: context.connectionId,
     clientPublicKey: context.transport.clientPublicKey ?? 'local',
   }
-}
-
-function isReplayableThreadEvent(message: DomainEventEnvelope) {
-  const method = message.type.startsWith('codex.')
-    ? message.type.slice('codex.'.length)
-    : message.type
-  const params = message.payload
-  if (method === 'runtime.extension' || method === 'runtime.diagnostic') return true
-  if (
-    method === 'thread/settings/updated' ||
-    method === 'thread/tokenUsage/updated' ||
-    method === 'item/tool/requestUserInput' ||
-    method === 'webcodex/userInput/answered' ||
-    method === 'serverRequest/resolved' ||
-    method === 'item/commandExecution/outputDelta'
-  )
-    return true
-  if (method !== 'item/started' && method !== 'item/completed') return false
-  const item = params.item
-  return isRecord(item) && item.type === 'commandExecution'
 }
 
 function requireOwner(context: OwnerMethodContext): OwnerContext {

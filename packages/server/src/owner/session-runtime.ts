@@ -6,7 +6,7 @@ import {
   type OwnerErrorCode,
   type OwnerFrame,
 } from '@codex-web/protocol/owner'
-import { log } from '../logger.js'
+import { log, safeError } from '../logger.js'
 
 export type OwnerTransport = {
   kind: 'local' | 'relay'
@@ -169,8 +169,8 @@ export class OwnerMethodError extends Error {
   readonly code: string
   readonly retryable: boolean
 
-  constructor(code: string, retryable = false) {
-    super(code)
+  constructor(code: string, retryable = false, options?: ErrorOptions) {
+    super(code, options)
     this.name = 'OwnerMethodError'
     this.code = code
     this.retryable = retryable
@@ -380,12 +380,17 @@ export class OwnerSessionRuntime {
           this.shutdown(1000, this.transport.promoted ? 'paired' : 'session closed')
       }
     } catch (error) {
-      const safeError = projectError(error, state.abortCode)
-      if (methodName.startsWith('owner.passkey.'))
+      const projectedError = projectError(error, state.abortCode)
+      if (methodName.startsWith('owner.passkey.')) {
+        const reason =
+          error instanceof Error
+            ? `${error.name}: ${safeError(error) || 'No error message.'}`
+            : `Non-Error rejection (${typeof error})`
         log.warn(
-          `Owner Passkey method failed (${methodName}, ${safeError.code}, ${this.transport.kind})`,
+          `Owner Passkey method failed (${methodName}, ${projectedError.code}, ${this.transport.kind}; reason=${reason})`,
         )
-      await this.respondError(requestId, safeError)
+      }
+      await this.respondError(requestId, projectedError)
     } finally {
       clearTimeout(timeout)
       this.activeRequests.delete(requestId)

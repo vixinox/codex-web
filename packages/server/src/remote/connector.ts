@@ -320,7 +320,6 @@ export class OwnerConnector {
               ? closeReason.toString()
               : undefined
       this.lastRelayCloseReason = reason
-      log.warn(`Remote Relay connection closed (${reason ?? 'unknown'})`)
       if (this.socket === socket) this.socket = undefined
       this.clearRelayTimers()
       this.detachTransport()
@@ -405,7 +404,6 @@ export class OwnerConnector {
         this.relayReadyTimer = undefined
         this.connected = true
         this.reconnectAttempt = 0
-        log.info('Remote Relay owner connection ready')
         if (this.socket) this.startHeartbeat(this.socket)
       } else {
         this.socket?.close?.(1008, 'invalid_relay_ready')
@@ -426,7 +424,6 @@ export class OwnerConnector {
         this.socket?.close?.(1008, 'invalid_client_binding')
         return
       }
-      log.info(`Remote Relay client admitted (${frame.admission ?? 'paired'})`)
       this.connectedClientIds.set(frame.connectionId, candidateId)
       if (enrollmentCandidate && typeof frame.reference === 'string')
         this.connectedEnrollmentReferences.set(frame.connectionId, frame.reference)
@@ -434,7 +431,6 @@ export class OwnerConnector {
       return
     }
     if (frame.type === 'relay.client.disconnected') {
-      log.info('Remote Relay client disconnected')
       this.connectedClientIds.delete(frame.connectionId)
       this.connectedEnrollmentReferences.delete(frame.connectionId)
       this.teardownConnection(frame.connectionId, 'peer_disconnected')
@@ -535,7 +531,6 @@ export class OwnerConnector {
       createdAt: Date.now(),
     }
     this.connections.set(connectionId, { phase: 'open', session })
-    log.info(`Remote client handshake accepted (${enrollmentCandidate ? 'enrollment' : 'paired'})`)
     // Key confirmation: the client only trusts the channel once it decrypts this record under the
     // context-bound session key, which proves the Owner derived the same key.
     await this.sendEncrypted(
@@ -622,7 +617,6 @@ export class OwnerConnector {
       return
     }
     this.connections.delete(connectionId)
-    log.warn(`Remote client connection closed (${reason ?? 'connection_closed'})`)
     this.connectedClientIds.delete(connectionId)
     this.connectedEnrollmentReferences.delete(connectionId)
     if (state.phase === 'open') {

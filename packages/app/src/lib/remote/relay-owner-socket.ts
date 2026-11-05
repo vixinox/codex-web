@@ -85,6 +85,7 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
   socket.addEventListener('message', (event) => {
     const frame = parseFrame(String(event.data))
     if (!frame) return
+    event.stopImmediatePropagation()
     if (frame.type === 'relay.ready') {
       if (frame.role !== 'client') return
       connectionId = frame.connectionId
@@ -130,6 +131,19 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
           pendingOpen?.()
           pendingOpen = null
           for (const queuedValue of queued.splice(0)) socket.send(queuedValue)
+          return undefined
+        }
+        if (handshake?.type === 'connection.close') {
+          socket.dispatchEvent(
+            new MessageEvent('message', {
+              data: JSON.stringify({
+                type: 'close',
+                code: handshake.code,
+                ...(handshake.message ? { message: handshake.message } : {}),
+              }),
+            }),
+          )
+          socket.close(1000, handshake.code)
           return undefined
         }
         socket.dispatchEvent(new MessageEvent('message', { data: value }))

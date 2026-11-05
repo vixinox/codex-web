@@ -10,6 +10,7 @@ import type { WorkspaceService } from '../workspace.js'
 import { CodexManager } from './manager.js'
 import type { RpcTransport } from './rpc-client.js'
 import type { JsonRpcMessage } from './stdio-transport.js'
+import { log } from '../logger.js'
 
 class AutoTransport implements RpcTransport {
   sent: JsonRpcMessage[] = []
@@ -188,6 +189,29 @@ test('routes server requests by user and thread and responds with the original J
   })
   assert.equal(manager.respondToServerRequest('user-a', 'thread-a', 44, { answers: {} }), '44')
   assert.deepEqual(transport.sent.at(-1), { id: '44', result: { answers: {} } })
+  await manager.shutdown()
+})
+
+test('logs server requests before rejecting requests without a thread id', async (context) => {
+  const lines: string[] = []
+  context.mock.method(log, 'info', (message: string) => {
+    if (message.startsWith('[app-server-rpc]')) lines.push(message)
+  })
+  const transport = new AutoTransport()
+  const manager = new CodexManager(config, workspace, () => transport)
+  await manager.get('user-a', 'project', 'credential')
+  lines.length = 0
+
+  transport.receive({ id: 45, method: 'future/request', params: { futureField: 'private value' } })
+
+  assert.equal(transport.sent.at(-1)?.id, 45)
+  assert.equal(transport.sent.at(-1)?.error && typeof transport.sent.at(-1)?.error, 'object')
+  assert.equal(lines.length, 1)
+  assert.match(
+    lines[0]!,
+    /direction=server-request.*method=future\/request.*futureField:string\(chars=13\)/,
+  )
+  assert.doesNotMatch(lines[0]!, /private value/)
   await manager.shutdown()
 })
 

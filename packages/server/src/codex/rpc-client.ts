@@ -1,4 +1,6 @@
 import type { JsonRpcMessage } from './stdio-transport.js'
+import { log, safeError } from '../logger.js'
+import { formatRpcMessageId, summarizeRpcShape } from './rpc-message-summary.js'
 
 export type RpcTransport = {
   send(message: JsonRpcMessage): void
@@ -10,9 +12,10 @@ export type RpcTransport = {
 
 export class CodexRpcClient {
   private nextId = 1
+  private receiveSequence = 0
   private readonly pending = new Map<
     number | string,
-    { resolve: (value: unknown) => void; reject: (error: Error) => void }
+    { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void }
   >()
   private readonly eventListeners = new Set<(message: JsonRpcMessage) => void>()
   private readonly requestListeners = new Set<(message: JsonRpcMessage) => void>()
@@ -57,6 +60,7 @@ export class CodexRpcClient {
       }
       signal?.addEventListener('abort', abort, { once: true })
       this.pending.set(id, {
+        method,
         resolve: (value) => {
           signal?.removeEventListener('abort', abort)
           resolve(value)
@@ -107,8 +111,36 @@ export class CodexRpcClient {
   }
 
   private receive(message: JsonRpcMessage) {
+    const sequence = ++this.receiveSequence
+    const requestId = message.id
+    const pending = isRequestId(requestId) ? this.pending.get(requestId) : undefined
+    const hasResponse = isRequestId(requestId) && ('result' in message || 'error' in message)
+    const isServerRequest = typeof message.method === 'string' && isRequestId(requestId)
+    const direction = hasResponse
+      ? 'response'
+      : isServerRequest
+        ? 'server-request'
+        : typeof message.method === 'string'
+          ? 'notification'
+          : 'unclassified'
+    const method =
+      typeof message.method === 'string'
+        ? safeError(message.method)
+            .replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
+            .slice(0, 120)
+        : (pending?.method ?? (hasResponse ? 'unmatched-response' : 'unknown'))
+    const shape = hasResponse
+      ? 'error' in message
+        ? summarizeRpcShape(message.error)
+        : summarizeRpcShape(message.result)
+      : 'params' in message
+        ? summarizeRpcShape(message.params)
+        : summarizeRpcShape(message)
+    log.info(
+      `[app-server-rpc] direction=${direction} seq=${sequence} method=${method} id=${formatRpcMessageId(requestId)} shape=${shape}`,
+    )
+
     if (isRequestId(message.id) && ('result' in message || 'error' in message)) {
-      const pending = this.pending.get(message.id)
       if (!pending) return
       this.pending.delete(message.id)
       if ('error' in message) pending.reject(new Error(JSON.stringify(message.error)))

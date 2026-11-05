@@ -126,7 +126,7 @@ export class EventHub {
   publishDomain(userId: string, input: DomainEventInput): Promise<void> {
     const id = this.nextId++
     const event = { id, message: projectDomainEvent({ ...input, eventId: id }) }
-    if (!this.store) {
+    if (!this.store || !threadId(event.message)) {
       this.commit(userId, event)
       return Promise.resolve()
     }
@@ -194,7 +194,8 @@ export class EventHub {
 
   async isCursorExpired(userId: string, filterThreadId: string | undefined, afterId: number) {
     await this.pendingWrite
-    if (this.store?.cursorExpired) return this.store.cursorExpired(userId, filterThreadId, afterId)
+    if (filterThreadId && this.store?.cursorExpired)
+      return this.store.cursorExpired(userId, filterThreadId, afterId)
     return this.cursorExpired(userId, filterThreadId, afterId)
   }
 
@@ -245,7 +246,7 @@ export class EventHub {
     }
 
     try {
-      if (this.store?.loadAfter) {
+      if (filterThreadId && this.store?.loadAfter) {
         let cursor = afterId
         for (;;) {
           const page = await this.store.loadAfter(userId, cursor, filterThreadId)

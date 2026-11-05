@@ -123,10 +123,14 @@ export function createOwnerAuthDomain(
       expiresAt: new Date(expiresAt).toISOString(),
       options: await generateAuthenticationOptions({
         rpID: profile.rpId,
-        allowCredentials: credentials.map((credential) => ({
-          id: credential.credentialId,
-          transports: credential.transports,
-        })),
+        ...(credentials.length
+          ? {
+              allowCredentials: credentials.map((credential) => ({
+                id: credential.credentialId,
+                transports: credential.transports,
+              })),
+            }
+          : {}),
         challenge,
         timeout: CHALLENGE_TTL_MS,
         userVerification: 'required',
@@ -187,14 +191,22 @@ export function createOwnerAuthDomain(
     }
     const profile = profiles[challenge.profile]
     try {
-      const result = await verifyRegistrationResponse({
-        response,
-        expectedChallenge: challenge.challenge,
-        expectedOrigin: profile.origin,
-        expectedRPID: profile.rpId,
-        requireUserVerification: true,
-      })
-      if (!result.verified || !result.registrationInfo.userVerified) throw new Error('INVALID')
+      let result: Awaited<ReturnType<typeof verifyRegistrationResponse>>
+      try {
+        result = await verifyRegistrationResponse({
+          response,
+          expectedChallenge: challenge.challenge,
+          expectedOrigin: profile.origin,
+          expectedRPID: profile.rpId,
+          requireUserVerification: true,
+        })
+      } catch (error) {
+        throw new AuthDomainError('PASSKEY_INVALID', { cause: error })
+      }
+      if (!result.verified || !result.registrationInfo.userVerified)
+        throw new AuthDomainError('PASSKEY_INVALID', {
+          cause: new Error('Registration did not verify the credential and user presence.'),
+        })
       const { credential } = result.registrationInfo
       db.transaction((tx) => {
         tx.insert(passkeyCredential).values({
@@ -216,9 +228,9 @@ export function createOwnerAuthDomain(
           .where(eq(owner.id, ownerId))
       })
       return { registered: true }
-    } catch {
+    } catch (error) {
       await failChallenge(challenge)
-      throw new AuthDomainError('PASSKEY_INVALID')
+      throw error
     } finally {
       challenges.delete(challengeId)
     }
@@ -573,8 +585,8 @@ export function createOwnerAuthDomain(
 
 export class AuthDomainError extends Error {
   readonly code: string
-  constructor(code: string) {
-    super(code)
+  constructor(code: string, options?: ErrorOptions) {
+    super(code, options)
     this.code = code
   }
 }

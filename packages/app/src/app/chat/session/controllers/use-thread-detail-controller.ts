@@ -84,8 +84,22 @@ export function useThreadDetailController(
       transcriptDebug({
         phase: 'event',
         threadId,
+        turnId:
+          parsed.ok && typeof parsed.value.params.turnId === 'string'
+            ? parsed.value.params.turnId
+            : undefined,
+        itemId:
+          parsed.ok && typeof parsed.value.params.itemId === 'string'
+            ? parsed.value.params.itemId
+            : undefined,
         eventId: event.id,
         method: parsed.ok ? parsed.value.method : undefined,
+        cursorSequence: eventCursor.sequence,
+        eventCreatedAtAgeMs: Date.now() - Date.parse(event.event.createdAt),
+        deltaChars:
+          parsed.ok && typeof parsed.value.params.delta === 'string'
+            ? parsed.value.params.delta.length
+            : undefined,
       })
       if (!parsed.ok) {
         session.applyEvent(
