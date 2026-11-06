@@ -1,4 +1,6 @@
-import { encodeOwnerFrame, parseOwnerFrame, type OwnerError } from '@codex-web/protocol/owner'
+import { encodeOwnerFrame, parseOwnerFrame } from '@codex-web/protocol/owner'
+import type { PublicErrorDto } from '@codex-web/telemetry/errors'
+import { OwnerRequestError } from './owner-runtime'
 
 export type OwnerManagementRpc = {
   request(method: string, params?: Record<string, unknown>): Promise<unknown>
@@ -32,7 +34,11 @@ export function connectOwnerManagementRpc(sessionToken?: string): Promise<OwnerM
     }
     socket.onmessage = (event) => {
       const parsed = parseOwnerFrame(typeof event.data === 'string' ? event.data : '')
-      if (!parsed.ok) return
+      if (!parsed.ok) {
+        fail(new Error('Owner sent an invalid protocol frame.'))
+        socket.close(1002, 'invalid owner frame')
+        return
+      }
       if (parsed.frame.type === 'ready') {
         if (settled) return
         settled = true
@@ -79,6 +85,6 @@ export function connectOwnerManagementRpc(sessionToken?: string): Promise<OwnerM
   })
 }
 
-function ownerError(error: OwnerError) {
-  return new Error(`${error.code}: ${error.message}`)
+function ownerError(error: PublicErrorDto) {
+  return new OwnerRequestError(error)
 }

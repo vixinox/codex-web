@@ -84,8 +84,8 @@ test('forwards string-id server requests to request listeners', () => {
 
 test('logs every inbound message shape before dispatch without logging values', async (context) => {
   const lines: string[] = []
-  context.mock.method(log, 'info', (message: string) => {
-    if (message.startsWith('[app-server-rpc]')) lines.push(message)
+  context.mock.method(log, 'info', (event: string, fields: Record<string, unknown>) => {
+    if (event === 'codex.rpc.message') lines.push(JSON.stringify(fields))
   })
   const transport = new FakeTransport()
   const client = new CodexRpcClient(transport)
@@ -106,15 +106,13 @@ test('logs every inbound message shape before dispatch without logging values', 
   transport.receive({ method: 'future\u001b/notification', params: {} })
 
   assert.equal(lines.length, 5)
-  assert.match(lines[0]!, /direction=response.*method=thread\/read.*id=number:1/)
-  assert.match(lines[0]!, /thread:object\(id:string\(chars=17\)\)/)
-  assert.match(lines[1]!, /direction=notification.*method=future\/notification/)
-  assert.match(lines[1]!, /delta:string\(chars=22\)/)
-  assert.match(lines[2]!, /direction=server-request.*method=future\/serverRequest/)
-  assert.match(lines[2]!, /\[sensitive-key\]:string\(chars=13\)/)
-  assert.match(lines[3]!, /direction=response.*method=unmatched-response/)
-  assert.match(lines[4]!, /method=future\?\/notification/)
-  assert.doesNotMatch(lines[4]!, /\u001b/)
+  const parsed = lines.map((line) => JSON.parse(line) as Record<string, unknown>)
+  assert.equal(parsed[0]?.direction, 'response')
+  assert.equal(parsed[0]?.method, 'thread/read')
+  assert.equal(parsed[1]?.direction, 'notification')
+  assert.equal(parsed[2]?.direction, 'server-request')
+  assert.equal(parsed[3]?.method, 'unmatched-response')
+  assert.equal(parsed[4]?.method, 'future?/notification')
   assert.doesNotMatch(
     lines.join('\n'),
     /private-thread-id|private assistant text|private-token|private request text|private response text/,

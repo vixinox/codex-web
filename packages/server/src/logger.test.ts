@@ -1,26 +1,33 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { safeError } from './logger.js'
+import { createServerLogger } from './logger.js'
 
-test('safeError includes redacted causes for startup diagnostics', () => {
-  const error = new Error('Runtime failed to start', {
-    cause: new Error(
-      'RPC rejected: apiKey=sk-secret at C:\\Users\\Hello\\Desktop\\codex-web\\.data',
-    ),
-  })
-  const message = safeError(error)
-  assert.match(message, /Runtime failed to start/)
-  assert.match(message, /RPC rejected/)
-  assert.doesNotMatch(message, /sk-secret/)
-  assert.doesNotMatch(message, /C:\\Users/)
+test('server logger rejects invalid LOG_LEVEL without exposing the configured value', () => {
+  const previous = process.env.LOG_LEVEL
+  process.env.LOG_LEVEL = 'secret-token-value'
+  try {
+    assert.throws(
+      () => createServerLogger(),
+      (error: unknown) => {
+        assert.ok(error instanceof Error)
+        assert.equal(error.message, 'Invalid LOG_LEVEL')
+        assert.doesNotMatch(error.message, /secret-token-value/u)
+        return true
+      },
+    )
+  } finally {
+    if (previous === undefined) delete process.env.LOG_LEVEL
+    else process.env.LOG_LEVEL = previous
+  }
 })
 
-test('safeError includes aggregate connection causes', () => {
-  const error = new AggregateError(
-    [new Error('connect ECONNREFUSED 127.0.0.1:5432'), new Error('connect ECONNREFUSED ::1:5432')],
-    '',
-  )
-  assert.match(safeError(error), /ECONNREFUSED/)
-  assert.match(safeError(error), /127\.0\.0\.1:5432/)
+test('server logger defaults to info when LOG_LEVEL is absent', () => {
+  const previous = process.env.LOG_LEVEL
+  delete process.env.LOG_LEVEL
+  try {
+    assert.doesNotThrow(() => createServerLogger())
+  } finally {
+    if (previous !== undefined) process.env.LOG_LEVEL = previous
+  }
 })

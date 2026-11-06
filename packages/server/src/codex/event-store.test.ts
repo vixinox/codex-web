@@ -192,7 +192,11 @@ test('scans past rejected records across full pages and preserves replay/live or
     assert.equal(received.at(-1), 1101)
     assert.ok(warnings.mock.callCount() < rejected.size)
     assert.ok(
-      warnings.mock.calls.some((call) => String(call.arguments[0]).includes('count=500')),
+      warnings.mock.calls.some(
+        (call) =>
+          call.arguments[0] === 'codex.event-store.records-rejected' &&
+          (call.arguments[1] as Record<string, unknown>)?.count === 500,
+      ),
       'rejected rows should be summarized for each batch',
     )
   } finally {

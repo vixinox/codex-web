@@ -19,6 +19,8 @@ import {
   remoteDevice,
 } from '../db/schema.js'
 import type { Database } from '../database.js'
+import { AuthDomainError } from './errors.js'
+export { AuthDomainError } from './errors.js'
 
 export type WebAuthnProfiles = {
   local: { origin: string; rpId: string }
@@ -580,14 +582,6 @@ export function createOwnerAuthDomain(
         .limit(1)
       return Boolean(record)
     },
-  }
-}
-
-export class AuthDomainError extends Error {
-  readonly code: string
-  constructor(code: string, options?: ErrorOptions) {
-    super(code, options)
-    this.code = code
   }
 }
 

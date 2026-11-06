@@ -35,6 +35,7 @@ import { removeStoredValue, useStoredBoolean } from './sidebar-storage'
 import { useNativeFadePulse } from '@/lib/platform/browser/use-native-enter'
 import { FadePresenceList } from './fade-presence-list'
 import { toast } from '@/components/ui/toast'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export function ProjectItem({
   project,
@@ -208,9 +209,7 @@ export function ProjectItem({
                   removeStoredValue(`workspace-sidebar:project:${project.id}`)
                   setRemoveOpen(false)
                 } catch (error) {
-                  setRemoveError(
-                    error instanceof Error ? error.message : 'Could not remove this project.',
-                  )
+                  setRemoveError(presentAppError(error, 'Could not remove this project.'))
                 } finally {
                   setRemoving(false)
                 }
@@ -285,8 +284,7 @@ export function ThreadItem({
       .catch((error: unknown) => {
         toast.add({
           title: isFailedPlaceholder ? 'Could not delete chat' : 'Could not archive chat',
-          description:
-            error instanceof Error ? error.message : 'Could not archive this thread. Try again.',
+          description: presentAppError(error, 'Could not archive this thread. Try again.'),
           type: 'error',
         })
       })

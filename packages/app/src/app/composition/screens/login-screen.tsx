@@ -16,6 +16,7 @@ import {
   type ConnectionProfileSummary,
 } from '@/lib/remote/device-key-store'
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export function LoginScreen() {
   const navigate = useNavigate()
@@ -34,7 +35,7 @@ export function LoginScreen() {
   React.useEffect(() => {
     if (isLocal) return
     void refreshProfiles().catch((cause) =>
-      setError(cause instanceof Error ? cause.message : 'Unable to read saved connections'),
+      setError(presentAppError(cause, 'Unable to read saved connections')),
     )
   }, [isLocal, refreshProfiles])
 
@@ -105,7 +106,7 @@ export function LoginScreen() {
     try {
       await action()
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'Connection failed'
+      const message = presentAppError(cause, 'Connection failed')
       setError(message)
       if (key.startsWith('test:'))
         setStatuses((current) => ({ ...current, [key.slice(5)]: message }))

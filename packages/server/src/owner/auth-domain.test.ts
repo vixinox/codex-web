@@ -35,7 +35,8 @@ test('remote sessions bind to devices and revoke on device removal', async () =>
     await domain.markDeviceRevoked('device-1')
     await assert.rejects(
       domain.resume(session.token),
-      (error: unknown) => error instanceof AuthDomainError && error.code === 'SESSION_REVOKED',
+      (error: unknown) =>
+        error instanceof AuthDomainError && error.code === 'owner.auth.session-revoked',
     )
     database.driver.close()
   } finally {
@@ -58,7 +59,8 @@ test('requires a registered credential before creating authentication options', 
         connectionId: 'local-login',
         clientPublicKey: 'local',
       }),
-      (error: unknown) => error instanceof AuthDomainError && error.code === 'PASSKEY_REQUIRED',
+      (error: unknown) =>
+        error instanceof AuthDomainError && error.code === 'owner.auth.passkey-required',
     )
   } finally {
     database?.driver.close()
@@ -82,7 +84,7 @@ test('preserves registration verification causes for server diagnostics', async 
       domain.register(options.challengeId, {} as never, { ...binding, profile: 'remote' }),
       (error: unknown) =>
         error instanceof AuthDomainError &&
-        error.code === 'PASSKEY_INVALID' &&
+        error.code === 'owner.auth.passkey-invalid' &&
         error.cause instanceof Error &&
         error.cause.message.length > 0,
     )

@@ -1,71 +1,63 @@
-const colors = {
-  reset: '\x1b[0m',
-  blue: '\x1b[36m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
+import pino, { type Logger as PinoLogger } from 'pino'
+import type { LogLevel } from '@codex-web/telemetry/logger'
+import { createPinoLogger } from '@codex-web/telemetry/node'
+import type { LogFields, Logger } from '@codex-web/telemetry/logger'
+
+let activeLogger: Logger | undefined
+let fastifyLogger: PinoLogger | undefined
+
+export function createServerLogger(): Logger {
+  const level = process.env.LOG_LEVEL?.trim().toLowerCase() || 'info'
+  if (!['debug', 'info', 'warn', 'error'].includes(level)) throw new Error('Invalid LOG_LEVEL')
+  const transport = process.stdout.isTTY
+    ? pino.transport({
+        target: 'pino-pretty',
+        options: { colorize: true, translateTime: 'SYS:standard', singleLine: true },
+      })
+    : undefined
+  const sink = pino({ level }, transport)
+  fastifyLogger = sink
+  return createPinoLogger(sink as unknown as PinoLoggerAdapter, level as never)
 }
-const enabled = process.stdout.isTTY || process.stderr.isTTY
-function line(label: string, color: string, message: string) {
-  const prefix = `[${label.padEnd(7)}]`
-  const timestamp = new Date().toISOString()
-  console.error(
-    enabled
-      ? `${color}${timestamp} ${prefix}${colors.reset} ${message}`
-      : `${timestamp} ${prefix} ${message}`,
-  )
+
+export function getFastifyLogger(): PinoLogger {
+  if (!fastifyLogger) createServerLogger()
+  return fastifyLogger!
 }
+
+type PinoLoggerAdapter = {
+  child(bindings: Record<string, unknown>): PinoLoggerAdapter
+  debug(fields: Record<string, unknown>, message: string): void
+  info(fields: Record<string, unknown>, message: string): void
+  warn(fields: Record<string, unknown>, message: string): void
+  error(fields: Record<string, unknown>, message: string): void
+}
+
+export function setServerLogger(logger: Logger) {
+  activeLogger = logger
+}
+
+export function getServerLogger(): Logger {
+  if (!activeLogger) activeLogger = createServerLogger()
+  return activeLogger
+}
+
 export const log = {
-  info: (message: string) => line('INFO', colors.blue, message),
-  success: (message: string) => line('SUCCESS', colors.green, message),
-  warn: (message: string) => line('WARN', colors.yellow, message),
-  error: (message: string) => line('ERROR', colors.red, message),
+  debug: (event: string, fields?: LogFields, error?: unknown) =>
+    safeWrite('debug', event, fields, error),
+  info: (event: string, fields?: LogFields, error?: unknown) =>
+    safeWrite('info', event, fields, error),
+  warn: (event: string, fields?: LogFields, error?: unknown) =>
+    safeWrite('warn', event, fields, error),
+  error: (event: string, fields?: LogFields, error?: unknown) =>
+    safeWrite('error', event, fields, error),
+  success: (event: string, fields?: LogFields) => safeWrite('info', event, fields),
 }
-/** Renders an unknown value as text without ever falling back to `[object Object]`. */
-export function describeUnknown(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint')
-    return String(value)
-  if (typeof value === 'symbol') return value.toString()
-  if (typeof value === 'undefined') return 'undefined'
-  if (value === null) return 'null'
+
+function safeWrite(level: LogLevel, event: string, fields?: LogFields, error?: unknown) {
   try {
-    return JSON.stringify(value) ?? '[unserializable]'
+    getServerLogger()[level](event, fields, error)
   } catch {
-    return '[unserializable]'
+    // Logging must not affect Owner work or cleanup.
   }
-}
-
-export function safeError(error: unknown) {
-  const messages: string[] = []
-  const seen = new Set<unknown>()
-  let current: unknown = error
-  while (current !== undefined && current !== null && !seen.has(current) && messages.length < 4) {
-    seen.add(current)
-    const message = errorMessage(current)
-    if (message) messages.push(sanitizeErrorMessage(message))
-    current = current instanceof Error ? current.cause : undefined
-  }
-  return messages.join(' <- ').slice(0, 500)
-}
-
-function errorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return describeUnknown(error)
-  if (error.message) return error.message
-  const code = 'code' in error && typeof error.code === 'string' ? error.code : ''
-  if (error instanceof AggregateError) {
-    const causes: string[] = error.errors
-      .map((entry) => errorMessage(entry))
-      .filter(Boolean)
-      .slice(0, 3)
-    return [code, ...causes].filter(Boolean).join(': ')
-  }
-  return code
-}
-
-function sanitizeErrorMessage(message: string) {
-  return message
-    .replace(/(api[_-]?key|authorization|bearer)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
-    .replace(/[A-Za-z]:\\[^\r\n]*/g, '[path]')
-    .replace(/[\r\n]+/g, ' ')
 }

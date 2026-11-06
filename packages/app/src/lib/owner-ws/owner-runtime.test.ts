@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { encodeOwnerFrame, parseOwnerFrame } from '@codex-web/protocol/owner'
-import { createOwnerRuntime, OwnerRequestError } from './owner-runtime'
+import { TelemetryErrorCode } from '@codex-web/telemetry/errors'
+import { OwnerRequestError } from './owner-runtime'
+import { createOwnerRuntime, OwnerLocalRequestError } from './owner-runtime'
 
 class FakeSocket {
   readyState = 0
@@ -63,8 +65,7 @@ describe('Owner runtime transport', () => {
       message: 'Hello frame is invalid.',
     })
     await expect(connection).rejects.toMatchObject({
-      code: 'INVALID_HELLO',
-      message: 'Hello frame is invalid.',
+      code: 'app.owner.connection.unavailable',
     })
     expect(runtime.state).toBe('disconnected')
   })
@@ -96,7 +97,7 @@ describe('Owner runtime transport', () => {
     } as MessageEvent)
 
     expect(onError).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'INVALID_EVENT_ENVELOPE' }),
+      expect.objectContaining({ code: 'app.owner.protocol.invalid-frame' }),
     )
     expect(onClose).toHaveBeenCalledWith('CONNECTION_CLOSED')
   })
@@ -158,11 +159,39 @@ describe('Owner runtime transport', () => {
     ready(socket)
     await connection
     const request = runtime.request('threads.list', undefined, { timeoutMs: 10 })
-    const rejected = expect(request).rejects.toBeInstanceOf(OwnerRequestError)
+    const rejected = expect(request).rejects.toBeInstanceOf(OwnerLocalRequestError)
     await vi.advanceTimersByTimeAsync(11)
     await rejected
     expect(socket.sent.some((value) => value.includes('"type":"cancel"'))).toBe(true)
     vi.useRealTimers()
+  })
+
+  it('preserves the full public error DTO and cause on request failures', async () => {
+    const socket = new FakeSocket()
+    const runtime = createOwnerRuntime(() => socket)
+    const connection = runtime.connect({ url: 'ws://owner.test' })
+    socket.open()
+    ready(socket)
+    await connection
+    const request = runtime.request('owner.status')
+    const sent = socket.last()
+    if (!sent.ok || sent.frame.type !== 'request') throw new Error('request not sent')
+    const dto = {
+      code: TelemetryErrorCode.ownerRemoteUnavailable,
+      params: { retryAfterMs: 20 },
+      retryable: true,
+      message: 'A safe fallback.',
+    }
+    socket.receive({ type: 'response', requestId: sent.frame.requestId, error: dto })
+    await expect(request).rejects.toMatchObject({
+      code: dto.code,
+      params: dto.params,
+      retryable: true,
+      publicError: dto,
+    })
+    const cause = new Error('original local failure')
+    expect(new OwnerRequestError(dto, { cause }).cause).toBe(cause)
+    runtime.close()
   })
 
   it('forwards owner notifications to lifecycle listeners', async () => {

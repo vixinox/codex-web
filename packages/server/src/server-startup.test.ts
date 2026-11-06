@@ -12,6 +12,7 @@ test('exits after a database readiness failure', async () => {
   const tsxCli = resolve('node_modules/tsx/dist/cli.mjs')
   const withPort = resolve('../../scripts/with-port.mjs')
   const stderr: Buffer[] = []
+  const stdout: Buffer[] = []
 
   try {
     const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
@@ -31,12 +32,13 @@ test('exits after a database readiness failure', async () => {
               CODEX_DATA_ROOT: blockedRoot,
               CODEX_EXIT_ON_SERVER_STARTUP_FAILURE: 'true',
             },
-            stdio: ['ignore', 'ignore', 'pipe'],
+            stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
           },
         )
 
         child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
+        child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
         child.on('error', reject)
 
         const timer = setTimeout(() => {
@@ -51,12 +53,11 @@ test('exits after a database readiness failure', async () => {
       },
     )
 
-    const output = Buffer.concat(stderr).toString('utf8')
+    const output = `${Buffer.concat(stderr).toString('utf8')}\n${Buffer.concat(stdout).toString('utf8')}`
     assert.equal(result.code, 1)
     assert.equal(result.signal, null)
-    assert.match(output, /EEXIST|ENOTDIR/)
-    assert.match(output, /EEXIST|ENOTDIR/)
-    assert.doesNotMatch(output, /Fastify listening at/)
+    assert.match(output, /owner\.server\.startup-failed/u)
+    assert.doesNotMatch(output, /Fastify listening at/u)
   } finally {
     rmSync(dataRoot, { recursive: true, force: true })
   }

@@ -3,6 +3,7 @@ import * as React from 'react'
 import { ownerSettings, type CredentialSummary } from '@/app/settings/domain/owner-settings'
 import type { CredentialFormErrors, SettingsCollection } from '@/app/settings/model-types'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export type SettingsController = {
   credentials: SettingsCollection<CredentialSummary>
@@ -53,8 +54,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
         if (error instanceof DOMException && error.name === 'AbortError') return
         setCredentials({
           status: 'error',
-          message:
-            error instanceof Error ? error.message : 'Could not load credentials. Try again.',
+          message: presentAppError(error, 'Could not load credentials. Try again.'),
         })
       })
     return () => controller.abort()
@@ -85,9 +85,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
       await runtime.refresh()
       return true
     } catch (error) {
-      setCredentialActionError(
-        error instanceof Error ? error.message : 'Could not save credential.',
-      )
+      setCredentialActionError(presentAppError(error, 'Could not save credential.'))
       throw error
     } finally {
       setCredentialSavePending(false)
@@ -114,9 +112,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
         await runtime.refresh()
       }
     } catch (error) {
-      setCredentialActionError(
-        error instanceof Error ? error.message : 'Could not switch credential.',
-      )
+      setCredentialActionError(presentAppError(error, 'Could not switch credential.'))
       throw error
     } finally {
       setCodexActionPending(false)
@@ -130,9 +126,7 @@ export function useSettingsController(runtime: CodexRuntimeController): Settings
       await loadCredentials()
       await runtime.refresh()
     } catch (error) {
-      setCredentialActionError(
-        error instanceof Error ? error.message : 'Could not delete credential.',
-      )
+      setCredentialActionError(presentAppError(error, 'Could not delete credential.'))
       throw error
     }
   }

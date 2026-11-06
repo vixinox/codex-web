@@ -302,7 +302,7 @@ export class OwnerConnector {
     }
     socket.onerror = () => {
       if (this.socket !== socket) return
-      log.warn('Remote Relay socket error')
+      log.warn('owner.remote.socket-error')
       this.detachTransport()
     }
     socket.onclose = (...args: never[]) => {
@@ -477,9 +477,9 @@ export class OwnerConnector {
       !this.runtimeRegistry ||
       !this.resumeSession
     ) {
-      log.warn(
-        `Remote client handshake rejected (${enrollmentCandidate ? 'enrollment' : 'paired'})`,
-      )
+      log.warn('owner.remote.handshake-rejected', {
+        clientType: enrollmentCandidate ? 'enrollment' : 'paired',
+      })
       this.teardownConnection(connectionId, 'unauthorized_client')
       return
     }

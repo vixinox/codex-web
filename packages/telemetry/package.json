@@ -1,0 +1,22 @@
+{
+  "name": "@codex-web/telemetry",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "exports": {
+    "./errors": "./src/errors.ts",
+    "./logger": "./src/logger.ts",
+    "./diagnostic-error": "./src/diagnostic-error.ts",
+    "./node": "./src/node.ts",
+    "./bun": "./src/bun.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "tsx": "^4.23.13",
+    "typescript": "7.0.2"
+  }
+}

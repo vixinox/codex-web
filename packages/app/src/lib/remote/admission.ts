@@ -1,4 +1,6 @@
 import { OwnerRequestError } from '@/lib/owner-ws/owner-runtime'
+import { TelemetryErrorCode } from '@codex-web/telemetry/errors'
+import { AppLocalError, AppLocalErrorCode } from '@/lib/errors/app-local-error'
 
 export type AdmissionConnection = {
   request<T = unknown>(method: string, params?: unknown): Promise<T>
@@ -13,11 +15,16 @@ export async function authenticateWithPasskey(
   try {
     options = await connection.request('owner.passkey.authentication.options')
   } catch (error) {
-    if (error instanceof OwnerRequestError && error.code === 'PASSKEY_REQUIRED') {
-      throw new Error(
+    if (
+      error instanceof OwnerRequestError &&
+      error.code === TelemetryErrorCode.ownerAuthPasskeyRequired
+    ) {
+      throw new AppLocalError(
+        AppLocalErrorCode.ownerAuthPasskeyRequired,
         originProfile === 'local'
           ? 'No local Passkey is registered. Use a signed-in Owner device to issue a one-time localhost enrollment ticket, then register a Passkey in this browser.'
           : 'No remote Passkey is registered. Register one from a signed-in Owner device, then try again.',
+        { cause: error },
       )
     }
     throw error
@@ -26,7 +33,10 @@ export async function authenticateWithPasskey(
     publicKey: browserRequestOptions(options.options),
   })
   if (!(credential instanceof PublicKeyCredential))
-    throw new Error('Passkey authentication was cancelled.')
+    throw new AppLocalError(
+      AppLocalErrorCode.ownerRequestCancelled,
+      'Passkey authentication was cancelled.',
+    )
   const response = credentialToJson(credential)
   const result = await connection.request<{ token: string; expiresAt: string; ownerId?: string }>(
     'owner.passkey.authentication.verify',
@@ -39,7 +49,10 @@ export async function authenticateWithPasskey(
     !Number.isFinite(Date.parse(result.expiresAt)) ||
     (result.ownerId !== undefined && typeof result.ownerId !== 'string')
   )
-    throw new Error('Passkey authentication returned an invalid session.')
+    throw new AppLocalError(
+      AppLocalErrorCode.ownerProtocolInvalidFrame,
+      'Passkey authentication returned an invalid session.',
+    )
   return { ...result, originProfile }
 }
 

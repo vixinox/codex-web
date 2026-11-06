@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { encodeOwnerFrame, type OwnerFrame } from '@codex-web/protocol/owner'
+import type { Logger } from '@codex-web/telemetry/logger'
+import { setServerLogger } from '../logger.js'
 import {
   OwnerSessionRuntime,
   VirtualOwnerTransport,
@@ -162,7 +164,7 @@ test('gates local and authenticated methods and prevents request replay', async 
     readFrames(transport)
       .filter((frame) => frame.type === 'response')
       .map((frame) => (frame.type === 'response' ? frame.error?.code : null)),
-    ['UNAUTHORIZED', undefined],
+    ['owner.auth.unauthorized', undefined],
   )
 
   transport.receive({ type: 'request', requestId: 'open-1', method: 'owner.session.open' })
@@ -187,8 +189,8 @@ test('gates local and authenticated methods and prevents request replay', async 
   )
   assert.ok(brokenResponse && brokenResponse.type === 'response')
   assert.deepEqual(brokenResponse.error, {
-    code: 'INTERNAL_ERROR',
-    message: 'Request failed.',
+    code: 'owner.internal.unavailable',
+    message: 'The request failed.',
     retryable: true,
   })
   assert.equal(transport.sent.join('').includes('sk-secret'), false)
@@ -199,8 +201,14 @@ test('gates local and authenticated methods and prevents request replay', async 
 test('logs the sanitized cause of a Passkey method failure', async () => {
   const transport = new FakeTransport()
   const logLines: string[] = []
-  const originalConsoleError = console.error
-  console.error = (...values: unknown[]) => logLines.push(values.join(' '))
+  const logger: Logger = {
+    child: () => logger,
+    debug: (event, fields = {}) => logLines.push(JSON.stringify({ event, fields })),
+    info: (event, fields = {}) => logLines.push(JSON.stringify({ event, fields })),
+    warn: (event, fields = {}) => logLines.push(JSON.stringify({ event, fields })),
+    error: (event, fields = {}) => logLines.push(JSON.stringify({ event, fields })),
+  }
+  setServerLogger(logger)
   try {
     createRuntime(
       transport,
@@ -237,11 +245,17 @@ test('logs the sanitized cause of a Passkey method failure', async () => {
       (frame) => frame.type === 'response' && frame.requestId === 'passkey-options',
     )
     assert.ok(response && response.type === 'response')
-    assert.equal(response.error?.code, 'INTERNAL_ERROR')
-    assert.match(logLines.join('\n'), /SQLITE_ERROR: no such table: passkey_credential/u)
+    assert.equal(response.error?.code, 'owner.internal.unavailable')
+    assert.match(logLines.join('\n'), /owner.passkey.method-failed/u)
     assert.doesNotMatch(logLines.join('\n'), /sk-test|C:\\Users\\Owner/u)
   } finally {
-    console.error = originalConsoleError
+    setServerLogger({
+      child: () => logger,
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+    })
   }
 })
 
@@ -272,7 +286,8 @@ test('keeps an encrypted enrollment candidate limited to redemption', async () =
   await waitFor(() => readFrames(transport).some((frame) => frame.type === 'response'))
   const statusResponse = readFrames(transport).find((frame) => frame.type === 'response')
   assert.equal(statusResponse?.type, 'response')
-  if (statusResponse?.type === 'response') assert.equal(statusResponse.error?.code, 'UNAUTHORIZED')
+  if (statusResponse?.type === 'response')
+    assert.equal(statusResponse.error?.code, 'owner.auth.unauthorized')
   transport.receive({ type: 'request', requestId: 'business-1', method: 'threads.list' })
   await waitFor(
     () => readFrames(transport).filter((frame) => frame.type === 'response').length === 2,
@@ -281,7 +296,7 @@ test('keeps an encrypted enrollment candidate limited to redemption', async () =
     (frame) => frame.type === 'response' && frame.requestId === 'business-1',
   )
   assert.equal(response?.type, 'response')
-  if (response?.type === 'response') assert.equal(response.error?.code, 'UNAUTHORIZED')
+  if (response?.type === 'response') assert.equal(response.error?.code, 'owner.auth.unauthorized')
   assert.equal(businessCalls, 0)
   transport.receive({ type: 'request', requestId: 'redeem-1', method: 'owner.enrollment.redeem' })
   await waitFor(
@@ -327,7 +342,7 @@ test('rejects invalid session resumption before accessing Owner methods', async 
     (frame) => frame.type === 'response' && frame.requestId === 'business-1',
   )
   assert.ok(response && response.type === 'response')
-  assert.equal(response.error?.code, 'UNAUTHORIZED')
+  assert.equal(response.error?.code, 'owner.auth.unauthorized')
   assert.equal(businessCalls, 0)
 })
 
@@ -498,7 +513,7 @@ test('times out methods and closes when slow consumers exceed the send queue lim
           ) as Extract<OwnerFrame, { type: 'response' }>
         ).error?.code
       : null,
-    'REQUEST_TIMEOUT',
+    'owner.request.timeout',
   )
 
   const slowTransport = new FakeTransport()
@@ -545,7 +560,7 @@ test('limits in-flight requests and cancels only the explicitly targeted request
     (frame) => frame.type === 'response' && frame.requestId === 'fast-1',
   )
   assert.ok(limited && limited.type === 'response')
-  assert.equal(limited.error?.code, 'REQUEST_LIMIT_EXCEEDED')
+  assert.equal(limited.error?.code, 'owner.request.limit-exceeded')
   assert.equal(firstSignal?.aborted, false)
 
   transport.receive({ type: 'cancel', requestId: 'slow-1' })
@@ -559,7 +574,7 @@ test('limits in-flight requests and cancels only the explicitly targeted request
     (frame) => frame.type === 'response' && frame.requestId === 'slow-1',
   )
   assert.ok(cancelled && cancelled.type === 'response')
-  assert.equal(cancelled.error?.code, 'REQUEST_CANCELLED')
+  assert.equal(cancelled.error?.code, 'owner.request.cancelled')
 })
 
 test('rejects relay transports before hello unless pairing and E2EE are verified', async () => {

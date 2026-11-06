@@ -3,6 +3,7 @@ import QRCode from 'qrcode'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Copy, KeyRound } from 'lucide-react'
+import { presentAppError } from '@/lib/errors/presentation'
 import { SettingsSection, SettingsSectionContent } from '@/app/settings/settings-page-layout'
 import {
   emptyOwnerManagementSnapshot,
@@ -35,7 +36,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
     try {
       setSnapshot(await client.getSnapshot())
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to load Owner security state')
+      setError(presentAppError(cause, 'Unable to load Owner security state'))
     } finally {
       setSnapshotLoaded(true)
     }
@@ -63,8 +64,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
         return undefined
       })
       .catch((cause) => {
-        if (active)
-          setError(cause instanceof Error ? cause.message : 'Unable to load enrollment status')
+        if (active) setError(presentAppError(cause, 'Unable to load enrollment status'))
         return undefined
       })
     return () => {
@@ -79,7 +79,7 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
       await operation()
       await refresh()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Operation failed')
+      setError(presentAppError(cause, 'Operation failed'))
     } finally {
       setBusy(null)
     }

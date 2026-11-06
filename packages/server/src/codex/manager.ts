@@ -11,7 +11,7 @@ import { requestIdCandidates, type RequestId } from './request-id.js'
 import { CodexRuntimeManager } from './runtime-manager.js'
 import type { CodexCommand } from './stdio-transport.js'
 import { projectModelCatalog, type RuntimeModel } from './model-catalog.js'
-import { log, safeError } from '../logger.js'
+import { log } from '../logger.js'
 
 type Instance = { client: CodexRpcClient; credentialId: string }
 export type CodexLifecycleStatus = 'stopped' | 'starting' | 'ready' | 'restarting' | 'failed'
@@ -451,9 +451,10 @@ export class CodexManager {
     const credential = await this.workspace.getCredential(userId, credentialId)
     if (!credential) throw new Error('Credential not found')
     const endpoints = describeProviderEndpoints(credential.baseUrl)
-    log.info(
-      `Codex provider endpoints configured (user=${safeError(userId)} provider=${safeError(credential.provider)} base=${endpoints.base} models=${endpoints.models} responses=${endpoints.responses})`,
-    )
+    log.info('codex.provider.configured', {
+      provider: credential.provider.slice(0, 64),
+      endpointHost: safeEndpointHost(endpoints.base),
+    })
     const userRoot = path.resolve(this.config.dataRoot, 'users', userId)
     const userHome = path.join(userRoot, '.codex')
     await mkdir(userHome, { recursive: true })
@@ -514,17 +515,18 @@ export class CodexManager {
         const error = turn?.error as Record<string, unknown> | undefined
         const messageText =
           typeof error?.message === 'string' ? error.message : 'Unknown turn error'
-        log.error(`Codex turn failed: ${safeError(messageText)}`)
+        log.error('codex.turn.failed', { messageLength: messageText.length })
       }
       if (message.method === 'error') {
         const error = params?.error as Record<string, unknown> | undefined
         const messageText =
           typeof error?.message === 'string' ? error.message : 'Unknown runtime error'
         const details = typeof error?.additionalDetails === 'string' ? error.additionalDetails : ''
-        const suffix = details ? ` details=${safeError(details)}` : ''
-        log.error(
-          `Codex runtime error (base=${endpoints.base} responses=${endpoints.responses}): ${safeError(messageText)}${suffix}`,
-        )
+        log.error('codex.runtime.error-event', {
+          endpointHost: safeEndpointHost(endpoints.base),
+          messageLength: messageText.length,
+          detailsLength: details.length,
+        })
       }
       const threadId = typeof params?.threadId === 'string' ? params.threadId : undefined
       const turn = params?.turn as Record<string, unknown> | undefined
@@ -543,9 +545,12 @@ export class CodexManager {
       }
       const adapted = adaptCodexMessage(message)
       if (adapted.kind === 'invalid')
-        log.warn(
-          `Codex runtime event rejected (method=${safeError(message.method)}${threadId ? ` threadId=${safeError(threadId)}` : ''})`,
-        )
+        log.warn('codex.runtime.event-rejected', {
+          method:
+            typeof message.method === 'string'
+              ? message.method.replace(/[^A-Za-z0-9._/-]/gu, '?').slice(0, 80)
+              : 'unknown',
+        })
       void this.events.publishDomain(
         userId,
         adapted.kind === 'invalid'
@@ -632,8 +637,16 @@ function describeProviderEndpoints(baseUrl: string) {
   }
 }
 
+function safeEndpointHost(value: string) {
+  try {
+    return new URL(value).hostname.slice(0, 128)
+  } catch {
+    return 'invalid'
+  }
+}
+
 async function startupRequest<T>(name: string, operation: () => Promise<T>): Promise<T> {
-  log.info(`Codex App Server ${name}`)
+  log.info('codex.rpc.startup-request', { method: name.slice(0, 80) })
   let timer: NodeJS.Timeout | undefined
   try {
     return await new Promise<T>((resolve, reject) => {

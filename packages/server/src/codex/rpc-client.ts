@@ -1,5 +1,5 @@
 import type { JsonRpcMessage } from './stdio-transport.js'
-import { log, safeError } from '../logger.js'
+import { log } from '../logger.js'
 import { formatRpcMessageId, summarizeRpcShape } from './rpc-message-summary.js'
 
 export type RpcTransport = {
@@ -125,9 +125,7 @@ export class CodexRpcClient {
           : 'unclassified'
     const method =
       typeof message.method === 'string'
-        ? safeError(message.method)
-            .replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
-            .slice(0, 120)
+        ? message.method.replace(/[^A-Za-z0-9._/-]/gu, '?').slice(0, 80)
         : (pending?.method ?? (hasResponse ? 'unmatched-response' : 'unknown'))
     const shape = hasResponse
       ? 'error' in message
@@ -136,9 +134,13 @@ export class CodexRpcClient {
       : 'params' in message
         ? summarizeRpcShape(message.params)
         : summarizeRpcShape(message)
-    log.info(
-      `[app-server-rpc] direction=${direction} seq=${sequence} method=${method} id=${formatRpcMessageId(requestId)} shape=${shape}`,
-    )
+    log.info('codex.rpc.message', {
+      direction,
+      sequence,
+      method,
+      id: formatRpcMessageId(requestId),
+      shape: String(shape).slice(0, 120),
+    })
 
     if (isRequestId(message.id) && ('result' in message || 'error' in message)) {
       if (!pending) return

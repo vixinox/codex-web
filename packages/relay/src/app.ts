@@ -8,20 +8,24 @@ import {
   isRelayEnrollmentUnregisterFrame,
   parseFrame,
   RELAY_PROTOCOL_VERSION,
+  type ConnectionRole,
 } from '@codex-web/protocol/relay'
+import { TelemetryErrorCode } from '@codex-web/telemetry/errors'
+import type { Logger } from '@codex-web/telemetry/logger'
 
+import {
+  mapRelaySocketClose,
+  type RelayCloseContext,
+  type RelayFailureCode,
+} from './close-policy.js'
+import { containRelayLogger, nullRelayLogger } from './logging.js'
 import { RelayRouter, type RelaySocket } from './relay-router.js'
 
 /**
- * Every attach failure closes with the same frame and reason. Distinguishing "unknown node",
- * "bad token" and "at capacity" would let an unauthenticated caller probe for live nodes.
+ * Unauthenticated attach failures share one close frame and reason. Owner code conflict retains
+ * its existing dedicated routing response as an intentional exception.
  */
-const ATTACH_REJECTED = 'attach_rejected'
 const encoder = new TextEncoder()
-
-function relayLog(message: string) {
-  console.error(`${new Date().toISOString()} [RELAY] ${message}`)
-}
 
 export function createRelayApp(
   router: RelayRouter,
@@ -29,7 +33,9 @@ export function createRelayApp(
     upgradeWebSocket: UpgradeWebSocket<BunWebSocketData>
     websocket: BunWebSocketHandler<BunWebSocketData>
   },
+  logger: Logger = nullRelayLogger,
 ) {
+  const appLogger = containRelayLogger(logger).child({ service: 'relay', component: 'app' })
   const app = new Hono()
   app.get('/healthz', (context) =>
     context.json({
@@ -41,13 +47,13 @@ export function createRelayApp(
 
   app.get(
     '/ws',
-    webSocketAdapter.upgradeWebSocket(() => createWebSocketHandlers(router)),
+    webSocketAdapter.upgradeWebSocket(() => createWebSocketHandlers(router, appLogger)),
   )
 
   return { app, router, websocket: webSocketAdapter.websocket }
 }
 
-function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData> {
+function createWebSocketHandlers(router: RelayRouter, logger: Logger): WSEvents<BunWebSocketData> {
   let sessionId: string | undefined
   const socketFor = (ws: import('hono/ws').WSContext): RelaySocket => {
     const raw = ws.raw as unknown as
@@ -71,31 +77,30 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
   return {
     onMessage(event, ws) {
       if (typeof event.data !== 'string') {
-        ws.close(1003, 'text frames required')
+        const close = mapRelaySocketClose(TelemetryErrorCode.relayFrameInvalid, 'text-frame')
+        logger.warn('relay.frame.rejected', { code: TelemetryErrorCode.relayFrameInvalid })
+        ws.close(close.code, close.reason)
         return
       }
       if (encoder.encode(event.data).byteLength > router.maxFrameBytes) {
-        ws.close(1009, 'frame too large')
+        const code = TelemetryErrorCode.relayFrameTooLarge
+        logger.warn('relay.frame.rejected', { code })
+        const close = mapRelaySocketClose(code, 'frame')
+        ws.close(close.code, close.reason)
         return
       }
       if (!sessionId) {
         const frame = parseFrame(event.data)
         if (!isRelayAttachFrame(frame)) {
-          relayLog('Rejected client frame before attach')
-          ws.close(1008, ATTACH_REJECTED)
+          const code = TelemetryErrorCode.relayAttachInvalidFrame
+          const role = frameRole(frame)
+          logger.warn('relay.attach.rejected', { code, ...(role ? { role } : {}) })
+          closeFor(ws, code, 'attach')
           return
         }
         const result = router.attach(frame, socketFor(ws))
         if (!result.ok) {
-          relayLog(
-            `Attach rejected (${frame.role}:${frame.role === 'client' ? (frame.admission ?? 'paired') : 'owner'}; ${result.reason})`,
-          )
-          ws.close(
-            1008,
-            frame.role === 'owner' && result.reason === 'owner_code_conflict'
-              ? 'owner_code_conflict'
-              : ATTACH_REJECTED,
-          )
+          closeFor(ws, result.code, 'attach')
           return
         }
         sessionId = result.session.sessionId
@@ -114,38 +119,51 @@ function createWebSocketHandlers(router: RelayRouter): WSEvents<BunWebSocketData
       }
       const control = parseFrame(event.data)
       if (isRelayEnrollmentRegisterFrame(control)) {
-        if (!router.registerEnrollmentReference(sessionId, control)) {
-          relayLog('Enrollment reference registration rejected')
-          ws.close(1008, 'invalid_enrollment_reference')
-        } else relayLog('Enrollment reference registered')
+        const result = router.registerEnrollmentReference(sessionId, control)
+        if (!result.ok) closeFor(ws, result.code, 'enrollment')
         return
       }
       if (isRelayEnrollmentUnregisterFrame(control)) {
-        if (!router.unregisterEnrollmentReference(sessionId, control.reference)) {
-          relayLog('Enrollment reference unregister rejected')
-          ws.close(1008, 'invalid_enrollment_reference')
-        } else relayLog('Enrollment reference unregistered')
+        const result = router.unregisterEnrollmentReference(sessionId, control.reference)
+        if (!result.ok) closeFor(ws, result.code, 'enrollment')
         return
       }
       const session = router.getSession(sessionId)
       if (!session) {
         // This socket no longer owns a slot; close only this socket and leave the node alone.
-        ws.close(1008, 'session_not_found')
+        closeFor(ws, TelemetryErrorCode.relayConnectionPeerDisconnected, 'session-missing')
         return
       }
       const forwarded =
         session.role === 'owner'
           ? router.forward(sessionId, event.data)
           : router.forwardFromClient(sessionId, event.data)
-      if (!forwarded) ws.close(1008, 'invalid_forward_frame')
+      if (!forwarded.ok) closeFor(ws, forwarded.code, 'frame')
       return
     },
     onClose() {
       if (sessionId) router.detach(sessionId)
     },
     onError() {
-      relayLog('Relay WebSocket error')
+      logger.warn('relay.connection.socket-error', {
+        ...(sessionId ? { connectionId: sessionId } : {}),
+      })
       if (sessionId) router.detach(sessionId)
     },
   }
+
+  function closeFor(
+    ws: import('hono/ws').WSContext,
+    code: RelayFailureCode,
+    context: RelayCloseContext,
+  ) {
+    const close = mapRelaySocketClose(code, context)
+    ws.close(close.code, close.reason)
+  }
+}
+
+function frameRole(frame: unknown): ConnectionRole | undefined {
+  if (typeof frame !== 'object' || frame === null || !('role' in frame)) return undefined
+  const role = (frame as { role?: unknown }).role
+  return role === 'owner' || role === 'client' ? role : undefined
 }

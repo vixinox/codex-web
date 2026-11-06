@@ -17,6 +17,7 @@ import {
   loadConnectionProfileSession,
 } from '@/lib/remote/device-key-store'
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export type OwnerRuntimeController = {
   status: 'idle' | 'connecting' | 'ready' | 'remote-unavailable' | 'failed'
@@ -154,7 +155,7 @@ export function useOwnerRuntime(
           if (!active) return undefined
           setSnapshot({
             ...runtime.state,
-            error: cause instanceof Error ? cause.message : 'Owner connection failed',
+            error: presentAppError(cause, 'Owner connection failed'),
           })
           return undefined
         })

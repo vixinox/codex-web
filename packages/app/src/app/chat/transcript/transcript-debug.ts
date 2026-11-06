@@ -17,9 +17,5 @@ type TranscriptDebugPayload = {
 }
 
 export function transcriptDebug(payload: TranscriptDebugPayload) {
-  if (!import.meta.env.DEV) return
-  const safe = Object.fromEntries(
-    Object.entries(payload).filter(([, value]) => value !== undefined),
-  )
-  console.debug('[transcript]', safe)
+  void payload
 }

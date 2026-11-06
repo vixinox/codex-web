@@ -21,6 +21,7 @@ import type {
 import { ThreadEventContractError } from '@/app/chat/domain/owner-thread-adapter'
 import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 import { trackProductEvent } from '@/lib/connection/telemetry'
+import { presentAppError } from '@/lib/errors/presentation'
 
 const STATUS_RECONCILE_INTERVAL_MS = 15_000
 
@@ -201,9 +202,7 @@ export function useThreadDetailController(
         }
         if (isCodexUnavailable(error)) onUnavailable?.()
         if (recoveryAttempts >= 5) {
-          session.setError(
-            error instanceof Error ? error.message : 'Could not restore this thread. Try again.',
-          )
+          session.setError(presentAppError(error, 'Could not restore this thread. Try again.'))
           return
         }
         recoveryAttempts += 1
@@ -268,9 +267,7 @@ export function useThreadDetailController(
           return
         }
         if (isCodexUnavailable(error)) onUnavailable?.()
-        session.setError(
-          error instanceof Error ? error.message : 'Could not load this thread. Try again.',
-        )
+        session.setError(presentAppError(error, 'Could not load this thread. Try again.'))
       })
     return () => {
       active = false
@@ -366,8 +363,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isCodexUnavailable(error: unknown) {
   const candidate = error as { code?: unknown; status?: unknown }
   return (
-    candidate?.code === 'CODEX_UNAVAILABLE' ||
-    candidate?.code === 'CODEX_START_REQUIRED' ||
+    candidate?.code === 'owner.runtime.unavailable' ||
+    candidate?.code === 'owner.runtime.start-required' ||
     candidate?.status === 409 ||
     candidate?.status === 502
   )

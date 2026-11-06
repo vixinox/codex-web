@@ -11,6 +11,7 @@ import {
   type StreamRequest,
   type OwnerTransportState,
 } from './owner-runtime'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export type OwnerRuntimeState = {
   transport: OwnerTransportState | 'reconnecting'
@@ -205,7 +206,7 @@ export function createOwnerRuntimeController(
         reconnectAttempt: 0,
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Owner connection failed.'
+      const message = presentAppError(error, 'Owner connection failed.')
       update({
         transport: 'failed',
         runtime: 'failed',

@@ -12,6 +12,7 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export function ProjectNameDialog({
   open,
@@ -63,7 +64,7 @@ function OpenProjectNameDialog({
       await onSubmit(name.trim())
       onOpenChange(false)
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Could not save this project.')
+      setError(presentAppError(submitError, 'Could not save this project.'))
     } finally {
       setSubmitting(false)
     }

@@ -2,11 +2,12 @@ import {
   encodeOwnerFrame,
   parseOwnerEventStreamMessage,
   parseOwnerFrame,
-  type OwnerError,
-  type OwnerErrorCode,
   type OwnerFrame,
 } from '@codex-web/protocol/owner'
-import { log, safeError } from '../logger.js'
+import type { PublicErrorDto } from '@codex-web/telemetry/errors'
+import { log } from '../logger.js'
+import { OwnerMethodError, projectOwnerError } from './errors.js'
+export { OwnerMethodError } from './errors.js'
 
 export type OwnerTransport = {
   kind: 'local' | 'relay'
@@ -155,26 +156,14 @@ const DEFAULT_MAX_IN_FLIGHT_REQUESTS = 32
 const DEFAULT_MAX_QUEUED_BYTES = 2 * 1024 * 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_RETAINED_REQUEST_IDS = 4096
-const AUTH_FAILURE: OwnerError = {
-  code: 'UNAUTHORIZED',
+const AUTH_FAILURE: PublicErrorDto = {
+  code: 'owner.auth.unauthorized',
   message: 'Authentication is required.',
   retryable: false,
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-export class OwnerMethodError extends Error {
-  readonly code: string
-  readonly retryable: boolean
-
-  constructor(code: string, retryable = false, options?: ErrorOptions) {
-    super(code, options)
-    this.name = 'OwnerMethodError'
-    this.code = code
-    this.retryable = retryable
-  }
 }
 
 export class OwnerSessionRuntime {
@@ -286,7 +275,7 @@ export class OwnerSessionRuntime {
   private async execute(requestId: string, methodName: string, params: unknown): Promise<void> {
     if (this.seenRequestIds.has(requestId)) {
       await this.respondError(requestId, {
-        code: 'DUPLICATE_REQUEST_ID',
+        code: 'owner.request.duplicate-id',
         message: 'Request ID has already been used on this connection.',
         retryable: false,
       })
@@ -303,7 +292,7 @@ export class OwnerSessionRuntime {
       (this.options.maxInFlightRequests ?? DEFAULT_MAX_IN_FLIGHT_REQUESTS)
     ) {
       await this.respondError(requestId, {
-        code: 'REQUEST_LIMIT_EXCEEDED',
+        code: 'owner.request.limit-exceeded',
         message: 'Too many requests are active on this connection.',
         retryable: true,
       })
@@ -313,7 +302,7 @@ export class OwnerSessionRuntime {
     const method = this.methods.get(methodName)
     if (!method) {
       await this.respondError(requestId, {
-        code: 'METHOD_NOT_FOUND',
+        code: 'owner.request.method-not-found',
         message: 'Requested method is not available.',
         retryable: false,
       })
@@ -330,7 +319,7 @@ export class OwnerSessionRuntime {
     }
     if (method.access === 'local' && this.transport.kind !== 'local') {
       await this.respondError(requestId, {
-        code: 'LOCAL_TRANSPORT_REQUIRED',
+        code: 'owner.auth.local-transport-required',
         message: 'This method is only available on a local connection.',
         retryable: false,
       })
@@ -382,13 +371,11 @@ export class OwnerSessionRuntime {
     } catch (error) {
       const projectedError = projectError(error, state.abortCode)
       if (methodName.startsWith('owner.passkey.')) {
-        const reason =
-          error instanceof Error
-            ? `${error.name}: ${safeError(error) || 'No error message.'}`
-            : `Non-Error rejection (${typeof error})`
-        log.warn(
-          `Owner Passkey method failed (${methodName}, ${projectedError.code}, ${this.transport.kind}; reason=${reason})`,
-        )
+        log.warn('owner.passkey.method-failed', {
+          method: methodName.slice(0, 80),
+          code: projectedError.code,
+          transport: this.transport.kind,
+        })
       }
       await this.respondError(requestId, projectedError)
     } finally {
@@ -450,7 +437,7 @@ export class OwnerSessionRuntime {
       if (controller.signal.aborted || this.closed) return
       const parsedEvent = parseOwnerEventStreamMessage(event)
       if (!parsedEvent.ok) {
-        log.warn(`Owner stream event rejected (code=${parsedEvent.error.code})`)
+        log.warn('owner.stream.event-rejected', { code: parsedEvent.error.code })
         controller.abort()
         await this.send({
           type: 'stream.close',
@@ -499,7 +486,7 @@ export class OwnerSessionRuntime {
     }
   }
 
-  private async respondError(requestId: string, error: OwnerError): Promise<void> {
+  private async respondError(requestId: string, error: PublicErrorDto): Promise<void> {
     await this.send({ type: 'response', requestId, error })
   }
 
@@ -570,76 +557,14 @@ function isStreamResult(value: unknown): value is OwnerStreamResult {
 function projectError(
   error: unknown,
   abortCode?: 'REQUEST_TIMEOUT' | 'REQUEST_CANCELLED',
-): OwnerError {
-  if (abortCode === 'REQUEST_TIMEOUT') {
-    return { code: 'REQUEST_TIMEOUT', message: 'Request timed out.', retryable: true }
-  }
-  if (abortCode === 'REQUEST_CANCELLED') {
-    return { code: 'REQUEST_CANCELLED', message: 'Request was cancelled.', retryable: false }
-  }
-  if (error instanceof OwnerMethodError) {
-    const code = isOwnerErrorCode(error.code) ? error.code : 'INTERNAL_ERROR'
-    return { code, message: SAFE_ERROR_MESSAGES[code], retryable: error.retryable }
-  }
-  return { code: 'INTERNAL_ERROR', message: 'Request failed.', retryable: true }
+): PublicErrorDto {
+  if (abortCode)
+    return projectOwnerError(new OwnerMethodError(abortCode, abortCode === 'REQUEST_TIMEOUT'))
+  return projectOwnerError(error)
 }
 
 function abortError(code?: RequestState['abortCode']): Error {
   return new OwnerMethodError(code ?? 'REQUEST_CANCELLED', code === 'REQUEST_TIMEOUT')
-}
-
-const SAFE_ERROR_MESSAGES: Record<OwnerErrorCode, string> = {
-  INVALID_JSON: 'Frame is not valid JSON.',
-  INVALID_FRAME: 'Frame is invalid.',
-  UNSUPPORTED_FRAME: 'Frame type is not supported.',
-  FRAME_TOO_LARGE: 'Frame exceeds the maximum size.',
-  NON_TEXT_FRAME: 'Text frames are required.',
-  INVALID_HELLO: 'Hello frame is invalid.',
-  HELLO_REQUIRED: 'Hello must be the first frame.',
-  HELLO_ALREADY_RECEIVED: 'Hello can only be sent once per connection.',
-  UNAUTHORIZED: 'Authentication is required.',
-  LOCAL_TRANSPORT_REQUIRED: 'This method is only available on a local connection.',
-  WEBAUTHN_ORIGIN_NOT_ALLOWED: 'Passkey registration is not available for this connection.',
-  PASSKEY_INVALID: 'Passkey verification failed.',
-  PASSKEY_REQUIRED: 'A Passkey is required.',
-  ENROLLMENT_TICKET_REQUIRED: 'A local enrollment ticket is required.',
-  ENROLLMENT_TICKET_INVALID: 'The local enrollment ticket is invalid or expired.',
-  CHALLENGE_EXPIRED: 'The Passkey challenge has expired.',
-  DUPLICATE_REQUEST_ID: 'Request ID has already been used on this connection.',
-  REQUEST_LIMIT_EXCEEDED: 'Too many requests are active on this connection.',
-  REQUEST_TIMEOUT: 'Request timed out.',
-  REQUEST_CANCELLED: 'Request was cancelled.',
-  METHOD_NOT_FOUND: 'Requested method is not available.',
-  INVALID_PARAMS: 'Request parameters are invalid.',
-  INTERNAL_ERROR: 'Request failed.',
-  BACKPRESSURE_LIMIT_EXCEEDED: 'Connection send queue exceeded its limit.',
-  SUBSCRIPTION_EXPIRED: 'Event subscription has expired.',
-  INVALID_EVENT_CURSOR: 'Event cursor is invalid.',
-  INVALID_EVENT_ENVELOPE: 'Owner event envelope is invalid.',
-  INVALID_STREAM_EVENT: 'Owner stream event is invalid.',
-  EVENT_CURSOR_MISMATCH: 'Owner event cursor does not match its event identity.',
-  EVENT_IDENTITY_MISMATCH: 'Owner event identity changed for an existing cursor.',
-  OWNER_ALREADY_EXISTS: 'An Owner account already exists.',
-  INVALID_CREDENTIAL: 'Credential input is invalid.',
-  CREDENTIAL_NOT_FOUND: 'Credential was not found.',
-  PROJECT_NOT_FOUND: 'Project was not found.',
-  PROJECT_EXISTS: 'Project already exists.',
-  THREAD_NOT_FOUND: 'Thread was not found.',
-  INVALID_THREAD: 'Thread identifier is invalid.',
-  INVALID_THREAD_QUERY: 'Thread query is invalid.',
-  CODEX_START_REQUIRED: 'Start Codex before using this method.',
-  CODEX_PROTOCOL_ERROR: 'Codex returned an invalid response.',
-  INVALID_TURN_REQUEST: 'Turn request is invalid.',
-  AUTH_FAILURE: 'Authentication failed.',
-  CODEX_UNAVAILABLE: 'Codex is unavailable.',
-  RESOURCE_NOT_FOUND: 'Requested resource was not found.',
-  REMOTE_UNAVAILABLE: 'Remote administration is unavailable.',
-  REMOTE_RELAY_REQUIRED: 'A relay URL is required for pairing.',
-  DEVICE_NOT_FOUND: 'Paired device was not found.',
-}
-
-function isOwnerErrorCode(code: string): code is OwnerErrorCode {
-  return Object.hasOwn(SAFE_ERROR_MESSAGES, code)
 }
 
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

@@ -1,3 +1,5 @@
+import { isPublicErrorDto, type PublicErrorDto } from '@codex-web/telemetry/errors'
+
 export const DOMAIN_EVENT_RUNTIME = 'codex' as const
 export const MAX_DOMAIN_EVENT_PAYLOAD_BYTES = 128_000
 export const OWNER_MAX_FRAME_BYTES = 1024 * 1024
@@ -32,18 +34,23 @@ export type OwnerEventStreamMessage = OwnerStreamEvent | OwnerResetStreamEvent
 
 export type DomainEventParseErrorCode = 'INVALID_EVENT_ENVELOPE'
 
+export type OwnerEventParseIssueCode = DomainEventParseErrorCode
+export type OwnerEventParseIssue = { code: OwnerEventParseIssueCode; message: string }
+export type OwnerStreamParseIssueCode =
+  | OwnerEventParseIssueCode
+  | 'EVENT_CURSOR_MISMATCH'
+  | 'INVALID_STREAM_EVENT'
+export type OwnerStreamParseIssue = { code: OwnerStreamParseIssueCode; message: string }
+
 export type DomainEventParseResult =
   | { ok: true; event: DomainEventEnvelope }
-  | { ok: false; error: { code: DomainEventParseErrorCode; message: string } }
+  | { ok: false; error: OwnerEventParseIssue }
 
 export type OwnerStreamEventParseResult =
   | { ok: true; value: OwnerStreamEvent }
   | {
       ok: false
-      error: {
-        code: DomainEventParseErrorCode | 'EVENT_CURSOR_MISMATCH' | 'INVALID_STREAM_EVENT'
-        message: string
-      }
+      error: OwnerStreamParseIssue
     }
 
 export const OWNER_CAPABILITIES = [
@@ -61,64 +68,6 @@ export const OWNER_CAPABILITIES = [
 ] as const
 
 export type OwnerCapability = (typeof OWNER_CAPABILITIES)[number]
-
-export const OWNER_ERROR_CODES = [
-  'INVALID_JSON',
-  'INVALID_FRAME',
-  'UNSUPPORTED_FRAME',
-  'FRAME_TOO_LARGE',
-  'NON_TEXT_FRAME',
-  'INVALID_HELLO',
-  'HELLO_REQUIRED',
-  'HELLO_ALREADY_RECEIVED',
-  'UNAUTHORIZED',
-  'LOCAL_TRANSPORT_REQUIRED',
-  'WEBAUTHN_ORIGIN_NOT_ALLOWED',
-  'PASSKEY_INVALID',
-  'PASSKEY_REQUIRED',
-  'ENROLLMENT_TICKET_REQUIRED',
-  'ENROLLMENT_TICKET_INVALID',
-  'CHALLENGE_EXPIRED',
-  'DUPLICATE_REQUEST_ID',
-  'REQUEST_LIMIT_EXCEEDED',
-  'REQUEST_TIMEOUT',
-  'REQUEST_CANCELLED',
-  'METHOD_NOT_FOUND',
-  'INVALID_PARAMS',
-  'INTERNAL_ERROR',
-  'BACKPRESSURE_LIMIT_EXCEEDED',
-  'SUBSCRIPTION_EXPIRED',
-  'INVALID_EVENT_CURSOR',
-  'INVALID_EVENT_ENVELOPE',
-  'EVENT_CURSOR_MISMATCH',
-  'EVENT_IDENTITY_MISMATCH',
-  'INVALID_STREAM_EVENT',
-  'OWNER_ALREADY_EXISTS',
-  'INVALID_CREDENTIAL',
-  'CREDENTIAL_NOT_FOUND',
-  'PROJECT_NOT_FOUND',
-  'PROJECT_EXISTS',
-  'THREAD_NOT_FOUND',
-  'INVALID_THREAD',
-  'INVALID_THREAD_QUERY',
-  'CODEX_START_REQUIRED',
-  'CODEX_PROTOCOL_ERROR',
-  'INVALID_TURN_REQUEST',
-  'AUTH_FAILURE',
-  'CODEX_UNAVAILABLE',
-  'RESOURCE_NOT_FOUND',
-  'REMOTE_UNAVAILABLE',
-  'REMOTE_RELAY_REQUIRED',
-  'DEVICE_NOT_FOUND',
-] as const
-
-export type OwnerErrorCode = (typeof OWNER_ERROR_CODES)[number]
-
-export type OwnerError = {
-  code: OwnerErrorCode | (string & {})
-  message: string
-  retryable: boolean
-}
 
 export type OwnerHelloFrame = {
   type: 'hello'
@@ -145,7 +94,7 @@ export type OwnerResponseFrame = {
   type: 'response'
   requestId: string
   result?: unknown
-  error?: OwnerError
+  error?: PublicErrorDto
 }
 
 export type OwnerNotificationFrame = {
@@ -197,8 +146,20 @@ export type OwnerFrame =
   | OwnerCancelFrame
   | OwnerCloseFrame
 
+export type OwnerProtocolIssueCode =
+  | 'INVALID_JSON'
+  | 'INVALID_FRAME'
+  | 'UNSUPPORTED_FRAME'
+  | 'FRAME_TOO_LARGE'
+  | 'NON_TEXT_FRAME'
+  | 'INVALID_HELLO'
+  | 'INVALID_EVENT_ENVELOPE'
+  | 'EVENT_CURSOR_MISMATCH'
+  | 'EVENT_IDENTITY_MISMATCH'
+  | 'INVALID_STREAM_EVENT'
+
 export type OwnerProtocolIssue = {
-  code: OwnerErrorCode
+  code: OwnerProtocolIssueCode
   message: string
 }
 
@@ -336,15 +297,9 @@ export function parseOwnerStreamEvent(value: unknown): OwnerStreamEventParseResu
   return { ok: true, value: { cursor, event: parsedEvent.event } }
 }
 
-export function parseOwnerEventStreamMessage(value: unknown):
-  | { ok: true; message: OwnerEventStreamMessage }
-  | {
-      ok: false
-      error: {
-        code: DomainEventParseErrorCode | 'EVENT_CURSOR_MISMATCH' | 'INVALID_STREAM_EVENT'
-        message: string
-      }
-    } {
+export function parseOwnerEventStreamMessage(
+  value: unknown,
+): { ok: true; message: OwnerEventStreamMessage } | { ok: false; error: OwnerStreamParseIssue } {
   if (isRecord(value) && value.method === 'events.reset') {
     const params = value.params
     if (
@@ -415,7 +370,7 @@ function validateFrame(value: Record<string, unknown>): OwnerProtocolIssue | nul
         !isIdentifier(value.requestId) ||
         hasResult === hasError ||
         (hasResult && !isJsonValue(value.result)) ||
-        (hasError && !isOwnerError(value.error))
+        (hasError && !isOwnerPublicError(value.error))
       )
         return failureValue('INVALID_FRAME', 'Response frame is invalid.')
       return null
@@ -508,14 +463,8 @@ function isJsonValue(value: unknown): boolean {
   return true
 }
 
-function isOwnerError(value: unknown): value is OwnerError {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, ['code', 'message', 'retryable']) &&
-    isBoundedString(value.code, MAX_LABEL_LENGTH) &&
-    isBoundedString(value.message, 2048) &&
-    typeof value.retryable === 'boolean'
-  )
+function isOwnerPublicError(value: unknown): value is PublicErrorDto {
+  return isPublicErrorDto(value) && value.code.startsWith('owner.')
 }
 
 function isCapabilities(value: unknown): value is string[] {
@@ -582,15 +531,15 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength
 }
 
-function failure(code: OwnerErrorCode, message: string): OwnerParseResult {
+function failure(code: OwnerProtocolIssueCode, message: string): OwnerParseResult {
   return { ok: false, error: { code, message } }
 }
 
-function failureValue(code: OwnerErrorCode, message: string): OwnerProtocolIssue {
+function failureValue(code: OwnerProtocolIssueCode, message: string): OwnerProtocolIssue {
   return { code, message }
 }
 
-export function isOwnerEventErrorCode(code: unknown): code is OwnerErrorCode {
+export function isOwnerEventErrorCode(code: unknown): code is OwnerStreamParseIssueCode {
   return (
     typeof code === 'string' &&
     [

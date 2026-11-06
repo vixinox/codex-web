@@ -172,7 +172,7 @@ function rejectionTracker() {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([reason, rejected]) => `${reason}:${rejected}`)
         .join(',')
-      log.warn(`Stored domain events rejected (scope=${scope} count=${count} reasons=${reasons})`)
+      log.warn('codex.event-store.records-rejected', { scope, count, reasons })
     },
   }
 }

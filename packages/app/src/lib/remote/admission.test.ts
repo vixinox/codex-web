@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { OwnerRequestError } from '@/lib/owner-ws/owner-runtime'
+import { TelemetryErrorCode } from '@codex-web/telemetry/errors'
 import { authenticateWithPasskey } from './admission'
 
 describe('authenticateWithPasskey', () => {
   it('directs local users to register a Passkey when none is configured', async () => {
     const request = vi.fn().mockRejectedValue(
       new OwnerRequestError({
-        code: 'PASSKEY_REQUIRED',
+        code: TelemetryErrorCode.ownerAuthPasskeyRequired,
         message: 'A Passkey is required.',
       }),
     )
@@ -20,7 +21,7 @@ describe('authenticateWithPasskey', () => {
   it('directs remote users to configure a remote Passkey when none is registered', async () => {
     const request = vi.fn().mockRejectedValue(
       new OwnerRequestError({
-        code: 'PASSKEY_REQUIRED',
+        code: TelemetryErrorCode.ownerAuthPasskeyRequired,
         message: 'A Passkey is required.',
       }),
     )

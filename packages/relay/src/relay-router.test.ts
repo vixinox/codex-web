@@ -3,11 +3,15 @@ import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 
 import { RELAY_PROTOCOL_VERSION, type RelayAttachFrame } from '@codex-web/protocol/relay'
+import { TelemetryErrorCode } from '@codex-web/telemetry/errors'
+import { createLogger, type LogRecord } from '@codex-web/telemetry/logger'
 
 import { RelayRouter, type RelaySocket } from './relay-router.js'
 
 const ownerToken = 'relay-owner-token-that-is-at-least-32-characters'
-const createRouter = () => new RelayRouter({ ownerToken })
+const createRouter = (
+  options: Partial<Omit<ConstructorParameters<typeof RelayRouter>[0], 'ownerToken'>> = {},
+) => new RelayRouter({ ownerToken, ...options })
 const signedToken = (
   role: 'owner' | 'client',
   nodeId = 'node-1',
@@ -113,7 +117,7 @@ test('forwards opaque frames only between matching owner and client attachments'
     connectionId: 'connection-1',
     payload: 'ciphertext',
   })
-  assert.equal(router.forward(ownerResult.session.sessionId, ownerFrame), true)
+  assert.deepEqual(router.forward(ownerResult.session.sessionId, ownerFrame), { ok: true })
   assert.equal(client.messages.at(-1), ownerFrame)
   const clientFrame = JSON.stringify({
     type: 'relay.forward',
@@ -121,7 +125,9 @@ test('forwards opaque frames only between matching owner and client attachments'
     connectionId: 'connection-1',
     payload: 'opaque-response',
   })
-  assert.equal(router.forwardFromClient(clientResult.session.sessionId, clientFrame), true)
+  assert.deepEqual(router.forwardFromClient(clientResult.session.sessionId, clientFrame), {
+    ok: true,
+  })
   assert.equal(owner.messages.at(-1), clientFrame)
 })
 
@@ -195,7 +201,7 @@ test('rejects owner impersonation and enforces per-node client capacity', () => 
     },
     forgedOwner.socket,
   )
-  assert.deepEqual(rejected, { ok: false, reason: 'unauthorized' })
+  assert.deepEqual(rejected, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
 
   const owner = router.attach(
     {
@@ -239,7 +245,7 @@ test('rejects owner impersonation and enforces per-node client capacity', () => 
     },
     fakeSocket().socket,
   )
-  assert.deepEqual(excess, { ok: false, reason: 'capacity' })
+  assert.deepEqual(excess, { ok: false, code: TelemetryErrorCode.relayAttachCapacity })
 })
 
 test('rejects client tokens for another node, role, or trust epoch', () => {
@@ -272,7 +278,7 @@ test('rejects client tokens for another node, role, or trust epoch', () => {
     },
     fakeSocket().socket,
   )
-  assert.deepEqual(rejected, { ok: false, reason: 'unauthorized' })
+  assert.deepEqual(rejected, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
 })
 
 test('rejects forwarding above the per-connection message rate', () => {
@@ -313,8 +319,11 @@ test('rejects forwarding above the per-connection message rate', () => {
     connectionId: 'client',
     payload: 'opaque',
   })
-  assert.equal(router.forward(owner.session.sessionId, frame), true)
-  assert.equal(router.forward(owner.session.sessionId, frame), false)
+  assert.deepEqual(router.forward(owner.session.sessionId, frame), { ok: true })
+  assert.deepEqual(router.forward(owner.session.sessionId, frame), {
+    ok: false,
+    code: TelemetryErrorCode.relayFrameInvalid,
+  })
 })
 
 test('closes a slow peer without dropping the healthy endpoint', () => {
@@ -358,7 +367,7 @@ test('closes a slow peer without dropping the healthy endpoint', () => {
     connectionId: 'client',
     payload: 'opaque',
   })
-  assert.equal(router.forward(ownerResult.session.sessionId, frame), true)
+  assert.deepEqual(router.forward(ownerResult.session.sessionId, frame), { ok: true })
   assert.deepEqual(client.closed.at(-1), { code: 4002, reason: 'slow_consumer' })
   assert.equal(router.connectionCount(), 1)
   assert.equal(owner.closed.length, 0)
@@ -370,7 +379,7 @@ test('rejects a client attach without a device id as an invalid attachment', () 
   router.attach(ownerAttach(), owner.socket)
   const anonymous = fakeSocket()
   const result = router.attach(clientAttach({ deviceId: undefined }), anonymous.socket)
-  assert.deepEqual(result, { ok: false, reason: 'invalid_attachment' })
+  assert.deepEqual(result, { ok: false, code: TelemetryErrorCode.relayAttachInvalidFrame })
   assert.deepEqual(anonymous.closed, [])
   assert.equal(router.connectionCount(), 1)
 })
@@ -379,7 +388,7 @@ test('rejects an empty device id when the router is called without protocol pars
   const router = createRouter()
   router.attach(ownerAttach(), fakeSocket().socket)
   const result = router.attach(clientAttach({ deviceId: '' }), fakeSocket().socket)
-  assert.deepEqual(result, { ok: false, reason: 'invalid_attachment' })
+  assert.deepEqual(result, { ok: false, code: TelemetryErrorCode.relayAttachInvalidFrame })
   assert.equal(router.connectionCount(), 1)
 })
 
@@ -395,7 +404,7 @@ test('rejects a client attach whose device id differs from the token claim', () 
     }),
     impersonated.socket,
   )
-  assert.deepEqual(result, { ok: false, reason: 'unauthorized' })
+  assert.deepEqual(result, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
   assert.deepEqual(impersonated.closed, [])
   assert.equal(router.connectionCount(), 1)
   assert.equal(owner.messages.length, 0)
@@ -410,7 +419,7 @@ test('rejects a client token without a device claim', () => {
     clientAttach({ clientToken: signedToken('client', 'node-1', 0) }),
     client.socket,
   )
-  assert.deepEqual(result, { ok: false, reason: 'unauthorized' })
+  assert.deepEqual(result, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
   assert.equal(router.connectionCount(), 1)
 })
 
@@ -439,8 +448,7 @@ test('closes each socket exactly once when removeSession runs more than once', (
   const returningClient = fakeSocket()
   const returningOwner = fakeSocket()
   const returning = router.attach(clientAttach(), returningClient.socket)
-  assert.equal(returning.ok, false)
-  if (!returning.ok) assert.equal(returning.reason, 'unauthorized')
+  assert.deepEqual(returning, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
   assert.equal(router.connectionCount(), 0)
   const reconnectedOwner = router.attach(ownerAttach(), returningOwner.socket)
   assert.equal(reconnectedOwner.ok, true)
@@ -489,7 +497,7 @@ test('keeps owner codes unique among online nodes and releases the mapping on de
   })
   assert.deepEqual(
     router.attach(ownerAttach({ ownerCode: '111111111' }, 'node-2'), fakeSocket().socket),
-    { ok: false, reason: 'owner_code_conflict' },
+    { ok: false, code: TelemetryErrorCode.relayAttachOwnerConflict },
   )
   assert.deepEqual(
     router.attach(ownerAttach({ ownerCode: '222222222' }, 'node-2'), fakeSocket().socket).ok,
@@ -570,7 +578,7 @@ test('routes enrollment candidates by reference and applies normal node limits',
     },
     fakeSocket().socket,
   )
-  assert.deepEqual(overflow, { ok: false, reason: 'capacity' })
+  assert.deepEqual(overflow, { ok: false, code: TelemetryErrorCode.relayAttachCapacity })
   const offline = router.attach(
     {
       type: 'relay.attach',
@@ -582,7 +590,7 @@ test('routes enrollment candidates by reference and applies normal node limits',
     },
     fakeSocket().socket,
   )
-  assert.deepEqual(offline, { ok: false, reason: 'unauthorized' })
+  assert.deepEqual(offline, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
 })
 
 test('routes enrollment references through an Owner registration and clears them on unregister', () => {
@@ -593,17 +601,17 @@ test('routes enrollment references through an Owner registration and clears them
   if (!ownerResult.ok) return
 
   const reference = 'ref-enrollment-1'
-  assert.equal(
+  assert.deepEqual(
     router.registerEnrollmentReference(ownerResult.session.sessionId, {
       type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference,
       expiresAt: Date.now() + 60_000,
     }),
-    true,
+    { ok: true },
   )
   assert.deepEqual(router.resolveEnrollmentReference(reference), {
-    online: true,
+    ok: true,
     nodeId: 'node-1',
     trustEpoch: 0,
   })
@@ -631,8 +639,13 @@ test('routes enrollment references through an Owner registration and clears them
     ownerPublicKey: 'owner-public-key',
   })
 
-  assert.equal(router.unregisterEnrollmentReference(ownerResult.session.sessionId, reference), true)
-  assert.deepEqual(router.resolveEnrollmentReference(reference), { online: false })
+  assert.deepEqual(router.unregisterEnrollmentReference(ownerResult.session.sessionId, reference), {
+    ok: true,
+  })
+  assert.deepEqual(router.resolveEnrollmentReference(reference), {
+    ok: false,
+    code: TelemetryErrorCode.relayEnrollmentReferenceInvalid,
+  })
   const rejected = router.attach(
     {
       type: 'relay.attach',
@@ -644,7 +657,7 @@ test('routes enrollment references through an Owner registration and clears them
     },
     fakeSocket().socket,
   )
-  assert.deepEqual(rejected, { ok: false, reason: 'unauthorized' })
+  assert.deepEqual(rejected, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
 })
 
 test('replaces and expires enrollment references, and owner detach removes them', async () => {
@@ -654,39 +667,48 @@ test('replaces and expires enrollment references, and owner detach removes them'
   assert.equal(ownerResult.ok, true)
   if (!ownerResult.ok) return
 
-  assert.equal(
+  assert.deepEqual(
     router.registerEnrollmentReference(ownerResult.session.sessionId, {
       type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference: 'ref-old',
       expiresAt: Date.now() + 60_000,
     }),
-    true,
+    { ok: true },
   )
-  assert.equal(
+  assert.deepEqual(
     router.registerEnrollmentReference(ownerResult.session.sessionId, {
       type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference: 'ref-new',
       expiresAt: Date.now() + 60_000,
     }),
-    true,
+    { ok: true },
   )
-  assert.deepEqual(router.resolveEnrollmentReference('ref-old'), { online: false })
-  assert.equal(
+  assert.deepEqual(router.resolveEnrollmentReference('ref-old'), {
+    ok: false,
+    code: TelemetryErrorCode.relayEnrollmentReferenceInvalid,
+  })
+  assert.deepEqual(
     router.registerEnrollmentReference(ownerResult.session.sessionId, {
       type: 'relay.enrollment.register',
       version: RELAY_PROTOCOL_VERSION,
       reference: 'ref-expiring',
       expiresAt: Date.now() + 2,
     }),
-    true,
+    { ok: true },
   )
   await new Promise((resolve) => setTimeout(resolve, 5))
-  assert.deepEqual(router.resolveEnrollmentReference('ref-expiring'), { online: false })
+  assert.deepEqual(router.resolveEnrollmentReference('ref-expiring'), {
+    ok: false,
+    code: TelemetryErrorCode.relayEnrollmentReferenceInvalid,
+  })
 
   router.detach(ownerResult.session.sessionId)
-  assert.deepEqual(router.resolveEnrollmentReference('ref-new'), { online: false })
+  assert.deepEqual(router.resolveEnrollmentReference('ref-new'), {
+    ok: false,
+    code: TelemetryErrorCode.relayEnrollmentReferenceInvalid,
+  })
 })
 
 test('allows replacing a routing slot at the global connection limit', () => {
@@ -731,7 +753,7 @@ test('closes a peer whose buffered bytes plus the current frame exceed the queue
   // The peer sits one byte below the cap. Only counting the current frame's bytes makes
   // `frameBytes - 1 + frameBytes` overflow; ignoring them would have delivered this frame.
   client.setBufferedBytes(frameBytes - 1)
-  assert.equal(router.forward(ownerResult.session.sessionId, frame), true)
+  assert.deepEqual(router.forward(ownerResult.session.sessionId, frame), { ok: true })
   assert.deepEqual(client.closed, [{ code: 4002, reason: 'slow_consumer' }])
   assert.equal(router.getSession(clientResult.session.sessionId), undefined)
   assert.equal(router.connectionCount(), 1)
@@ -756,14 +778,14 @@ test('delivers a frame that exactly fits the queue cap without closing the peer'
   if (!ownerResult.ok || !clientResult.ok) return
 
   client.setBufferedBytes(0)
-  assert.equal(router.forward(ownerResult.session.sessionId, frame), true)
+  assert.deepEqual(router.forward(ownerResult.session.sessionId, frame), { ok: true })
   assert.deepEqual(client.closed, [])
   assert.equal(client.messages.at(-1), frame)
   assert.equal(router.getSession(clientResult.session.sessionId), clientResult.session)
   assert.equal(router.connectionCount(), 2)
 
   client.setBufferedBytes(1)
-  assert.equal(router.forward(ownerResult.session.sessionId, frame), true)
+  assert.deepEqual(router.forward(ownerResult.session.sessionId, frame), { ok: true })
   assert.deepEqual(client.closed, [{ code: 4002, reason: 'slow_consumer' }])
   assert.equal(router.connectionCount(), 1)
   assert.equal(client.messages.length, 1)
@@ -791,7 +813,7 @@ test('enforces the queue cap before forwarding owner close frames', () => {
   if (!ownerResult.ok || !clientResult.ok) return
 
   client.setBufferedBytes(1)
-  assert.equal(router.forward(ownerResult.session.sessionId, frame), true)
+  assert.deepEqual(router.forward(ownerResult.session.sessionId, frame), { ok: true })
   assert.deepEqual(client.closed, [{ code: 4002, reason: 'slow_consumer' }])
   assert.equal(router.getSession(clientResult.session.sessionId), undefined)
   assert.equal(router.getSession(ownerResult.session.sessionId), ownerResult.session)
@@ -814,8 +836,11 @@ test('closes exactly one slot and is a no-op when the session is already gone', 
   assert.equal(otherResult.ok, true)
   if (!ownerResult.ok || !clientResult.ok || !otherResult.ok) return
 
-  assert.equal(router.close(clientResult.session.sessionId, 'device_revoked'), true)
-  assert.deepEqual(client.closed, [{ code: 4002, reason: 'device_revoked' }])
+  assert.deepEqual(
+    router.close(clientResult.session.sessionId, TelemetryErrorCode.relayConnectionClosedByOwner),
+    { ok: true },
+  )
+  assert.deepEqual(client.closed, [{ code: 4002, reason: 'closed_by_owner' }])
   assert.deepEqual(other.closed, [])
   assert.equal(router.connectionCount(), 2)
   assert.deepEqual(
@@ -823,15 +848,83 @@ test('closes exactly one slot and is a no-op when the session is already gone', 
     ['relay.client.connected', 'relay.client.connected', 'relay.client.disconnected'],
   )
 
-  assert.equal(router.close(clientResult.session.sessionId, 'device_revoked'), false)
-  assert.deepEqual(client.closed, [{ code: 4002, reason: 'device_revoked' }])
+  assert.deepEqual(
+    router.close(clientResult.session.sessionId, TelemetryErrorCode.relayConnectionClosedByOwner),
+    { ok: false, code: TelemetryErrorCode.relayConnectionPeerDisconnected },
+  )
+  assert.deepEqual(client.closed, [{ code: 4002, reason: 'closed_by_owner' }])
   assert.equal(router.connectionCount(), 2)
   assert.equal(owner.messages.length, 3)
 
-  assert.equal(router.close(ownerResult.session.sessionId, 'owner_shutdown'), true)
-  assert.deepEqual(owner.closed, [{ code: 4002, reason: 'owner_shutdown' }])
-  assert.deepEqual(other.closed, [{ code: 4002, reason: 'owner_shutdown' }])
+  assert.deepEqual(
+    router.close(ownerResult.session.sessionId, TelemetryErrorCode.relayConnectionClosedByOwner),
+    { ok: true },
+  )
+  assert.deepEqual(owner.closed, [{ code: 4002, reason: 'closed_by_owner' }])
+  assert.deepEqual(other.closed, [{ code: 4002, reason: 'closed_by_owner' }])
   assert.equal(router.connectionCount(), 0)
-  assert.equal(router.close(ownerResult.session.sessionId, 'owner_shutdown'), false)
-  assert.deepEqual(owner.closed, [{ code: 4002, reason: 'owner_shutdown' }])
+  assert.deepEqual(
+    router.close(ownerResult.session.sessionId, TelemetryErrorCode.relayConnectionClosedByOwner),
+    { ok: false, code: TelemetryErrorCode.relayConnectionPeerDisconnected },
+  )
+  assert.deepEqual(owner.closed, [{ code: 4002, reason: 'closed_by_owner' }])
+})
+
+test('logs typed attach, lifecycle, and reference events without secrets or forwarded payloads', () => {
+  const records: LogRecord[] = []
+  const logger = createLogger({ sink: (record) => records.push(record), level: 'debug' })
+  const router = createRouter({ logger })
+  const ownerCode = '987654321'
+  const reference = 'enrollment-reference-secret'
+  const token = signedToken('owner')
+  const owner = router.attach(ownerAttach({ ownerCode, ownerToken: token }), fakeSocket().socket)
+  assert.equal(owner.ok, true)
+  if (!owner.ok) return
+  assert.deepEqual(
+    router.registerEnrollmentReference(owner.session.sessionId, {
+      type: 'relay.enrollment.register',
+      version: RELAY_PROTOCOL_VERSION,
+      reference,
+      expiresAt: Date.now() + 60_000,
+    }),
+    { ok: true },
+  )
+  const rejected = router.attach(
+    ownerAttach({ ownerCode, ownerToken: 'bad-secret-token-value' }, 'node-2'),
+    fakeSocket().socket,
+  )
+  assert.deepEqual(rejected, { ok: false, code: TelemetryErrorCode.relayAttachUnauthorized })
+  const client = router.attach(clientAttach(), fakeSocket().socket)
+  assert.equal(client.ok, true)
+  if (!client.ok) return
+  const frame = JSON.stringify({
+    type: 'relay.forward',
+    version: RELAY_PROTOCOL_VERSION,
+    connectionId: 'client',
+    payload: 'frame-payload-secret',
+  })
+  assert.deepEqual(router.forward(owner.session.sessionId, frame), { ok: true })
+
+  const serialized = JSON.stringify(records)
+  for (const secret of [ownerToken, token, ownerCode, reference, 'frame-payload-secret'])
+    assert.equal(serialized.includes(secret), false)
+  assert.ok(records.every((record) => record.fields.service === 'relay'))
+  assert.ok(records.some((record) => record.event === 'relay.attach.accepted'))
+  assert.ok(records.some((record) => record.event === 'relay.attach.rejected'))
+  assert.ok(records.some((record) => record.event === 'relay.enrollment.reference.registered'))
+  assert.equal(records.filter((record) => record.event === 'relay.frame.forwarded').length, 0)
+})
+
+test('contains logger sink failures while completing router cleanup', () => {
+  const logger = createLogger({
+    sink: () => {
+      throw new Error('private sink failure')
+    },
+  })
+  const router = createRouter({ logger })
+  const owner = router.attach(ownerAttach(), fakeSocket().socket)
+  assert.equal(owner.ok, true)
+  if (!owner.ok) return
+  assert.doesNotThrow(() => router.detach(owner.session.sessionId))
+  assert.equal(router.connectionCount(), 0)
 })

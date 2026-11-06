@@ -5,7 +5,8 @@ import { CodexManager } from '../codex/manager.js'
 import { SqliteEventStore } from '../codex/event-store.js'
 import { CodexRuntimeManager } from '../codex/runtime-manager.js'
 import { createDatabase, prepareOwnerDatabase } from '../database.js'
-import { log, safeError } from '../logger.js'
+import { createServerLogger, log, setServerLogger } from '../logger.js'
+import { createNodeLogger } from '@codex-web/telemetry/node'
 import { createWorkspaceService } from '../workspace.js'
 import { OwnerConnector } from '../remote/connector.js'
 import { RemoteTrustStore } from '../remote/trust-store.js'
@@ -20,6 +21,13 @@ let remote: OwnerConnector | undefined
 let instanceLock: Awaited<ReturnType<typeof acquireOwnerInstanceLock>> | undefined
 
 try {
+  try {
+    setServerLogger(createServerLogger())
+  } catch {
+    setServerLogger(createNodeLogger({ level: 'info' }))
+    log.error('telemetry.logger.configuration-failed')
+    throw new Error('Server logger configuration failed')
+  }
   instanceLock = await acquireOwnerInstanceLock(config.dataRoot)
   prepareOwnerDatabase(config)
   ;({ db, driver } = createDatabase(config))
@@ -63,9 +71,12 @@ try {
   })
   await connector.start()
   await app.listen({ host: config.host, port: config.port })
-  log.success(`Owner server listening at http://${config.host}:${config.port}`)
+  log.info('owner.server.listening', { port: config.port })
 } catch (error) {
-  log.error(`Owner server failed to start: ${safeError(error)}`)
+  log.error('owner.server.startup-failed', {
+    errorType:
+      error instanceof Error ? error.name.replace(/[^A-Za-z0-9]/gu, '').slice(0, 48) : typeof error,
+  })
   try {
     await remote?.stop()
   } catch {

@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { presentAppError } from '@/lib/errors/presentation'
 import {
   Dialog,
   DialogContent,
@@ -110,7 +111,7 @@ export function CredentialPanel({ controller, projects, onRetryProjects }: Crede
         : testCredentialLocally(credential))
       showResult(available ? 'success' : 'error')
     } catch (error) {
-      showResult('error', error instanceof Error ? error.message : 'Credential test failed.')
+      showResult('error', presentAppError(error, 'Credential test failed.'))
     }
   }
 

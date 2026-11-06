@@ -149,6 +149,28 @@ test('uses the credential provider as the configured custom provider id', async 
   }
 })
 
+test('provider endpoint logging excludes URL credentials, paths, and query values', async (context) => {
+  const fieldsCaptured: Record<string, unknown>[] = []
+  context.mock.method(log, 'info', (event: string, fields: Record<string, unknown>) => {
+    if (event === 'codex.provider.configured') fieldsCaptured.push(fields)
+  })
+  const privateEndpointWorkspace = {
+    ...workspace,
+    getCredential: async () => ({
+      id: 'credential',
+      provider: 'private-provider',
+      baseUrl: 'https://user:password@api.example.com/private/path?token=query-secret',
+      encryptedApiKey: 'encrypted',
+      apiKey: 'secret',
+    }),
+  } as unknown as WorkspaceService
+  const manager = new CodexManager(config, privateEndpointWorkspace, () => new AutoTransport())
+  await manager.get('user-a', 'project', 'credential')
+  assert.equal(fieldsCaptured[0]?.endpointHost, 'api.example.com')
+  assert.doesNotMatch(JSON.stringify(fieldsCaptured), /password|private\/path|query-secret/u)
+  await manager.shutdown()
+})
+
 test('routes server requests by user and thread and responds with the original JSON-RPC id', async () => {
   const transport = new AutoTransport()
   const manager = new CodexManager(config, workspace, () => transport)
@@ -194,8 +216,8 @@ test('routes server requests by user and thread and responds with the original J
 
 test('logs server requests before rejecting requests without a thread id', async (context) => {
   const lines: string[] = []
-  context.mock.method(log, 'info', (message: string) => {
-    if (message.startsWith('[app-server-rpc]')) lines.push(message)
+  context.mock.method(log, 'info', (event: string, fields: Record<string, unknown>) => {
+    if (event === 'codex.rpc.message') lines.push(JSON.stringify(fields))
   })
   const transport = new AutoTransport()
   const manager = new CodexManager(config, workspace, () => transport)
@@ -209,7 +231,7 @@ test('logs server requests before rejecting requests without a thread id', async
   assert.equal(lines.length, 1)
   assert.match(
     lines[0]!,
-    /direction=server-request.*method=future\/request.*futureField:string\(chars=13\)/,
+    /"direction":"server-request".*"method":"future\/request".*futureField:string\(chars=13\)/,
   )
   assert.doesNotMatch(lines[0]!, /private value/)
   await manager.shutdown()

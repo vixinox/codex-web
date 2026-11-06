@@ -360,7 +360,7 @@ function normalizeStoredEvent(value: { id: number; message: unknown }): StoredEv
   const parsed = parseDomainEventEnvelope(value.message)
   if (!parsed.ok || parsed.event.eventId !== value.id) {
     const reason = parsed.ok ? 'EVENT_ID_MISMATCH' : parsed.error.code
-    log.warn(`Stored domain event rejected (eventId=${value.id} reason=${reason})`)
+    log.warn('codex.event.rejected', { reason })
     return null
   }
   return { id: value.id, message: projectDomainEvent(parsed.event) }

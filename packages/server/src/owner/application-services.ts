@@ -9,14 +9,10 @@ import { parseSkillHandles, resolveSelectedSkills } from './skill-selection.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { OwnerConnector } from '../remote/connector.js'
 import { EnrollmentInvitationStore } from '../remote/enrollment-invitation-store.js'
-import { OwnerMethodError } from './session-runtime.js'
+import { OwnerMethodError } from './errors.js'
 import type { OwnerContext, OwnerMethodContext, OwnerTransport } from './session-runtime.js'
-import {
-  AuthDomainError,
-  createOwnerAuthDomain,
-  WEBAUTHN_PROFILES,
-  type WebAuthnProfiles,
-} from './auth-domain.js'
+import { createOwnerAuthDomain, WEBAUTHN_PROFILES, type WebAuthnProfiles } from './auth-domain.js'
+import { AuthDomainError } from './errors.js'
 import type { Database } from '../database.js'
 import { log } from '../logger.js'
 
@@ -180,9 +176,10 @@ export function createOwnerApplicationServices(
 
     async passkeyRegisterOptions(context: OwnerMethodContext, _input: Record<string, unknown>) {
       const profile = webauthnProfile(context.transport)
-      log.info(
-        `Owner Passkey registration options requested (${profile ?? 'unavailable'}, ${context.transport.kind})`,
-      )
+      log.info('owner.passkey.registration-options-requested', {
+        profile: profile ?? 'unavailable',
+        transport: context.transport.kind,
+      })
       if (!authDomain || !profile) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
       if (profile === 'remote') requireOwner(context)
       else if (context.owner) requireOwner(context)
@@ -207,14 +204,10 @@ export function createOwnerApplicationServices(
           profile,
           ...(typeof input.ticket === 'string' ? { ticket: input.ticket } : {}),
         })
-        log.info(`Owner Passkey registration succeeded (${profile})`)
+        log.info('owner.passkey.registration-succeeded', { profile })
         return result
       } catch (error) {
-        throw new OwnerMethodError(
-          error instanceof Error ? error.message : 'PASSKEY_INVALID',
-          false,
-          { cause: error },
-        )
+        throw new OwnerMethodError('PASSKEY_INVALID', false, { cause: error })
       }
     },
 

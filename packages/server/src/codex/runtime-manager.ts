@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { gunzipSync } from 'node:zlib'
 
 import type { ServerConfig } from '../config.js'
-import { log, safeError } from '../logger.js'
+import { log } from '../logger.js'
 import type { CodexCommand } from './stdio-transport.js'
 
 // Node's native fetch does not consume HTTP(S)_PROXY unless this opt-in is set.
@@ -21,7 +21,7 @@ if (
     process.env.http_proxy)
 ) {
   process.env.NODE_USE_ENV_PROXY = '1'
-  log.info('Using the configured HTTP(S) proxy for Codex runtime downloads')
+  log.info('codex.runtime.proxy-enabled')
 }
 
 const GITHUB_API = 'https://api.github.com/repos/openai/codex/releases'
@@ -55,6 +55,12 @@ import {
 
 export type { CodexRuntimeManifest } from './runtime-policy.js'
 export { CodexRuntimeError, targetFor } from './runtime-policy.js'
+
+function errorType(error: unknown) {
+  return error instanceof Error
+    ? error.name.replace(/[^A-Za-z0-9]/gu, '').slice(0, 48)
+    : typeof error
+}
 
 export type CodexRuntimeStatus = {
   source: 'managed-release' | 'explicit-command'
@@ -101,7 +107,7 @@ export class CodexRuntimeManager {
 
   /** Ensure a verified runtime exists before the HTTP server starts listening. */
   async ensureRuntime(): Promise<ManagedRuntime> {
-    log.info(`Preparing Codex App Server runtime (${this.target.id})`)
+    log.info('codex.runtime.preparing', { platform: this.target.id })
     const manifest = await this.readManifest()
     if (
       manifest.active &&
@@ -121,20 +127,19 @@ export class CodexRuntimeManager {
           }
         }
       } catch (error) {
-        log.warn(`Latest runtime check failed; using cached runtime: ${safeError(error)}`)
+        log.warn('codex.runtime.latest-check-failed', { errorType: errorType(error) })
       }
       const active = await this.readManifest()
       if (active.active && (await this.validEntry(active.active))) {
-        log.success(`Using verified Codex App Server ${active.active.version} from local cache`)
+        log.info('codex.runtime.cache-selected', { version: active.active.version })
         return { ...active.active }
       }
     }
-    if (manifest.active)
-      log.warn('Cached Codex App Server runtime is missing or failed integrity validation')
+    if (manifest.active) log.warn('codex.runtime.cached-entry-invalid')
 
     let lastError: unknown = null
     try {
-      log.info('No usable cached runtime; downloading the latest stable release')
+      log.info('codex.runtime.download-required')
       manifest.candidate = null
       await this.writeManifest(manifest)
       const status = await this.install()
@@ -149,7 +154,7 @@ export class CodexRuntimeManager {
       next.candidate = null
       next.restartRequired = false
       await this.writeManifest(next)
-      log.success(`Codex App Server ${next.active.version} downloaded, verified, and activated`)
+      log.info('codex.runtime.activated', { version: next.active.version })
       return {
         version: next.active.version,
         executablePath: next.active.executablePath,
@@ -157,7 +162,7 @@ export class CodexRuntimeManager {
       }
     } catch (error) {
       lastError = error
-      log.warn(`Latest runtime attempt failed: ${safeError(error)}`)
+      log.warn('codex.runtime.latest-attempt-failed', { errorType: errorType(error) })
     }
     throw new CodexRuntimeError(
       'CODEX_RUNTIME_REQUIRED',
@@ -185,7 +190,7 @@ export class CodexRuntimeManager {
 
   async install(): Promise<CodexRuntimeStatus> {
     const manifest = await this.readManifest()
-    log.info('Looking up the latest stable Codex App Server release')
+    log.info('codex.runtime.release-lookup-started')
     const release = await this.releaseFor(undefined)
     const releaseVersionValue = releaseVersion(release)
     if (!releaseVersionValue)
@@ -200,19 +205,22 @@ export class CodexRuntimeManager {
         `The ${releaseVersionValue} release has no ${this.target.id} App Server asset`,
       )
     const expectedHash = await this.expectedHash(release, asset)
-    log.info(`Selected Codex App Server ${releaseVersionValue} asset for ${this.target.id}`)
+    log.info('codex.runtime.asset-selected', {
+      version: releaseVersionValue,
+      platform: this.target.id,
+    })
     const staging = join(this.root, 'downloads', `${releaseVersionValue}-${randomUUID()}`)
     const destination = join(this.root, 'releases', releaseVersionValue, this.target.id)
     try {
       await mkdir(staging, { recursive: true })
       const archivePath = join(staging, asset.name)
-      log.info(`Downloading Codex App Server ${releaseVersionValue}...`)
+      log.info('codex.runtime.download-started', { version: releaseVersionValue })
       const actualHash = await this.download(
         asset.browser_download_url,
         archivePath,
         releaseVersionValue,
       )
-      log.info(`Download complete; validating SHA256 checksum`)
+      log.info('codex.runtime.download-completed')
       if (actualHash !== expectedHash)
         throw new CodexRuntimeError(
           'CODEX_RUNTIME_VERIFICATION_FAILED',
@@ -221,7 +229,7 @@ export class CodexRuntimeManager {
       await rm(destination, { recursive: true, force: true })
       await mkdir(destination, { recursive: true })
       const executablePath = await this.extractPackage(archivePath, destination)
-      log.info(`Installed release payload; running executable and JSON-RPC smoke verification`)
+      log.info('codex.runtime.verification-started', { version: releaseVersionValue })
       const executableHash = createHash('sha256')
         .update(await readFile(executablePath))
         .digest('hex')
@@ -241,15 +249,14 @@ export class CodexRuntimeManager {
       try {
         await this.smokeVerify(candidate)
         candidate.verificationStatus = 'passed'
-        log.success(
-          `Codex App Server ${releaseVersionValue} passed version and protocol verification`,
-        )
+        log.info('codex.runtime.verification-passed', { version: releaseVersionValue })
       } catch (error) {
         candidate.verificationStatus = 'failed'
         candidate.verificationError = safeMessage(error)
-        log.error(
-          `Codex App Server ${releaseVersionValue} verification failed: ${safeError(error)}`,
-        )
+        log.error('codex.runtime.verification-failed', {
+          version: releaseVersionValue,
+          errorType: errorType(error),
+        })
       }
       manifest.candidate = candidate
       await this.writeManifest(manifest)
@@ -440,12 +447,12 @@ export class CodexRuntimeManager {
   private async expectedHash(release: GitHubRelease, asset: ReleaseAsset) {
     const fromDigest = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest ?? '')?.[1]?.toLowerCase()
     if (fromDigest) {
-      log.info('Using SHA256 digest from GitHub release metadata')
+      log.info('codex.runtime.digest-from-release-metadata')
       return fromDigest
     }
     const sums = release.assets.find((entry) => entry.name === 'codex-package_SHA256SUMS')
     if (!sums) throw new Error('Official release did not provide a checksum for this asset')
-    log.info('GitHub release has no inline digest; downloading official SHA256SUMS manifest')
+    log.info('codex.runtime.digest-manifest-required')
     const response = await this.requestWithDiagnostics(
       this.downloadUrl(sums.browser_download_url),
       {
@@ -530,7 +537,10 @@ export class CodexRuntimeManager {
     try {
       const response = await this.request(url, init)
       if (response.url && response.url !== url)
-        log.info(`${operation} followed redirect to ${new URL(response.url).hostname}`)
+        log.info('codex.runtime.download-redirected', {
+          operation,
+          host: new URL(response.url).hostname,
+        })
       return response
     } catch (error) {
       const host = new URL(url).hostname

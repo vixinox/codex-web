@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ownerSettings } from '@/app/settings/domain/owner-settings'
 import type { CodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export function ConfigurationSection({ runtime }: { runtime: CodexRuntimeController }) {
   const [value, setValue] = React.useState('')
@@ -54,7 +55,7 @@ export function ConfigurationSection({ runtime }: { runtime: CodexRuntimeControl
         )
           return
         setStatus('error')
-        setError(nextError instanceof Error ? nextError.message : 'Could not load configuration.')
+        setError(presentAppError(nextError, 'Could not load configuration.'))
         setSettledRequest(requestKey)
       })
     return () => controller.abort()
@@ -84,7 +85,7 @@ export function ConfigurationSection({ runtime }: { runtime: CodexRuntimeControl
       const restarted = await runtime.restart(credentialId)
       if (!restarted) setError('Configuration was saved, but Codex could not restart.')
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Could not save configuration.')
+      setError(presentAppError(nextError, 'Could not save configuration.'))
     } finally {
       setSaving(false)
     }

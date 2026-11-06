@@ -5,6 +5,7 @@ import type {
   WorkspaceThread,
 } from '@/app/workspace/workspace-model'
 import type { ProjectSummary } from '@/app/workspace/domain/owner-workspace'
+import { presentAppError } from '@/lib/errors/presentation'
 import {
   applyOptimisticOperations,
   findThread,
@@ -185,8 +186,7 @@ export function createWorkspaceCatalog(
                 ...current,
                 rootThreads: {
                   status: 'error',
-                  message:
-                    error instanceof Error ? error.message : 'Could not load threads. Try again.',
+                  message: presentAppError(error, 'Could not load threads. Try again.'),
                 },
               }
             : current,
@@ -241,8 +241,7 @@ export function createWorkspaceCatalog(
             ...project,
             threads: {
               status: 'error',
-              message:
-                error instanceof Error ? error.message : 'Could not load threads. Try again.',
+              message: presentAppError(error, 'Could not load threads. Try again.'),
             },
           })),
         )
@@ -282,7 +281,7 @@ export function createWorkspaceCatalog(
         if (isCodexUnavailable(error)) runtime.onUnavailable()
         updateSourceModel(() => ({
           status: 'error',
-          message: error instanceof Error ? error.message : 'Could not load projects. Try again.',
+          message: presentAppError(error, 'Could not load projects. Try again.'),
         }))
       })
       .finally(() => {
@@ -495,8 +494,8 @@ function isAbortError(error: unknown) {
 function isCodexUnavailable(error: unknown) {
   const candidate = error as { code?: unknown; status?: unknown }
   return (
-    candidate?.code === 'CODEX_UNAVAILABLE' ||
-    candidate?.code === 'CODEX_START_REQUIRED' ||
+    candidate?.code === 'owner.runtime.unavailable' ||
+    candidate?.code === 'owner.runtime.start-required' ||
     candidate?.status === 409 ||
     candidate?.status === 502
   )

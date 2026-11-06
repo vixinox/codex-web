@@ -53,8 +53,7 @@ export function CopyButton({
       resetTimerRef.current = window.setTimeout(() => {
         setCopied(false)
       }, delay)
-    } catch (error) {
-      console.error('Failed to copy text: ', error)
+    } catch {
       setCopied(false)
     }
   }, [text, canCopy, copied, delay])

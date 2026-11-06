@@ -11,6 +11,15 @@ import {
   type RelayClientDisconnectedFrame,
   type RelayEnrollmentRegisterFrame,
 } from '@codex-web/protocol/relay'
+import type { Logger } from '@codex-web/telemetry/logger'
+import { TelemetryErrorCode } from '@codex-web/telemetry/errors'
+
+import {
+  mapRelayConnectionClose,
+  type RelayConnectionCloseCode,
+  type RelayFailureCode,
+} from './close-policy.js'
+import { containRelayLogger, nullRelayLogger, safeRelayIdentifier } from './logging.js'
 
 export type RelaySocket = {
   send(data: string | ArrayBuffer | Uint8Array): void
@@ -38,18 +47,13 @@ export type RelaySession = {
 
 export type RelayAttachResult =
   | { ok: true; session: RelaySession; replaced?: RelaySession }
-  | {
-      ok: false
-      reason:
-        | 'duplicate_role'
-        | 'invalid_attachment'
-        | 'capacity'
-        | 'unauthorized'
-        | 'owner_code_conflict'
-    }
+  | { ok: false; code: RelayFailureCode }
+
+export type RelayOperationResult = { ok: true } | { ok: false; code: RelayFailureCode }
 
 export type RelayRouterOptions = {
   ownerToken: string
+  logger?: Logger
   maxConnections?: number
   maxClientsPerNode?: number
   maxFrameBytes?: number
@@ -78,9 +82,11 @@ export class RelayRouter {
   private readonly enrollmentReferences = new Map<string, { nodeId: string; expiresAt: number }>()
   private readonly sessions = new Map<string, RelaySession>()
   private readonly options: RelayRouterOptions
+  private readonly logger: Logger
 
   constructor(options: RelayRouterOptions) {
     this.options = options
+    this.logger = containRelayLogger(options.logger ?? nullRelayLogger).child({ service: 'relay' })
   }
 
   attach(attachment: RelayAttachFrame, socket: RelaySocket): RelayAttachResult {
@@ -96,25 +102,25 @@ export class RelayRouter {
       (attachment.role === 'client' &&
         (typeof attachment.deviceId !== 'string' || attachment.deviceId.length === 0))
     ) {
-      return { ok: false, reason: 'invalid_attachment' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachInvalidFrame, attachment)
     }
     const epoch = trustEpoch as number
     const existingNode = this.nodes.get(attachment.nodeId)
     if (attachment.role === 'owner' && !isOwnerCode(attachment.ownerCode))
-      return { ok: false, reason: 'invalid_attachment' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachInvalidFrame, attachment)
     const existing =
       attachment.role === 'owner'
         ? existingNode?.owner
         : existingNode?.clients.get(attachment.connectionId)
     if (this.sessions.size >= (this.options.maxConnections ?? DEFAULT_MAX_CONNECTIONS) && !existing)
-      return { ok: false, reason: 'capacity' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachCapacity, attachment)
     if (attachment.role === 'client') {
       if (
         !existingNode?.owner ||
         existingNode.trustEpoch !== epoch ||
         !verifyClientToken(attachment, this.options.ownerToken, epoch)
       )
-        return { ok: false, reason: 'unauthorized' }
+        return this.rejectAttach(TelemetryErrorCode.relayAttachUnauthorized, attachment)
     } else if (
       !verifyToken(
         attachment.ownerToken,
@@ -124,14 +130,14 @@ export class RelayRouter {
         'owner',
       )
     ) {
-      return { ok: false, reason: 'unauthorized' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachUnauthorized, attachment)
     }
     if (
       attachment.role === 'owner' &&
       this.ownerCodes.has(attachment.ownerCode) &&
       this.ownerCodes.get(attachment.ownerCode) !== attachment.nodeId
     )
-      return { ok: false, reason: 'owner_code_conflict' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachOwnerConflict, attachment)
     const node = existingNode ?? this.createNode()
     if (attachment.role === 'owner') node.trustEpoch = epoch
     if (
@@ -139,7 +145,7 @@ export class RelayRouter {
       !node.clients.has(attachment.connectionId) &&
       node.clients.size >= (this.options.maxClientsPerNode ?? DEFAULT_MAX_CLIENTS_PER_NODE)
     )
-      return { ok: false, reason: 'capacity' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachCapacity, attachment)
     const session: RelaySession = {
       sessionId: randomUUID(),
       nodeId: attachment.nodeId,
@@ -176,71 +182,95 @@ export class RelayRouter {
     }
     this.nodes.set(attachment.nodeId, node)
     this.sessions.set(session.sessionId, session)
-    if (existing) this.removeSession(existing, 'replaced')
+    if (existing) this.removeSession(existing, TelemetryErrorCode.relayConnectionReplaced)
     if (attachment.role === 'owner') {
       for (const client of node.clients.values()) this.notifyConnected(session, client)
     } else {
       this.notifyConnected(node.owner, session)
     }
+    this.logger.info('relay.attach.accepted', {
+      role: session.role,
+      ...(safeRelayIdentifier(session.nodeId)
+        ? { nodeId: safeRelayIdentifier(session.nodeId) }
+        : {}),
+      ...(safeRelayIdentifier(session.connectionId)
+        ? { connectionId: safeRelayIdentifier(session.connectionId) }
+        : {}),
+    })
     return { ok: true, session, ...(existing ? { replaced: existing } : {}) }
   }
 
   detach(sessionId: string) {
     if (!this.sessions.has(sessionId)) return
-    this.removeSession(this.sessions.get(sessionId)!, 'peer_disconnected')
+    this.removeSession(
+      this.sessions.get(sessionId)!,
+      TelemetryErrorCode.relayConnectionPeerDisconnected,
+    )
   }
 
-  forward(sessionId: string, data: string | ArrayBuffer | Uint8Array): boolean {
+  forward(sessionId: string, data: string | ArrayBuffer | Uint8Array): RelayOperationResult {
     const session = this.sessions.get(sessionId)
-    if (!session || session.role !== 'owner' || typeof data !== 'string') return false
+    if (!session) return this.rejectMissingSession()
+    if (session.role !== 'owner' || typeof data !== 'string')
+      return this.rejectFrame(TelemetryErrorCode.relayFrameInvalid)
     const frameBytes = encoder.encode(data).byteLength
-    if (frameBytes > this.maxFrameBytes) return false
-    if (!this.consumeRateToken(session)) return false
+    if (frameBytes > this.maxFrameBytes)
+      return this.rejectFrame(TelemetryErrorCode.relayFrameTooLarge)
+    if (!this.consumeRateToken(session))
+      return this.rejectFrame(TelemetryErrorCode.relayFrameInvalid)
     const frame = parseFrame(data)
-    if (!isRelayForwardFrame(frame)) return false
+    if (!isRelayForwardFrame(frame)) return this.rejectFrame(TelemetryErrorCode.relayFrameInvalid)
     if (isClosePayload(frame.payload)) {
       // The owner asked to terminate that connection; the relay owns socket lifetime, so it drops
       // the addressed slot. The peer already received the explanation inside the opaque payload.
       const target = this.nodes.get(session.nodeId)?.clients.get(frame.connectionId)
       if (target) {
         if (!this.hasOutboundCapacity(target.socket, frameBytes)) {
-          this.removeSession(target, 'slow_consumer')
-          return true
+          this.removeSession(target, TelemetryErrorCode.relayConnectionSlowConsumer)
+          return { ok: true }
         }
         target.socket.send(data)
-        this.removeSession(target, 'closed_by_owner')
+        this.removeSession(target, TelemetryErrorCode.relayConnectionClosedByOwner)
       }
-      return true
+      return { ok: true }
     }
     const peer = this.nodes.get(session.nodeId)?.clients.get(frame.connectionId)
     // The target connection can disappear between the owner writing and the relay reading (a
     // rejected or replaced client). That is a dropped frame for one peer, not a fault of the
     // owner's own socket, so report it as handled.
-    if (!peer) return true
+    if (!peer) return { ok: true }
     if (!this.hasOutboundCapacity(peer.socket, frameBytes)) {
-      this.removeSession(peer, 'slow_consumer')
-      return true
+      this.removeSession(peer, TelemetryErrorCode.relayConnectionSlowConsumer)
+      return { ok: true }
     }
     peer.socket.send(data)
-    return true
+    return { ok: true }
   }
 
-  forwardFromClient(sessionId: string, data: string | ArrayBuffer | Uint8Array): boolean {
+  forwardFromClient(
+    sessionId: string,
+    data: string | ArrayBuffer | Uint8Array,
+  ): RelayOperationResult {
     const session = this.sessions.get(sessionId)
-    if (!session || session.role !== 'client' || typeof data !== 'string') return false
+    if (!session) return this.rejectMissingSession()
+    if (session.role !== 'client' || typeof data !== 'string')
+      return this.rejectFrame(TelemetryErrorCode.relayFrameInvalid)
     const frameBytes = encoder.encode(data).byteLength
-    if (frameBytes > this.maxFrameBytes) return false
-    if (!this.consumeRateToken(session)) return false
+    if (frameBytes > this.maxFrameBytes)
+      return this.rejectFrame(TelemetryErrorCode.relayFrameTooLarge)
+    if (!this.consumeRateToken(session))
+      return this.rejectFrame(TelemetryErrorCode.relayFrameInvalid)
     const frame = parseFrame(data)
-    if (!isRelayForwardFrame(frame) || frame.connectionId !== session.connectionId) return false
+    if (!isRelayForwardFrame(frame) || frame.connectionId !== session.connectionId)
+      return this.rejectFrame(TelemetryErrorCode.relayFrameInvalid)
     const owner = this.nodes.get(session.nodeId)?.owner
-    if (!owner) return true
+    if (!owner) return { ok: true }
     if (!this.hasOutboundCapacity(owner.socket, frameBytes)) {
-      this.removeSession(session, 'slow_consumer')
-      return true
+      this.removeSession(session, TelemetryErrorCode.relayConnectionSlowConsumer)
+      return { ok: true }
     }
     owner.socket.send(data)
-    return true
+    return { ok: true }
   }
 
   connectionCount() {
@@ -262,29 +292,45 @@ export class RelayRouter {
 
   resolveEnrollmentReference(
     reference: string,
-  ): { online: true; nodeId: string; trustEpoch: number } | { online: false } {
+  ):
+    | { ok: true; nodeId: string; trustEpoch: number }
+    | { ok: false; code: typeof TelemetryErrorCode.relayEnrollmentReferenceInvalid } {
     const mapping = this.enrollmentReferences.get(reference)
     if (!mapping || mapping.expiresAt <= Date.now()) {
       if (mapping) this.removeEnrollmentReference(reference, mapping.nodeId)
-      return { online: false }
+      this.logger.warn('relay.enrollment.reference.rejected', {
+        code: TelemetryErrorCode.relayEnrollmentReferenceInvalid,
+        action: 'resolve',
+      })
+      return this.invalidEnrollmentReference('resolve')
     }
     const node = this.nodes.get(mapping.nodeId)
     if (!node?.owner || !node.enrollmentReferences.has(reference)) {
       this.removeEnrollmentReference(reference, mapping.nodeId)
-      return { online: false }
+      this.logger.warn('relay.enrollment.reference.rejected', {
+        code: TelemetryErrorCode.relayEnrollmentReferenceInvalid,
+        action: 'resolve',
+      })
+      return this.invalidEnrollmentReference('resolve')
     }
-    return { online: true, nodeId: mapping.nodeId, trustEpoch: node.trustEpoch }
+    return { ok: true, nodeId: mapping.nodeId, trustEpoch: node.trustEpoch }
   }
 
-  registerEnrollmentReference(sessionId: string, frame: RelayEnrollmentRegisterFrame): boolean {
+  registerEnrollmentReference(
+    sessionId: string,
+    frame: RelayEnrollmentRegisterFrame,
+  ): RelayOperationResult {
     const session = this.sessions.get(sessionId)
-    if (!session || session.role !== 'owner' || frame.expiresAt <= Date.now()) return false
+    if (!session || session.role !== 'owner' || frame.expiresAt <= Date.now())
+      return this.invalidEnrollmentReference('register')
     const node = this.nodes.get(session.nodeId)
-    if (!node?.owner || node.owner.sessionId !== sessionId) return false
+    if (!node?.owner || node.owner.sessionId !== sessionId)
+      return this.invalidEnrollmentReference('register')
     const existing = this.enrollmentReferences.get(frame.reference)
     if (existing && existing.expiresAt <= Date.now())
       this.removeEnrollmentReference(frame.reference, existing.nodeId)
-    if (existing && existing.nodeId !== session.nodeId) return false
+    if (existing && existing.nodeId !== session.nodeId)
+      return this.invalidEnrollmentReference('register')
     for (const reference of node.enrollmentReferences)
       this.removeEnrollmentReference(reference, session.nodeId)
     this.enrollmentReferences.set(frame.reference, {
@@ -292,23 +338,35 @@ export class RelayRouter {
       expiresAt: frame.expiresAt,
     })
     node.enrollmentReferences.add(frame.reference)
-    return true
+    this.logger.info('relay.enrollment.reference.registered', {
+      ...(safeRelayIdentifier(session.connectionId)
+        ? { connectionId: safeRelayIdentifier(session.connectionId) }
+        : {}),
+    })
+    return { ok: true }
   }
 
-  unregisterEnrollmentReference(sessionId: string, reference?: string): boolean {
+  unregisterEnrollmentReference(sessionId: string, reference?: string): RelayOperationResult {
     const session = this.sessions.get(sessionId)
-    if (!session || session.role !== 'owner') return false
+    if (!session || session.role !== 'owner') return this.invalidEnrollmentReference('unregister')
     const node = this.nodes.get(session.nodeId)
-    if (!node?.owner || node.owner.sessionId !== sessionId) return false
+    if (!node?.owner || node.owner.sessionId !== sessionId)
+      return this.invalidEnrollmentReference('unregister')
     if (reference) {
       const mapping = this.enrollmentReferences.get(reference)
-      if (!mapping || mapping.nodeId !== session.nodeId) return false
+      if (!mapping || mapping.nodeId !== session.nodeId)
+        return this.invalidEnrollmentReference('unregister')
       this.removeEnrollmentReference(reference, session.nodeId)
-      return true
+    } else {
+      for (const active of node.enrollmentReferences)
+        this.removeEnrollmentReference(active, session.nodeId)
     }
-    for (const active of node.enrollmentReferences)
-      this.removeEnrollmentReference(active, session.nodeId)
-    return true
+    this.logger.info('relay.enrollment.reference.unregistered', {
+      ...(safeRelayIdentifier(session.connectionId)
+        ? { connectionId: safeRelayIdentifier(session.connectionId) }
+        : {}),
+    })
+    return { ok: true }
   }
 
   getSession(sessionId: string) {
@@ -320,10 +378,11 @@ export class RelayRouter {
   }
 
   /** Closes a routing slot from the router side without trusting the socket's own close callback. */
-  close(sessionId: string, reason: string) {
-    if (!this.sessions.has(sessionId)) return false
-    this.removeSession(this.sessions.get(sessionId)!, reason)
-    return true
+  close(sessionId: string, reason: RelayConnectionCloseCode): RelayOperationResult {
+    const session = this.sessions.get(sessionId)
+    if (!session) return this.rejectMissingSession()
+    this.removeSession(session, reason)
+    return { ok: true }
   }
 
   private hasOutboundCapacity(socket: RelaySocket, frameBytes: number) {
@@ -377,11 +436,13 @@ export class RelayRouter {
    * replacement attach, or from an explicit router close; the session presence check makes every
    * repeated path a no-op so peers are never closed twice and node entries never leak.
    */
-  private removeSession(session: RelaySession, reason: string) {
+  private removeSession(session: RelaySession, reason: RelayConnectionCloseCode) {
     if (!this.sessions.delete(session.sessionId)) return
+    this.logConnectionClose(session, reason)
+    const close = mapRelayConnectionClose(reason)
     const node = this.nodes.get(session.nodeId)
     if (!node) {
-      session.socket.close(4002, reason)
+      session.socket.close(close.code, close.reason)
       return
     }
     if (session.role === 'owner') {
@@ -397,7 +458,10 @@ export class RelayRouter {
       for (const client of clients) {
         // Owner loss is a connection-level event: clients reconnect and re-handshake, so no
         // `relay.client.disconnected` is owed to an owner that is no longer there.
-        if (this.sessions.delete(client.sessionId)) client.socket.close(4002, reason)
+        if (this.sessions.delete(client.sessionId)) {
+          this.logConnectionClose(client, reason)
+          client.socket.close(close.code, close.reason)
+        }
       }
     } else {
       if (node.clients.get(session.connectionId)?.sessionId === session.sessionId)
@@ -412,7 +476,7 @@ export class RelayRouter {
     }
     if (this.nodes.get(session.nodeId) === node && !node.owner && !node.clients.size)
       this.nodes.delete(session.nodeId)
-    session.socket.close(4002, reason)
+    session.socket.close(close.code, close.reason)
   }
 
   private removeOwnerCode(ownerCode: string, nodeId: string) {
@@ -435,7 +499,7 @@ export class RelayRouter {
       encoder.encode(attachment.connectionId).byteLength > MAX_ROUTE_ID_BYTES ||
       !isRouteReference(attachment.reference)
     )
-      return { ok: false, reason: 'invalid_attachment' }
+      return this.rejectAttach(TelemetryErrorCode.relayEnrollmentReferenceInvalid, attachment)
     const reference = attachment.reference
     const mapping = this.enrollmentReferences.get(reference)
     if (mapping && mapping.expiresAt <= Date.now())
@@ -443,12 +507,13 @@ export class RelayRouter {
     const nodeId = this.enrollmentReferences.get(reference)?.nodeId
     const node = nodeId ? this.nodes.get(nodeId) : undefined
     if (!nodeId || !node?.owner || !node.enrollmentReferences.has(reference))
-      return { ok: false, reason: 'unauthorized' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachUnauthorized, attachment)
     if (this.sessions.size >= (this.options.maxConnections ?? DEFAULT_MAX_CONNECTIONS))
-      return { ok: false, reason: 'capacity' }
-    if (node.clients.has(attachment.connectionId)) return { ok: false, reason: 'duplicate_role' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachCapacity, attachment)
+    if (node.clients.has(attachment.connectionId))
+      return this.rejectAttach(TelemetryErrorCode.relayAttachDuplicate, attachment)
     if (node.clients.size >= (this.options.maxClientsPerNode ?? DEFAULT_MAX_CLIENTS_PER_NODE))
-      return { ok: false, reason: 'capacity' }
+      return this.rejectAttach(TelemetryErrorCode.relayAttachCapacity, attachment)
     const session: RelaySession = {
       sessionId: randomUUID(),
       nodeId,
@@ -465,7 +530,76 @@ export class RelayRouter {
     node.clients.set(attachment.connectionId, session)
     this.sessions.set(session.sessionId, session)
     this.notifyConnected(node.owner, session)
+    this.logger.info('relay.attach.accepted', {
+      role: session.role,
+      ...(safeRelayIdentifier(session.nodeId)
+        ? { nodeId: safeRelayIdentifier(session.nodeId) }
+        : {}),
+      ...(safeRelayIdentifier(session.connectionId)
+        ? { connectionId: safeRelayIdentifier(session.connectionId) }
+        : {}),
+    })
     return { ok: true, session }
+  }
+
+  private rejectAttach(code: RelayFailureCode, attachment: RelayAttachFrame): RelayAttachResult {
+    const fields = {
+      code,
+      role: attachment.role,
+      ...('nodeId' in attachment && safeRelayIdentifier(attachment.nodeId)
+        ? { nodeId: safeRelayIdentifier(attachment.nodeId) }
+        : {}),
+      ...(safeRelayIdentifier(attachment.connectionId)
+        ? { connectionId: safeRelayIdentifier(attachment.connectionId) }
+        : {}),
+    }
+    this.logger.warn(
+      code === TelemetryErrorCode.relayAttachOwnerConflict
+        ? 'relay.attach.owner-conflict'
+        : 'relay.attach.rejected',
+      fields,
+    )
+    return { ok: false, code }
+  }
+
+  private rejectFrame(code: RelayFailureCode): RelayOperationResult {
+    this.logger.warn('relay.frame.rejected', { code })
+    return { ok: false, code }
+  }
+
+  private rejectMissingSession(): RelayOperationResult {
+    const code = TelemetryErrorCode.relayConnectionPeerDisconnected
+    this.logger.warn('relay.connection.operation-rejected', { code })
+    return { ok: false, code }
+  }
+
+  private invalidEnrollmentReference(action: 'resolve' | 'register' | 'unregister'): {
+    ok: false
+    code: typeof TelemetryErrorCode.relayEnrollmentReferenceInvalid
+  } {
+    if (action !== 'resolve')
+      this.logger.warn('relay.enrollment.reference.rejected', {
+        action,
+        code: TelemetryErrorCode.relayEnrollmentReferenceInvalid,
+      })
+    return { ok: false, code: TelemetryErrorCode.relayEnrollmentReferenceInvalid }
+  }
+
+  private logConnectionClose(session: RelaySession, code: RelayConnectionCloseCode) {
+    const event =
+      code === TelemetryErrorCode.relayConnectionReplaced
+        ? 'relay.connection.replaced'
+        : 'relay.connection.closed'
+    this.logger.info(event, {
+      code,
+      role: session.role,
+      ...(safeRelayIdentifier(session.nodeId)
+        ? { nodeId: safeRelayIdentifier(session.nodeId) }
+        : {}),
+      ...(safeRelayIdentifier(session.connectionId)
+        ? { connectionId: safeRelayIdentifier(session.connectionId) }
+        : {}),
+    })
   }
 }
 

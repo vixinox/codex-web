@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "dependencies": {
+    "@codex-web/telemetry": "workspace:*"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test src/owner/*.test.ts src/relay/*.test.ts"

@@ -20,6 +20,7 @@ import {
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
 import { remoteRelayUrl } from '@/lib/remote/relay-profile'
 import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
+import { presentAppError } from '@/lib/errors/presentation'
 import { isKnownAppRoute } from '@/app/composition/routes/route-model'
 import { MobileWorkspaceNavigation } from '@/app/composition/navigation/workspace-navigation'
 import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
@@ -201,7 +202,7 @@ export function EnrollmentRoute() {
         })
       } catch (cause) {
         if (!active) return
-        setError(cause instanceof Error ? cause.message : 'Device enrollment failed.')
+        setError(presentAppError(cause, 'Device enrollment failed.'))
       }
     })()
 

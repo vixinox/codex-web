@@ -32,6 +32,7 @@ import type { CodeSnippetAttachment } from '@/app/chat/composer/model/draft-mode
 import { waitForThreadAvailability } from '@/lib/bridge/thread-availability'
 import type { ComposerSession, ComposerSessionOptions } from '../interface'
 import type { AcceptedTurn } from '../adapters/composer-adapter'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export type {
   AcceptedTurn,
@@ -241,9 +242,7 @@ export function useComposerController({
           items: [],
           message:
             adapter.messages?.skillsError ??
-            (nextError instanceof Error && nextError.message
-              ? nextError.message
-              : 'Could not load skills right now.'),
+            presentAppError(nextError, 'Could not load skills right now.'),
         })
         setSettledSkillRequest(requestKey)
       })
@@ -406,10 +405,10 @@ export function useComposerController({
       } catch (nextError) {
         if (generation === targetGeneration.current) onPendingChange?.(null, null)
         if (nextError instanceof DOMException && nextError.name === 'AbortError') return
-        const message =
-          nextError instanceof Error
-            ? nextError.message
-            : (adapter.messages?.submitError ?? 'Codex could not send this message.')
+        const message = presentAppError(
+          nextError,
+          adapter.messages?.submitError ?? 'Codex could not send this message.',
+        )
         if (generation === targetGeneration.current) {
           setError(message)
           if (placeholderId) onThreadCreationFailed?.(placeholderId, message)
@@ -463,7 +462,7 @@ export function useComposerController({
       setCompacting(false)
       const message =
         adapter.messages?.compactError ??
-        (nextError instanceof Error ? nextError.message : 'Codex could not compact this chat.')
+        presentAppError(nextError, 'Codex could not compact this chat.')
       setError(message)
       current.onError?.(message)
       if (isCodexUnavailable(nextError)) current.onUnavailable?.()
@@ -529,8 +528,8 @@ function isNetworkError(error: unknown) {
 function isCodexUnavailable(error: unknown) {
   const value = error as { status?: unknown; code?: unknown }
   return (
-    value?.code === 'CODEX_UNAVAILABLE' ||
-    value?.code === 'CODEX_START_REQUIRED' ||
+    value?.code === 'owner.runtime.unavailable' ||
+    value?.code === 'owner.runtime.start-required' ||
     value?.status === 409 ||
     value?.status === 502
   )

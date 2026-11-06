@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/app/tsconfig.json" },
+    { "path": "./packages/telemetry/tsconfig.json" },
     { "path": "./packages/server/tsconfig.json" },
     { "path": "./packages/protocol/tsconfig.json" },
     { "path": "./packages/relay/tsconfig.json" }

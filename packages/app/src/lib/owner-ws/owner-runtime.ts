@@ -3,9 +3,10 @@ import {
   isOwnerEventErrorCode,
   parseOwnerFrame,
   type OwnerCapability,
-  type OwnerError,
   type OwnerFrame,
 } from '@codex-web/protocol/owner'
+import type { PublicErrorDto } from '@codex-web/telemetry/errors'
+import { AppLocalError, AppLocalErrorCode } from '@/lib/errors/app-local-error'
 
 export type OwnerTarget = {
   url: string
@@ -48,27 +49,36 @@ export type OwnerAuthenticationState =
   | 'failed'
 export type OwnerRuntimePhase = 'idle' | 'resuming' | 'ready' | 'blocked' | 'failed'
 
-export type OwnerErrorCode = string
-
 export class OwnerRequestError extends Error {
-  readonly code: OwnerErrorCode
-  readonly retryable: boolean
+  readonly publicError: PublicErrorDto
+  readonly code: PublicErrorDto['code']
+  readonly params: PublicErrorDto['params']
+  readonly retryable: PublicErrorDto['retryable']
 
-  constructor(error: OwnerError | { code: string; message: string; retryable?: boolean }) {
-    super(`${error.code}: ${error.message}`)
+  constructor(error: PublicErrorDto, options?: ErrorOptions) {
+    super(error.message ?? 'Owner request failed.', options)
     this.name = 'OwnerRequestError'
+    this.publicError = error
     this.code = error.code
-    this.retryable = error.retryable ?? false
+    this.params = error.params
+    this.retryable = error.retryable
   }
 }
 
-export class OwnerConnectionError extends Error {
-  readonly code?: string
-
-  constructor(message: string, code?: string) {
-    super(message)
+export class OwnerConnectionError extends AppLocalError {
+  constructor(
+    message: string,
+    code: AppLocalErrorCode = AppLocalErrorCode.ownerConnectionUnavailable,
+  ) {
+    super(code, message)
     this.name = 'OwnerConnectionError'
-    this.code = code
+  }
+}
+
+export class OwnerLocalRequestError extends AppLocalError {
+  constructor(code: AppLocalErrorCode, message: string) {
+    super(code, message)
+    this.name = 'OwnerLocalRequestError'
   }
 }
 
@@ -140,7 +150,7 @@ export function createOwnerRuntime(
     streams.clear()
   }
 
-  const shutdown = (reason: string, error = new OwnerConnectionError(reason)) => {
+  const shutdown = (reason: string, error: Error = new OwnerConnectionError(reason)) => {
     if (closed && !socket) return
     closed = true
     const current = socket
@@ -211,17 +221,16 @@ export function createOwnerRuntime(
       stream.abortCleanup?.()
       if (isOwnerEventErrorCode(frame.reason))
         stream.handlers.onError?.(
-          new OwnerRequestError({
-            code: frame.reason,
-            message: 'Owner event stream was rejected by contract validation.',
-            retryable: false,
-          }),
+          new OwnerConnectionError(
+            'Owner event stream failed contract validation.',
+            AppLocalErrorCode.ownerProtocolInvalidFrame,
+          ),
         )
       stream.handlers.onClose?.(frame.reason)
       return
     }
     if (frame.type === 'close') {
-      const error = new OwnerConnectionError(frame.message ?? frame.code, frame.code)
+      const error = new OwnerConnectionError('Owner connection was closed by the server.')
       if (state === 'connecting') rejectConnection?.(error)
       shutdown(frame.code, error)
     }
@@ -252,11 +261,10 @@ export function createOwnerRuntime(
     nextSocket.onmessage = (event) => {
       const parsed = parseOwnerFrame(typeof event.data === 'string' ? event.data : '')
       if (!parsed.ok) {
-        const error = new OwnerRequestError({
-          code: parsed.error.code,
-          message: parsed.error.message,
-          retryable: false,
-        })
+        const error = new OwnerConnectionError(
+          'Owner sent an invalid protocol frame.',
+          AppLocalErrorCode.ownerProtocolInvalidFrame,
+        )
         if (state === 'connecting') reject(error)
         shutdown(parsed.error.code, error)
         phase = 'failed'
@@ -315,11 +323,10 @@ export function createOwnerRuntime(
           /* closed */
         }
         reject(
-          new OwnerRequestError({
-            code: 'REQUEST_TIMEOUT',
-            message: 'Request timed out.',
-            retryable: true,
-          }),
+          new OwnerLocalRequestError(
+            AppLocalErrorCode.ownerRequestTimeout,
+            'The request timed out.',
+          ),
         )
       }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       const onAbort = () => {
@@ -331,7 +338,10 @@ export function createOwnerRuntime(
           /* closed */
         }
         reject(
-          new OwnerRequestError({ code: 'REQUEST_CANCELLED', message: 'Request was cancelled.' }),
+          new OwnerLocalRequestError(
+            AppLocalErrorCode.ownerRequestCancelled,
+            'The request was cancelled.',
+          ),
         )
       }
       options.signal?.addEventListener('abort', onAbort, { once: true })
@@ -375,11 +385,7 @@ export function createOwnerRuntime(
         handlers.onClose?.('REQUEST_TIMEOUT')
       }
       handlers.onError?.(
-        new OwnerRequestError({
-          code: 'REQUEST_TIMEOUT',
-          message: 'Stream timed out.',
-          retryable: true,
-        }),
+        new OwnerLocalRequestError(AppLocalErrorCode.ownerRequestTimeout, 'The stream timed out.'),
       )
     }, request.options?.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     const placeholder: ActiveStream = {

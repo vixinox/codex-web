@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react'
 import { toast } from '@/components/ui/toast'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export class RootErrorBoundary extends Component<
   { children: ReactNode },
@@ -42,9 +43,5 @@ export class RootErrorBoundary extends Component<
 }
 
 function describeRenderError(error: unknown) {
-  if (error instanceof Error) {
-    const message = error.message.replace(/[\r\n]+/g, ' ').slice(0, 300)
-    return `${error.name}: ${message || 'No error message was provided.'}`
-  }
-  return 'The browser reported an unknown rendering error.'
+  return presentAppError(error, 'The screen could not be rendered.')
 }

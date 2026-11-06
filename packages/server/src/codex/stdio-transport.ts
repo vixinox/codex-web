@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import process from 'node:process'
-import { log, safeError } from '../logger.js'
+import { log } from '../logger.js'
 
 export type JsonRpcMessage = Record<string, unknown>
 export type CodexCommand = string | { executable: string; args?: string[] }
@@ -42,25 +42,29 @@ export class CodexStdioTransport {
       stdio: 'pipe',
       windowsHide: true,
     })
-    log.info(`Codex App Server starting (${executable})`)
+    log.info('codex.process.starting', { commandKind: typeof command })
     createInterface({ input: this.process.stdout }).on('line', (line) => {
       const message = parseJsonRpcLine(line)
       if (message) for (const listener of this.listeners) listener(message)
     })
     createInterface({ input: this.process.stderr }).on('line', (line) => {
-      this.stderrTail.push(safeError(line))
+      this.stderrTail.push(String(line.length))
       if (this.stderrTail.length > 8) this.stderrTail.shift()
       for (const listener of this.stderrListeners) listener(line)
     })
     this.process.on('error', (error) => {
-      log.error(`Codex process failed to start: ${safeError(error)}`)
+      log.error('codex.process.start-failed', {
+        errorType: error.name.replace(/[^A-Za-z0-9]/gu, '').slice(0, 48),
+      })
       for (const listener of this.errorListeners) listener(error)
     })
     this.process.on('exit', (code, signal) => {
-      const detail = this.stderrTail.length ? `; stderr: ${this.stderrTail.join(' | ')}` : ''
-      log.error(
-        `Codex App Server exited with code=${code ?? 'null'} signal=${signal ?? 'none'}${detail}`,
-      )
+      log.error('codex.process.exited', {
+        exitCode: code,
+        signal: signal ?? 'none',
+        stderrLines: this.stderrTail.length,
+        stderrBytes: this.stderrTail.reduce((total, length) => total + Number(length), 0),
+      })
       for (const listener of this.exitListeners) listener(code, signal)
     })
   }

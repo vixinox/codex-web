@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { getOwnerBridge } from '@/lib/bridge/owner-runtime'
+import { presentAppError } from '@/lib/errors/presentation'
 
 type CodexStatus = {
   status: 'ready' | 'starting' | 'restarting' | 'stopped' | 'failed'
@@ -171,7 +172,7 @@ export function useCodexRuntimeController(ownerReady = true): CodexRuntimeContro
       applyTerminalStatus(initial, 'error')
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return
-      const message = error instanceof Error ? error.message : 'Codex status is unavailable.'
+      const message = presentAppError(error, 'Codex status is unavailable.')
       const currentCredentialId =
         modelRef.current.status === 'started'
           ? modelRef.current.codex.currentCredentialId
@@ -220,7 +221,7 @@ export function useCodexRuntimeController(ownerReady = true): CodexRuntimeContro
         updateModel({ status: 'stopped', currentCredentialId: status.currentCredentialId })
       } catch (error) {
         if (disposed || (error instanceof DOMException && error.name === 'AbortError')) return
-        const message = error instanceof Error ? error.message : 'Codex could not start.'
+        const message = presentAppError(error, 'Codex could not start.')
         emitError(message)
         updateModel({ status: 'stopped', currentCredentialId: null })
       } finally {

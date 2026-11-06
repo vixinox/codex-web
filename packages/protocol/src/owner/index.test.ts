@@ -162,3 +162,36 @@ test('validates mutually exclusive response outcomes and single cancellation tar
   )
   assert.equal(parseOwnerFrame(JSON.stringify({ type: 'response', requestId: 'r1' })).ok, false)
 })
+
+test('response errors use safe Owner DTOs and reject Relay or malformed errors', () => {
+  const parseError = (error: unknown) =>
+    parseOwnerFrame(JSON.stringify({ type: 'response', requestId: 'r1', error }))
+  const valid = {
+    code: 'owner.future.unknown-reason',
+    retryable: true,
+    params: { attempts: 2, available: false },
+    message: 'The operation could not be completed.',
+  }
+  assert.deepEqual(parseError(valid), {
+    ok: true,
+    frame: { type: 'response', requestId: 'r1', error: valid },
+  })
+  for (const error of [
+    { code: 'relay.attach.unauthorized', retryable: false },
+    { code: 'owner.invalid code', retryable: false },
+    { code: 'owner.request.failed', retryable: false, extra: true },
+    { code: 'owner.request.failed', retryable: false, params: { secret: 'private' } },
+    { code: 'owner.request.failed', retryable: 'no' },
+  ]) {
+    assert.equal(parseError(error).ok, false)
+  }
+})
+
+test('frame parser issues stay separate from business DTOs and never echo input', () => {
+  const parsed = parseOwnerFrame('{"type":"request","params":{"token":"never-echo"}')
+  assert.equal(parsed.ok, false)
+  if (!parsed.ok) {
+    assert.equal(parsed.error.code, 'INVALID_JSON')
+    assert.equal(parsed.error.message.includes('never-echo'), false)
+  }
+})

@@ -1,6 +1,7 @@
 import { createRelayApp } from './app.js'
 import { RelayRouter } from './relay-router.js'
 import { upgradeWebSocket, websocket } from 'hono/bun'
+import { createBunLogger } from '@codex-web/telemetry/bun'
 
 const port = Number(process.env.RELAY_PORT ?? 8787)
 const hostname = process.env.RELAY_HOST ?? '127.0.0.1'
@@ -11,9 +12,11 @@ const positiveInt = (name: string, fallback: number) => {
   const value = Number(process.env[name] ?? fallback)
   return Number.isSafeInteger(value) && value > 0 ? value : fallback
 }
+const logger = createBunLogger({ fields: { service: 'relay' } })
 const { app } = createRelayApp(
   new RelayRouter({
     ownerToken,
+    logger,
     maxConnections: positiveInt('RELAY_MAX_CONNECTIONS', 10_000),
     maxClientsPerNode: positiveInt('RELAY_MAX_CLIENTS_PER_NODE', 8),
     maxFrameBytes: positiveInt('RELAY_MAX_FRAME_BYTES', 2 * 1024 * 1024),
@@ -21,11 +24,16 @@ const { app } = createRelayApp(
     maxQueuedBytes: positiveInt('RELAY_MAX_QUEUED_BYTES', 8 * 1024 * 1024),
   }),
   { upgradeWebSocket, websocket },
+  logger,
 )
 
 Bun.serve({
   fetch: app.fetch,
   websocket,
+  hostname,
+  port: Number.isSafeInteger(port) && port > 0 ? port : 8787,
+})
+logger.info('relay.started', {
   hostname,
   port: Number.isSafeInteger(port) && port > 0 ? port : 8787,
 })

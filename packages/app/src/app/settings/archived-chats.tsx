@@ -6,6 +6,7 @@ import { ownerWorkspace } from '@/app/workspace/domain/owner-workspace'
 import type { ThreadSummary } from '@/lib/bridge/interfaces/thread'
 import { Separator } from '@/components/ui/separator'
 import { SettingsSection, SettingsSectionContent } from './settings-page-layout'
+import { presentAppError } from '@/lib/errors/presentation'
 
 export function ArchivedChats() {
   const [items, setItems] = React.useState<readonly ThreadSummary[]>([])
@@ -24,7 +25,7 @@ export function ArchivedChats() {
       setItems(threads)
       setProjectNames(Object.fromEntries(projects.map((project) => [project.id, project.name])))
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Could not load archived chats.')
+      setError(presentAppError(nextError, 'Could not load archived chats.'))
     } finally {
       setHasLoaded(true)
     }
@@ -57,9 +58,7 @@ export function ArchivedChats() {
         await load()
         return true
       } catch (nextError) {
-        setError(
-          nextError instanceof Error ? nextError.message : 'Could not update archived chats.',
-        )
+        setError(presentAppError(nextError, 'Could not update archived chats.'))
         return false
       }
     },

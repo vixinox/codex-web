@@ -438,7 +438,7 @@ describe('shared composer controller', () => {
     await act(async () => result.current.actions.submit('Create a report.'))
 
     expect(result.current.viewModel.draft).toBe('Create a report.')
-    expect(result.current.viewModel.error).toBe('Selected skills are no longer available')
-    expect(onError).toHaveBeenCalledWith('Selected skills are no longer available')
+    expect(result.current.viewModel.error).toBe('Codex could not send this message.')
+    expect(onError).toHaveBeenCalledWith('Codex could not send this message.')
   })
 })

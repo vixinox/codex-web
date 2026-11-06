@@ -166,7 +166,8 @@ test('reports PASSKEY_REQUIRED when no local credential is registered', async ()
 
     await assert.rejects(
       services.passkeyAuthenticationOptions(context),
-      (error: unknown) => error instanceof OwnerMethodError && error.code === 'PASSKEY_REQUIRED',
+      (error: unknown) =>
+        error instanceof OwnerMethodError && error.code === 'owner.auth.passkey-required',
     )
   } finally {
     database?.driver.close()
