@@ -1,5 +1,4 @@
 import { AppearanceSection } from '@/app/settings/appearance-section'
-// import { ConfigurationSection } from '@/app/settings/configuration-section'
 import { CredentialPanel } from '@/app/settings/credential/credential-panel'
 import { useSettingsController } from '@/app/settings/credential/use-settings-controller'
 import { ArchivedChats } from '@/app/settings/archived-chats'
@@ -14,16 +13,12 @@ export function SettingsScreen({
   archived?: boolean
 }) {
   return (
-    <SettingsPageLayout
-      resetKey={archived ? 'archived' : 'general'}
-      pageTitle={archived ? undefined : 'Settings'}
-    >
+    <SettingsPageLayout resetKey={archived ? 'archived' : 'general'}>
       {archived ? (
         <ArchivedChats />
       ) : (
         <>
           <AppearanceSection />
-          {/* <ConfigurationSection runtime={runtime} /> */}
           {runtime ? <OwnerCredentialSection runtime={runtime} /> : null}
         </>
       )}

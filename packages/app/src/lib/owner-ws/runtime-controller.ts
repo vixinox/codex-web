@@ -137,6 +137,7 @@ export function createOwnerRuntimeController(
         transport: 'failed',
         runtime: 'failed',
         error: 'Owner connection could not be restored.',
+        reconnectAttempt: 0,
       })
       return
     }
@@ -166,6 +167,16 @@ export function createOwnerRuntimeController(
       return
     }
     if (runtime.state === 'failed') {
+      if (reconnectTimer !== null) {
+        update({
+          transport: 'reconnecting',
+          authentication: runtime.authentication,
+          runtime: 'resuming',
+          error: null,
+          reconnectAttempt,
+        })
+        return
+      }
       update({
         transport: 'failed',
         authentication: runtime.authentication,
@@ -207,11 +218,13 @@ export function createOwnerRuntimeController(
       })
     } catch (error) {
       const message = presentAppError(error, 'Owner connection failed.')
-      update({
-        transport: 'failed',
-        runtime: 'failed',
-        error: message,
-      })
+      if (reconnectTimer === null) {
+        update({
+          transport: 'failed',
+          runtime: 'failed',
+          error: message,
+        })
+      }
       scheduleReconnect()
       throw error
     }

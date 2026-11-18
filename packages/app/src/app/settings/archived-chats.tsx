@@ -11,12 +11,13 @@ import { presentAppError } from '@/lib/errors/presentation'
 export function ArchivedChats() {
   const [items, setItems] = React.useState<readonly ThreadSummary[]>([])
   const [query, setQuery] = React.useState('')
-  const [hasLoaded, setHasLoaded] = React.useState(false)
+  const [loadState, setLoadState] = React.useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = React.useState<string | null>(null)
   const [projectNames, setProjectNames] = React.useState<Record<string, string>>({})
   const [deleteAllOpen, setDeleteAllOpen] = React.useState(false)
   const load = React.useCallback(async () => {
     setError(null)
+    setLoadState('loading')
     try {
       const [threads, projects] = await Promise.all([
         ownerWorkspace.threads.list(null, undefined, true),
@@ -24,10 +25,10 @@ export function ArchivedChats() {
       ])
       setItems(threads)
       setProjectNames(Object.fromEntries(projects.map((project) => [project.id, project.name])))
+      setLoadState('ready')
     } catch (nextError) {
       setError(presentAppError(nextError, 'Could not load archived chats.'))
-    } finally {
-      setHasLoaded(true)
+      setLoadState('error')
     }
   }, [])
   React.useEffect(() => {
@@ -87,15 +88,18 @@ export function ArchivedChats() {
             />
           </div>
         </div>
-        {error ? (
-          <div className="mb-4 flex flex-wrap items-center gap-3" role="alert">
-            <p className="text-sm text-destructive">{error}</p>
-            <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
-              Try again
-            </Button>
-          </div>
-        ) : null}
-        <SettingsSectionContent ready={hasLoaded} message="Loading archived chats...">
+        <SettingsSectionContent
+          state={loadState}
+          message="Loading archived chats..."
+          error={
+            <div className="flex flex-wrap items-center gap-3" role="alert">
+              <p className="text-sm text-destructive">{error}</p>
+              <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+                Try again
+              </Button>
+            </div>
+          }
+        >
           {visible.length === 0 ? (
             <p className="text-muted-foreground">No archived chats</p>
           ) : (

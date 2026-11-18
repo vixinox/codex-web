@@ -15,7 +15,7 @@ export function visibleTurnContent(
       (block.type === 'assistant' &&
         (() => {
           const split = splitCompleteMarkdownBlocks(block.text, turn.status !== 'inProgress')
-          return split.blocks.length > 0
+          return split.blocks.length > 0 || Boolean(split.pending.trim())
         })()) ||
       block.type === 'article' ||
       (block.type === 'activity' &&

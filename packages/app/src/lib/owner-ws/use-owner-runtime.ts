@@ -66,14 +66,16 @@ export function useOwnerRuntime(
   const status: OwnerRuntimeController['status'] =
     snapshot.transport === 'connected'
       ? 'ready'
-      : snapshot.transport === 'connecting' || snapshot.transport === 'reconnecting'
+      : snapshot.transport === 'connecting' ||
+          snapshot.transport === 'reconnecting' ||
+          (snapshot.transport === 'failed' && snapshot.reconnectAttempt > 0)
         ? 'connecting'
         : snapshot.transport === 'failed'
           ? 'failed'
           : !sessionToken
             ? 'remote-unavailable'
             : 'idle'
-  const error = snapshot.error
+  const error = status === 'failed' ? snapshot.error : null
 
   React.useEffect(() => {
     if (!sessionToken && !connectionProfileId && key !== 'remote-paired') return
@@ -153,6 +155,7 @@ export function useOwnerRuntime(
         })
         .catch((cause: unknown) => {
           if (!active) return undefined
+          if (runtime.state.reconnectAttempt > 0) return undefined
           setSnapshot({
             ...runtime.state,
             error: presentAppError(cause, 'Owner connection failed'),

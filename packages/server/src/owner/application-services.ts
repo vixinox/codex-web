@@ -659,7 +659,7 @@ export function createOwnerApplicationServices(
     async threadsList(context: OwnerMethodContext, input: Record<string, unknown>) {
       const owner = requireOwner(context)
       const projectId = input.projectId
-      if (projectId !== undefined && !safeId(projectId))
+      if (projectId !== undefined && projectId !== null && !safeId(projectId))
         throw new OwnerMethodError('PROJECT_NOT_FOUND')
       const limitInput = input.limit === undefined ? 30 : Number(input.limit)
       if (!Number.isSafeInteger(limitInput) || limitInput < 1)

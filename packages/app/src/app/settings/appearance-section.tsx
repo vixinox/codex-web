@@ -19,7 +19,7 @@ export function AppearanceSection() {
 
   return (
     <SettingsSection title="Appearance">
-      <SettingsSectionContent ready>
+      <SettingsSectionContent state="ready">
         <div className="flex flex-col gap-8">
           <ThemeModeCards mode={mode} onModeChange={setMode} />
           <div className="grid gap-3 sm:grid-cols-2">

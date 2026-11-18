@@ -317,7 +317,7 @@ export function OwnerManageRoute() {
   const [retryVersion, setRetryVersion] = useState(0)
 
   return (
-    <SettingsPageLayout resetKey="connection" pageTitle="Connection">
+    <SettingsPageLayout resetKey="connection">
       <OwnerManageConnection
         key={retryVersion}
         onRetry={() => setRetryVersion((version) => version + 1)}
@@ -348,7 +348,6 @@ function OwnerManageConnection({ onRetry }: { onRetry: () => void }) {
   )
   const closeOwner = useCallback(() => closeOwnerRuntime('management closed'), [closeOwnerRuntime])
   useEffect(() => {
-    let timer: number | undefined
     if (ownerStatus === 'ready') {
       setConnectionError(null)
       setClient(
@@ -361,16 +360,10 @@ function OwnerManageConnection({ onRetry }: { onRetry: () => void }) {
     } else {
       setClient(null)
       if (ownerStatus === 'failed') {
-        timer = window.setTimeout(
-          () => setConnectionError(ownerError ?? 'Owner connection failed'),
-          400,
-        )
+        setConnectionError(ownerError ?? 'Owner connection failed')
       } else {
         setConnectionError(null)
       }
-    }
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [closeOwner, ownerError, requestOwner, ownerStatus, requirePasskeyStepUp])
   return (
@@ -408,7 +401,7 @@ export function ConnectionRoute() {
           onArchived={() => void navigate('/app/settings/archived-chats')}
         />
       </MobileWorkspaceNavigation>
-      <main className="app-main min-h-0 min-w-0 flex-1 overflow-auto bg-app-surface">
+      <main className="app-main min-h-0 min-w-0 flex-1 overflow-hidden bg-app-surface">
         <OwnerManageRoute />
       </main>
     </div>

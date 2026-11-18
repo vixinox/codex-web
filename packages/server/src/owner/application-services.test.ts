@@ -130,6 +130,47 @@ test('streams a domain event envelope through Owner WS events.subscribe', async 
   assert.deepEqual(resumedEvents, streamed)
 })
 
+test('lists root threads when the caller sends an explicit null project scope', async () => {
+  const userRoot = path.join(tmpdir(), 'codex-owner-root-threads')
+  const services = createOwnerApplicationServices(
+    {
+      workspace: {
+        getOnlyOwnerId: async () => 'owner-root-threads',
+        getUserRoot: () => userRoot,
+        listProjectLocations: async () => [],
+      } as never,
+      codex: {
+        getReady: async () => ({
+          request: async () => ({
+            data: [
+              {
+                id: 'thread-root',
+                cwd: userRoot,
+                preview: 'Root chat',
+                createdAt: 1,
+                updatedAt: 2,
+              },
+            ],
+          }),
+        }),
+      } as never,
+    },
+    { trustedOrigins: [] },
+  )
+  const context = {
+    owner: { ownerId: 'owner-root-threads' },
+  } as OwnerMethodContext
+
+  await assert.doesNotReject(async () => {
+    const result = await services.threadsList(context, { projectId: null })
+    assert.equal(result.kind, 'ok')
+    assert.deepEqual(
+      result.data.map((thread) => thread.id),
+      ['thread-root'],
+    )
+  })
+})
+
 test('reports PASSKEY_REQUIRED when no local credential is registered', async () => {
   const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-owner-passkey-options-'))
   let database: ReturnType<typeof createDatabase> | undefined

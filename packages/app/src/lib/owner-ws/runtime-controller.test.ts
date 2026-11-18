@@ -87,6 +87,31 @@ describe('Owner runtime controller', () => {
     vi.useRealTimers()
   })
 
+  it('marks failure as terminal only after reconnect attempts are exhausted', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const controller = createOwnerRuntimeController(
+      createOwnerRuntime(() => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        return socket
+      }),
+      { reconnectDelayMs: 10, maxReconnectAttempts: 1 },
+    )
+
+    const initialConnection = controller.connect({ url: 'ws://owner', sessionToken: 'token' })
+    sockets[0].onerror?.(new Event('error'))
+    await expect(initialConnection).rejects.toThrow('Owner connection failed')
+    expect(controller.state).toMatchObject({ transport: 'reconnecting', reconnectAttempt: 1 })
+
+    await vi.advanceTimersByTimeAsync(10)
+    sockets[1].onerror?.(new Event('error'))
+    expect(controller.state).toMatchObject({ transport: 'failed', reconnectAttempt: 0 })
+
+    controller.close()
+    vi.useRealTimers()
+  })
+
   it('waits for an active connection', async () => {
     const socket = new FakeSocket()
     const controller = createOwnerRuntimeController(createOwnerRuntime(() => socket))

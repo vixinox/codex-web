@@ -62,26 +62,30 @@ export function ResourceSection<T>({
   headerAction?: React.ReactNode
   children: (items: readonly T[]) => React.ReactNode
 }) {
+  const errorContent =
+    collection.status === 'error' ? (
+      <Alert variant="destructive" className="w-full">
+        <AlertTitle>{errorTitle}</AlertTitle>
+        <AlertDescription>{collection.message}</AlertDescription>
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCwIcon data-icon="inline-start" />
+          Retry
+        </Button>
+      </Alert>
+    ) : null
+
   return (
     <SettingsSection title={heading} action={headerAction}>
       <SettingsSectionContent
-        ready={collection.status !== 'loading'}
+        state={collection.status}
         message={`Loading ${heading.toLowerCase()}...`}
+        error={errorContent}
       >
-        {collection.status === 'error' ? (
-          <Alert variant="destructive" className="w-full">
-            <AlertTitle>{errorTitle}</AlertTitle>
-            <AlertDescription>{collection.message}</AlertDescription>
-            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-              <RefreshCwIcon data-icon="inline-start" />
-              Retry
-            </Button>
-          </Alert>
-        ) : collection.status === 'ready' && collection.items.length === 0 ? (
-          empty
-        ) : collection.status === 'ready' ? (
-          children(collection.items)
-        ) : null}
+        {collection.status === 'ready' && collection.items.length === 0
+          ? empty
+          : collection.status === 'ready'
+            ? children(collection.items)
+            : null}
       </SettingsSectionContent>
     </SettingsSection>
   )

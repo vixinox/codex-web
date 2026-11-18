@@ -3,7 +3,9 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useNativeFadeEnter } from '@/lib/platform/browser/use-native-enter'
 
-export const SETTINGS_LOADING_DELAY = 400
+export const SETTINGS_LOADING_DELAY = 300
+
+export type SettingsContentState = 'loading' | 'ready' | 'error'
 
 export function SettingsPageLayout({
   children,
@@ -19,7 +21,7 @@ export function SettingsPageLayout({
   const [retryVersion, setRetryVersion] = React.useState(0)
 
   return (
-    <div className="flex h-full flex-1 flex-col overflow-auto overscroll-none text-foreground">
+    <div className="flex h-full flex-1 flex-col overflow-auto overscroll-none scrollbar-gutter-stable text-foreground">
       <div
         className="pointer-events-none sticky top-0 z-10 -mb-14 flex h-10 min-h-14 shrink-0 bg-linear-to-b from-app-surface from-80% to-transparent"
         aria-hidden="true"
@@ -101,28 +103,34 @@ export function SettingsSection({
 }
 
 export function SettingsSectionContent({
-  ready,
+  state,
   message,
+  error,
   children,
 }: {
-  ready: boolean
+  state: SettingsContentState
   message?: string
+  error?: React.ReactNode
   children: React.ReactNode
 }) {
-  const contentRef = useNativeFadeEnter<HTMLDivElement>([ready], { duration: 0.22 })
+  const contentRef = useNativeFadeEnter<HTMLDivElement>([state === 'ready'], { duration: 0.22 })
   const [showLoading, setShowLoading] = React.useState(false)
 
   React.useEffect(() => {
-    if (ready) {
+    if (state !== 'loading') {
       setShowLoading(false)
       return undefined
     }
     const timer = window.setTimeout(() => setShowLoading(true), SETTINGS_LOADING_DELAY)
     return () => window.clearTimeout(timer)
-  }, [ready])
+  }, [state])
 
-  if (!ready) return showLoading ? <SettingsPageLoading message={message} /> : null
-  return <div ref={contentRef}>{children}</div>
+  if (state === 'loading') return showLoading ? <SettingsPageLoading message={message} /> : null
+  return (
+    <div ref={state === 'ready' ? contentRef : undefined}>
+      {state === 'error' ? error : children}
+    </div>
+  )
 }
 
 export function SettingsPageError({

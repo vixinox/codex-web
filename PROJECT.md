@@ -32,6 +32,6 @@
 ## 不可逆决策
 
 - 产品前期只维护一个认证 Owner 用户模型；Guest 匿名工作区及其限时试用能力已干净删除，不保留双运行时、双 API、lease/quota 或兼容入口。公开展示和试用方式待产品稳定后另行决定。
-- 锁定版本的 App Server schema 和原始资料位于 [`docs/vendor/`](docs/vendor/)。
+- App Server schema 和原始资料位于 [`docs/vendor/`](docs/vendor/)；当前仓库审阅快照为 `0.167.0`（`rust-v0.167.0`），旧快照保留用于对照，运行时仍按受管 manifest 获取最新 stable release。
 - 当前 bridge 不发送未验证的 `readOnlyAccess` 或 read-root 格式；runtime 协议能力以下载后的 JSON-RPC smoke test 为准。
 - 未映射但结构合法的 Codex runtime 事件可作为凭据/路径字段递归脱敏、payload 上限为 128,000 UTF-8 字节的 `runtime.extension` 事件进入 Owner WS；这扩大了浏览器可见 runtime 资料边界，必须通过 domain event schema 和 projection 限制。

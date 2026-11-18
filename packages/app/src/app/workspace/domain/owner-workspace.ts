@@ -34,14 +34,27 @@ export const ownerWorkspace = {
   },
   threads: {
     list: async (projectId: string | null, signal?: AbortSignal, archived = false) => {
-      const result = await getOwnerBridge().request<unknown>(
-        'threads.list',
-        { projectId, archived },
-        { signal },
-      )
-      if (Array.isArray(result)) return result as ThreadSummary[]
-      if (isRecord(result) && Array.isArray(result.data)) return result.data as ThreadSummary[]
-      throw new Error('Thread list response is invalid.')
+      const threads: ThreadSummary[] = []
+      let cursor: string | undefined
+      const seenCursors = new Set<string>()
+      do {
+        const result = await getOwnerBridge().request<unknown>(
+          'threads.list',
+          { projectId, archived, limit: 100, ...(cursor ? { cursor } : {}) },
+          { signal },
+        )
+        if (Array.isArray(result)) {
+          threads.push(...(result as ThreadSummary[]))
+          break
+        }
+        if (!isRecord(result) || !Array.isArray(result.data))
+          throw new Error('Thread list response is invalid.')
+        threads.push(...(result.data as ThreadSummary[]))
+        cursor = typeof result.nextCursor === 'string' ? result.nextCursor : undefined
+        if (cursor && seenCursors.has(cursor)) throw new Error('Thread list cursor repeated.')
+        if (cursor) seenCursors.add(cursor)
+      } while (cursor)
+      return threads
     },
     archive: async (projectId: string | null, threadId: string) => {
       await getOwnerBridge().request(

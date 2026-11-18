@@ -16,14 +16,14 @@ describe('visibleTurnContent', () => {
     ).toBe(true)
   })
 
-  it('keeps an incomplete assistant block out of visible content while streaming', () => {
+  it('keeps an incomplete assistant tail visible while streaming', () => {
     const result = visibleTurnContent(
       turn({ blocks: [{ id: 'assistant-1', type: 'assistant', text: 'hello' }] }),
       undefined,
       undefined,
     )
-    expect(result.hasContent).toBe(false)
-    expect(result.trailingAssistantId).toBeUndefined()
+    expect(result.hasContent).toBe(true)
+    expect(result.trailingAssistantId).toBe('assistant-1')
   })
 
   it('shows committed assistant blocks while the next block is streaming', () => {
@@ -38,14 +38,14 @@ describe('visibleTurnContent', () => {
     expect(result.trailingAssistantId).toBe('assistant-1')
   })
 
-  it('keeps incomplete Markdown tails hidden while streaming', () => {
+  it('keeps an incomplete Markdown tail visible while streaming', () => {
     const result = visibleTurnContent(
       turn({ blocks: [{ id: 'assistant-1', type: 'assistant', text: '**unfinished' }] }),
       undefined,
       undefined,
     )
-    expect(result.hasContent).toBe(false)
-    expect(result.trailingAssistantId).toBeUndefined()
+    expect(result.hasContent).toBe(true)
+    expect(result.trailingAssistantId).toBe('assistant-1')
   })
 
   it('flushes a plain single-line answer only after the turn is complete', () => {

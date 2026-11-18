@@ -54,11 +54,10 @@ describe('streaming Markdown blocks', () => {
     })
   })
 
-  it('keeps a plain single-line tail pending while streaming', () => {
-    expect(splitCompleteMarkdownBlocks('hello')).toEqual({
-      blocks: [],
-      pending: 'hello',
-    })
+  it('exposes a plain single-line tail for streaming display', () => {
+    const result = splitCompleteMarkdownBlocks('hello')
+    expect(result).toEqual({ blocks: [], pending: 'hello' })
+    expect(result.pending).toBe('hello')
   })
 
   it('commits a complete paragraph while the next Markdown block is pending', () => {
@@ -75,7 +74,7 @@ describe('streaming Markdown blocks', () => {
     })
   })
 
-  it('does not preview incomplete Markdown syntax', () => {
+  it('retains incomplete Markdown syntax in the visible streaming tail', () => {
     expect(splitCompleteMarkdownBlocks('**unfinished')).toEqual({
       blocks: [],
       pending: '**unfinished',

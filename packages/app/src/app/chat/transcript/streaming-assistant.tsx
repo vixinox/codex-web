@@ -189,6 +189,7 @@ export function StreamingAssistant({
           onComplete={animate ? () => settleBlock(block.id) : undefined}
         />
       ))}
+      {split.pending.trim() ? <MessageContent text={split.pending} markdown={false} /> : null}
     </div>
   )
 }

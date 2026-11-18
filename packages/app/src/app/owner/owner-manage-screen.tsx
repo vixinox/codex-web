@@ -20,7 +20,7 @@ function buildEnrollmentUrl(reference: string) {
 
 export function OwnerManageScreen({ client }: { client: OwnerManagementClient }) {
   const [snapshot, setSnapshot] = useState(emptyOwnerManagementSnapshot)
-  const [snapshotLoaded, setSnapshotLoaded] = useState(false)
+  const [snapshotState, setSnapshotState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [invitation, setInvitation] = useState<EnrollmentInvitation | null>(null)
@@ -33,12 +33,13 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
 
   const refresh = useCallback(async () => {
     setError(null)
+    setSnapshotState('loading')
     try {
       setSnapshot(await client.getSnapshot())
+      setSnapshotState('ready')
     } catch (cause) {
       setError(presentAppError(cause, 'Unable to load Owner security state'))
-    } finally {
-      setSnapshotLoaded(true)
+      setSnapshotState('error')
     }
   }, [client])
 
@@ -86,20 +87,19 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
   }
 
   return (
-    <div className="space-y-6 text-foreground">
-      <header>
-        <p className="text-sm text-muted-foreground">Owner</p>
-        <h2 className="text-2xl font-semibold">Security and devices</h2>
-      </header>
-      {error ? (
-        <div className="flex flex-wrap items-center gap-3" role="alert">
-          <p className="text-sm text-destructive">{error}</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>
-            Retry
-          </Button>
-        </div>
-      ) : null}
-      <SettingsSectionContent ready={snapshotLoaded} message="Loading security settings...">
+    <SettingsSection title="Security and devices" headingLevel={1}>
+      <SettingsSectionContent
+        state={snapshotState}
+        message="Loading security settings..."
+        error={
+          <div className="flex flex-wrap items-center gap-3" role="alert">
+            <p className="text-sm text-destructive">{error}</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        }
+      >
         <div className="flex flex-col gap-16">
           <SettingsSection title="Passkeys">
             <div className="space-y-4">
@@ -273,6 +273,6 @@ export function OwnerManageScreen({ client }: { client: OwnerManagementClient })
           </SettingsSection>
         </div>
       </SettingsSectionContent>
-    </div>
+    </SettingsSection>
   )
 }
