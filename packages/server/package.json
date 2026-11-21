@@ -7,7 +7,6 @@
     "start": "node scripts/run-with-env.mjs tsx src/owner/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test src/**/*.test.ts",
-    "test:integration": "tsx --test src/**/*.integration.ts",
     "capture:app-server": "node scripts/run-with-env.mjs tsx scripts/collect-app-server-data.ts",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:reset": "node scripts/run-with-env.mjs tsx scripts/reset-local-database.ts",

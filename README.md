@@ -57,10 +57,15 @@ pnpm build
 ```bash
 pnpm typecheck
 pnpm test
+pnpm test:core
 pnpm test:frontend
 pnpm test:server
 pnpm exec oxfmt --check "**/*.{ts,tsx}"
 ```
+
+`pnpm test` 是全仓测试入口，覆盖 Server、Protocol、Relay、Conversation、Telemetry 和 App。
+日常改动优先运行受影响包的测试；`pnpm test:core` 是核心 Server/Protocol/Relay 的快速入口。
+测试分层、清理规则和新增测试约束见 [`docs/testing.md`](docs/testing.md)。
 
 ## 文档
 

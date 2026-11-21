@@ -39,3 +39,5 @@ Choose the smallest check that covers the change:
 | Codex startup, authentication, Thread, Turn, or SSE runtime             | applicable focused checks, `pnpm typecheck`, and manual browser regression; live test commands are retired |
 
 Frontend automated tests cover transport, security projections, controller state, SSE behavior, and pure logic. Do not add React DOM, renderer, page-flow, Playwright, screenshot, or visual tests unless explicitly requested; UI acceptance uses manual browser regression. The user operates required services for verification — report the required command when a running service is needed.
+
+Testing rules are defined in [`docs/testing.md`](docs/testing.md). New tests must protect a current behavior, boundary, or invariant, prefer pure logic over rendered UI, and be removed or rewritten when the behavior or boundary is removed. Do not add tests only to increase counts, mirror implementation details, or preserve retired `/api/*`, Guest, preview, or compatibility flows. Run the smallest affected package test during iteration; run `pnpm test` before a milestone is considered complete.

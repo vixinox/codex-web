@@ -18,12 +18,14 @@
     "lint:staged": "node scripts/lint-staged-warnings.mjs",
     "format": "oxfmt --write \"**/*.{ts,tsx}\"",
     "format:check": "oxfmt --check \"**/*.{ts,tsx}\"",
-    "test": "pnpm --filter @codex-web/server test && pnpm --filter @codex-web/protocol test && pnpm --filter @codex-web/relay test",
+    "test": "pnpm test:server && pnpm test:protocol && pnpm test:relay && pnpm test:conversation && pnpm test:telemetry && pnpm test:frontend",
+    "test:core": "pnpm test:server && pnpm test:protocol && pnpm test:relay",
     "test:server": "pnpm --filter @codex-web/server test",
     "test:protocol": "pnpm --filter @codex-web/protocol test",
     "test:relay": "pnpm --filter @codex-web/relay test",
-    "test:frontend": "pnpm --filter @codex-web/app test",
-    "test:integration": "pnpm --filter @codex-web/server test:integration"
+    "test:conversation": "pnpm --filter @codex-web/conversation test",
+    "test:telemetry": "pnpm --filter @codex-web/telemetry test",
+    "test:frontend": "pnpm --filter @codex-web/app test"
   },
   "devDependencies": {
     "oxfmt": "0.64.0",

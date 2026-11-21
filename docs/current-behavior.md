@@ -39,4 +39,4 @@ Server 的 Conversation 事件链由 runtime adapter 转换为共享 Conversatio
 
 共享 Conversation 模型、Owner adapter/快照/事件存储与 App 状态消费已接入；前端 presentation 和 renderer 结构保留。内容安全出口、过滤专用缓冲和通用原生投影已删除，问答结果保留答案。Skills 使用稳定 name/path，执行前重新核对当前 cwd 的 enabled 技能；已认证业务错误返回原始 message 和显式字符串 details，公开方法与 Relay 错误合同保持原约束。认证、设备信任、目录归属、容量限制、持久化及 gap/reset 恢复继续保留；未操作真实数据库或 Codex Home。
 
-自动化检查：Server 153、App 227、Protocol 25、Conversation 8、Telemetry 14、Relay 27 项测试通过，全仓 typecheck 和触及 TypeScript 文件格式检查通过。提交前 staged lint 结果见 [05 实施记录](impl/conversation-model/05-owner-filter-removal-and-simplification.md)。浏览器只确认 localhost 登录页可达；登录后的聊天、历史、Skills、问答/审批和断线恢复仍待持有 Passkey 的用户验收，不改变设备 enrollment 的待验收状态。
+自动化检查通过：使用根 `pnpm test` 运行全部 workspace 测试，并通过全仓 `pnpm typecheck` 和触及 TypeScript 文件格式检查。提交前 staged lint 结果见 [05 实施记录](impl/conversation-model/05-owner-filter-removal-and-simplification.md)。浏览器只确认 localhost 登录页可达；登录后的聊天、历史、Skills、问答/审批和断线恢复仍待持有 Passkey 的用户验收，不改变设备 enrollment 的待验收状态。
