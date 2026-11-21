@@ -34,12 +34,14 @@ export function Questionnaire({
   onCancel,
   onSkip,
   showSkip = true,
+  cancelLabel = 'Close questionnaire',
 }: {
   questions: readonly QuestionnaireQuestion[]
   inputPlaceholder: string
   onSubmit: (answers: QuestionnaireAnswer) => Promise<void>
   onCancel?: () => Promise<void>
   onSkip?: () => Promise<void>
+  cancelLabel?: string
   showSkip?: boolean
 }) {
   const [activeIndex, setActiveIndex] = React.useState(0)
@@ -270,7 +272,8 @@ export function Questionnaire({
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Close questionnaire"
+          aria-label={cancelLabel}
+          title={cancelLabel}
           className="shrink-0 rounded-full text-muted-foreground"
           onClick={() => void close()}
           disabled={submitting}

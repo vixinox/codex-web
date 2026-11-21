@@ -47,7 +47,7 @@ export function WorkspacePageContent({
   const projects = controller.model.status === 'ready' ? controller.model.projects : []
   const ready = runtime.model.status === 'started'
   const surfacePage = page
-  const threadLoading = Boolean(route.selection && page.model.status !== 'ready')
+  const threadLoading = Boolean(route.selection && page.model.status === 'loading' || route.selection && page.model.status === 'idle')
 
   return (
     <>
@@ -57,7 +57,7 @@ export function WorkspacePageContent({
       <div className="min-h-0 flex-1 scrollbar-gutter-stable overflow-auto overscroll-none">
         {route.settingsActive ? (
           <SettingsScreen runtime={runtime} archived={route.archivedChatsActive} />
-        ) : ready && !threadLoading ? (
+        ) : ready ? (
           <ThreadPageSurface controller={surfacePage} onRetry={() => page.actions.retry()} />
         ) : (
           <RuntimePlaceholder

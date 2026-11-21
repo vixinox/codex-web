@@ -58,18 +58,10 @@ export const ThreadAssets = React.memo(
     const scrollParentRef = React.useRef<HTMLElement | null>(null)
     const scrollLockedRef = React.useRef(initialScrollPosition === 'bottom')
     const previousLockRequestRef = React.useRef<number | null>(null)
-    const latestUserBlockRef = React.useRef<string | null>(null)
     const sessionSnapshot = useThreadSessionSnapshot(session ?? null)
     const displayThread = thread
-    const turnOrder = session
-      ? sessionSnapshot.turnOrder
-      : displayThread.turns.map((turn) => turn.id)
-    const latestUserBlockId = session
-      ? sessionSnapshot.latestUserBlockId
-      : [...displayThread.turns]
-          .reverse()
-          .flatMap((turn) => [...turn.blocks].reverse())
-          .find((block) => block.type === 'user')?.id
+    const turnOrder = displayThread.turns.map((turn) => turn.id)
+
 
     React.useLayoutEffect(() => {
       const assets = assetsRef.current
@@ -105,17 +97,6 @@ export const ThreadAssets = React.memo(
     }, [initialScrollPosition])
 
     React.useLayoutEffect(() => {
-      const isNewUserMessage =
-        latestUserBlockId !== undefined && latestUserBlockId !== latestUserBlockRef.current
-      latestUserBlockRef.current = latestUserBlockId ?? null
-
-      const parent = scrollParentRef.current
-      if (!parent) return
-      if (isNewUserMessage) scrollLockedRef.current = true
-      if (scrollLockedRef.current) scrollToBottom(parent)
-    }, [compacting, latestUserBlockId, retryState])
-
-    React.useLayoutEffect(() => {
       const parent = scrollParentRef.current
       const nextRequest = lockEpoch ?? 0
       if (!parent || previousLockRequestRef.current === nextRequest) return
@@ -127,38 +108,13 @@ export const ThreadAssets = React.memo(
     return (
       <div ref={assetsRef} className="flex-1 pt-16 pb-20">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4">
-          {turnOrder.length ? (
-            turnOrder.map((turnId, index) =>
-              session ? (
-                <SessionThreadTurn
-                  key={`${displayThread.id}:${turnId}`}
-                  session={session}
-                  turnId={turnId}
-                  retryState={index === turnOrder.length - 1 ? retryState : null}
-                  pendingQuestionnaire={
-                    sessionSnapshot.userInput?.turnId === turnId
-                      ? (sessionSnapshot.userInput as ChatUserInputRequest)
-                      : undefined
-                  }
-                  accepted={index !== turnOrder.length - 1 || pendingAccepted}
-                />
-              ) : (
-                <ThreadTurn
-                  key={`${displayThread.id}:${displayThread.turns[index]?.presentationId ?? turnId}`}
-                  turn={displayThread.turns[index]}
-                  retryState={index === turnOrder.length - 1 ? retryState : null}
-                  pendingQuestionnaire={
-                    displayThread.userInput?.turnId === turnId ? displayThread.userInput : undefined
-                  }
-                  accepted={index !== turnOrder.length - 1 || pendingAccepted}
-                />
-              ),
-            )
-          ) : (
-            <p className="py-20 text-center text-sm text-app-text-muted">
-              Start a new conversation
-            </p>
-          )}
+          {turnOrder.length ? displayThread.turns.map((turn, index) => (
+            <ThreadTurn key={`${displayThread.id}:${turn.presentationId ?? turn.id}`} turn={turn}
+              retryState={index === turnOrder.length - 1 ? retryState : null}
+              pendingQuestionnaire={displayThread.userInput?.turnId === turn.id ? displayThread.userInput : undefined}
+              accepted={index !== turnOrder.length - 1 || pendingAccepted}
+              animateLive={!session || sessionSnapshot.updateSource === 'live'} />
+          )) : <p className="py-20 text-center text-sm text-app-text-muted">Start a new conversation</p>}
           {compacting &&
           !(session ? sessionSnapshot.hasCompactionTurn : hasCompactionTurn(displayThread)) ? (
             <LiveRow label="Compacting" />
@@ -167,41 +123,12 @@ export const ThreadAssets = React.memo(
       </div>
     )
   },
-  (previous, next) => {
-    if (previous.session || next.session)
-      return (
-        previous.session === next.session &&
-        previous.retryState === next.retryState &&
-        previous.lockEpoch === next.lockEpoch &&
-        previous.compacting === next.compacting &&
-        previous.pendingAccepted === next.pendingAccepted &&
-        sameTurnShape(previous.thread, next.thread)
-      )
-    return (
-      previous.thread === next.thread &&
-      previous.retryState === next.retryState &&
-      previous.lockEpoch === next.lockEpoch &&
-      previous.compacting === next.compacting &&
-      previous.pendingAccepted === next.pendingAccepted
-    )
-  },
+
 )
 
 function hasCompactionTurn(thread: ChatThreadPresentation) {
   return thread.turns.some((turn) =>
     turn.blocks.some((block) => block.type === 'article' && block.kind === 'context-compaction'),
-  )
-}
-
-function sameTurnShape(left: ChatThreadPresentation, right: ChatThreadPresentation) {
-  return (
-    left.id === right.id &&
-    left.turns.length === right.turns.length &&
-    left.turns.every(
-      (turn, index) =>
-        turn.presentationId === right.turns[index]?.presentationId &&
-        turn.id === right.turns[index]?.id,
-    )
   )
 }
 
@@ -213,102 +140,27 @@ function scrollToBottom(parent: HTMLElement) {
   parent.scrollTop = Math.max(0, parent.scrollHeight - parent.clientHeight)
 }
 
-const SessionThreadTurn = React.memo(function SessionThreadTurn({
-  session,
-  turnId,
-  retryState,
-  pendingQuestionnaire,
-  accepted = true,
-}: {
-  session: ThreadSession
-  turnId: string
-  retryState?: { attempt: number; maxAttempts: number } | null
-  pendingQuestionnaire?: ChatUserInputRequest
-  accepted?: boolean
-}) {
-  const snapshot = useThreadSessionSnapshot(session)
-  const turn = snapshot.turnsById[turnId]
-  if (!turn) return null
-  return (
-    <ThreadTurn
-      turn={turn as unknown as ChatTurnPresentation}
-      retryState={retryState}
-      pendingQuestionnaire={pendingQuestionnaire}
-      accepted={accepted}
-    />
-  )
-})
-
 const ThreadTurn = React.memo(function ThreadTurn({
   turn,
   retryState,
   pendingQuestionnaire,
   accepted = true,
+  animateLive = false,
 }: {
+  animateLive?: boolean
   turn: ChatTurnPresentation
   retryState?: { attempt: number; maxAttempts: number } | null
   pendingQuestionnaire?: ChatUserInputRequest
   accepted?: boolean
 }) {
   const canHover = useCanHover()
-  const [detailsOpen, setDetailsOpen] = React.useState(false)
+  const [detailsOpen, setDetailsOpen] = React.useState(turn.status === 'inProgress')
   const [planOpen, setPlanOpen] = React.useState(false)
   const [planContentHeight, setPlanContentHeight] = React.useState(0)
   const [animateAssistant, setAnimateAssistant] = React.useState(false)
-  const [assistantTextStreaming, setAssistantTextStreaming] = React.useState(false)
   const planContentRef = React.useRef<HTMLDivElement>(null)
-  const assistantTextRef = React.useRef('')
-  const assistantIdleTimerRef = React.useRef<number | null>(null)
-  const previousStatusRef = React.useRef(turn.status)
-  React.useLayoutEffect(() => {
-    const enteredTerminal =
-      previousStatusRef.current === 'inProgress' && turn.status !== 'inProgress'
-    if (enteredTerminal) {
-      setDetailsOpen(false)
-      setAnimateAssistant(true)
-      previousStatusRef.current = turn.status
-    }
-    if (turn.status === 'inProgress') {
-      setAnimateAssistant(false)
-    }
-    previousStatusRef.current = turn.status
-  }, [turn.status])
   const working = turn.status === 'inProgress'
-  const assistantText = turn.blocks
-    .filter((block) => block.type === 'assistant')
-    .map((block) => block.text)
-    .join('\n')
-  React.useEffect(() => {
-    if (assistantIdleTimerRef.current !== null) {
-      window.clearTimeout(assistantIdleTimerRef.current)
-      assistantIdleTimerRef.current = null
-    }
-    if (!working || !assistantText) {
-      assistantTextRef.current = assistantText
-      setAssistantTextStreaming(false)
-      return
-    }
-    if (assistantText !== assistantTextRef.current) {
-      assistantTextRef.current = assistantText
-      setAssistantTextStreaming(true)
-      assistantIdleTimerRef.current = window.setTimeout(() => {
-        assistantIdleTimerRef.current = null
-        setAssistantTextStreaming(false)
-      }, 300)
-    }
-    return () => {
-      if (assistantIdleTimerRef.current !== null) {
-        window.clearTimeout(assistantIdleTimerRef.current)
-        assistantIdleTimerRef.current = null
-      }
-    }
-  }, [assistantText, working])
-  React.useEffect(
-    () => () => {
-      if (assistantIdleTimerRef.current !== null) window.clearTimeout(assistantIdleTimerRef.current)
-    },
-    [],
-  )
+  React.useEffect(() => { setAnimateAssistant(animateLive) }, [animateLive])
   const finalPlan = turn.plan?.final ? turn.plan : undefined
   React.useLayoutEffect(() => {
     const content = planContentRef.current
@@ -358,20 +210,20 @@ const ThreadTurn = React.memo(function ThreadTurn({
   }, [working])
   const showThinking =
     working &&
-    (!accepted || !hasAssistantText(turn) || !assistantTextStreaming) &&
+    (!accepted || !hasAssistantText(turn)) &&
     !hasRunningCompaction &&
     !retryState &&
     !pendingQuestionnaire &&
     !turn.error
   const showWorkSummary = accepted && Boolean(firstUser)
   const showSeparator = accepted && Boolean(firstUser)
-  const processOpen = working || detailsOpen
+  const processOpen = detailsOpen
   const processBlocks: React.ReactNode[] = []
   let questionnaireRendered = false
   const renderQuestionnaire = () => {
-    if (!turn.questionnaire || questionnaireRendered) return
+    if ((!turn.questionnaires?.length && !turn.questionnaire) || questionnaireRendered) return
     questionnaireRendered = true
-    processBlocks.push(<QuestionnaireSummary key="questionnaire" summary={turn.questionnaire} />)
+    for (const summary of turn.questionnaires ?? (turn.questionnaire ? [turn.questionnaire] : [])) processBlocks.push(<QuestionnaireSummary key={String(summary.requestId)} summary={summary} />)
   }
   let processGroup: ChatBlock[] = []
   const flushProcessGroup = () => {
@@ -386,7 +238,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
               key={block.id}
               block={block}
               streaming={working}
-              animate={working || animateAssistant}
+              animate={animateLive && (working || animateAssistant)}
               onAssistantSettled={
                 block.type === 'assistant' && block.id === trailingAssistantId
                   ? finishAssistantAnimation
@@ -418,7 +270,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
   const turnTimestamp = formatTurnTimestamp(turn.completedAt ?? turn.startedAt)
 
   return (
-    <article className="group flex flex-col">
+    <article className="group flex flex-col" data-ui-target={turn.id} data-ui-source="chat/transcript/thread-assets.tsx">
       {firstUser?.type === 'user' ? (
         <div className="group/user-message ml-auto flex max-w-[85%] flex-col items-end">
           <UserSnippetCards content={firstUser.content} />
@@ -449,10 +301,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
         {showWorkSummary ? (
           <WorkSummary
             turn={turn}
-            expandable={
-              Boolean(turn.questionnaire) ||
-              (process.length > 0 && Boolean(finalAssistant || finalPlan))
-            }
+            expandable={Boolean(process.length || turn.questionnaires?.length || turn.questionnaire)}
             detailsOpen={detailsOpen}
             hasRunningCompaction={hasRunningCompaction}
           />
@@ -472,7 +321,7 @@ const ThreadTurn = React.memo(function ThreadTurn({
           <ThreadBlock
             block={finalAssistant}
             streaming={working}
-            animate={working || animateAssistant}
+            animate={animateLive && (working || animateAssistant)}
             onAssistantSettled={
               finalAssistant.id === trailingAssistantId ? finishAssistantAnimation : undefined
             }

@@ -27,7 +27,7 @@ export function ThreadPageSurface({
         </Alert>
       </div>
     )
-  if (!('thread' in model)) return <div />
+  if (!('thread' in model)) return <div role="status" className="p-8 text-center text-sm text-app-text-muted">Loading conversation…</div>
   return (
     <section className="relative flex min-h-full flex-col" aria-label="Chat conversation">
       {controller.eventError ? (

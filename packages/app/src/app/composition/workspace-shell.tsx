@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { WorkspaceLayout } from './workspace-layout'
 
 import { useThreadPageController } from '@/app/chat/session/controllers/use-thread-page-controller'
 import { ThreadSessionRegistryProvider } from '@/app/chat/session/state/thread-session-store'
@@ -29,9 +30,7 @@ export function WorkspaceShell({
 }) {
   return (
     <ThreadSessionRegistryProvider userId={userId}>
-      <div className="app-shell relative flex h-svh max-h-svh w-full touch-pan-x overflow-hidden overscroll-none bg-sidebar">
-        <WorkspaceShellContents userId={userId} runtime={runtime} />
-      </div>
+      <WorkspaceShellContents userId={userId} runtime={runtime} />
     </ThreadSessionRegistryProvider>
   )
 }
@@ -99,24 +98,25 @@ function WorkspaceShellContents({
   const selectedNewChatProjectId = useWorkspaceProjectRouteValidation(route, projectIds)
 
   return (
-    <>
-      <WorkspaceNavigation
-        route={route}
-        runtime={runtime.model}
-        controller={controller}
-        actions={{ ...orchestration, startCodex: runtime.start }}
-      />
-      <main className="app-main flex min-h-0 min-w-0 flex-1 flex-col bg-app-surface">
-        <WorkspacePageContent
+    <WorkspaceLayout
+      sidebar={
+        <WorkspaceNavigation
           route={route}
-          runtime={runtime}
-          page={page}
+          runtime={runtime.model}
           controller={controller}
-          orchestration={orchestration}
-          selectedNewChatProjectId={selectedNewChatProjectId}
-          capabilities={capabilities}
+          actions={{ ...orchestration, startCodex: runtime.start }}
         />
-      </main>
-    </>
+      }
+    >
+      <WorkspacePageContent
+        route={route}
+        runtime={runtime}
+        page={page}
+        controller={controller}
+        orchestration={orchestration}
+        selectedNewChatProjectId={selectedNewChatProjectId}
+        capabilities={capabilities}
+      />
+    </WorkspaceLayout>
   )
 }

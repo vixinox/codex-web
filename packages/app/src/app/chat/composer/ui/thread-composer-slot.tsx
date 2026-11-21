@@ -29,6 +29,8 @@ export function ThreadComposerSlot({
   const visibleFinalPlan = slot.kind === 'final-plan' && planKey !== dismissedPlan
   return (
     <ComposerContainer>
+      {'composer' in slot && slot.composer?.error ? <Alert variant="destructive"><AlertDescription>{slot.composer.error}</AlertDescription></Alert> : null}
+      {slot.kind === 'questionnaire' && (slot.pendingCount ?? 0) > 1 ? <p className="px-2 text-xs">{slot.pendingCount} requests waiting</p> : null}
       {slot.kind === 'error' ? (
         <Alert variant="destructive" className="mb-3">
           <AlertDescription>{slot.message}</AlertDescription>
@@ -36,13 +38,15 @@ export function ThreadComposerSlot({
       ) : null}
       {slot.kind === 'input' && slot.plan ? <PlanPanel plan={slot.plan} /> : null}
       {slot.kind === 'questionnaire' ? (
-        <Questionnaire
+        <div><Questionnaire
           key={`${String(slot.request.requestId)}:${slot.request.questions.map((question) => question.id).join('|')}`}
           questions={slot.request.questions}
           inputPlaceholder="Tell Codex what to do differently"
           onSubmit={actions.answerUserInput}
           onCancel={actions.cancelUserInput}
+          cancelLabel="Stop this turn"
         />
+        {!slot.request.isBlocking && slot.composer ? <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} /> : null}</div>
       ) : visibleFinalPlan && slot.kind === 'final-plan' ? (
         <div className="px-2">
           <Questionnaire

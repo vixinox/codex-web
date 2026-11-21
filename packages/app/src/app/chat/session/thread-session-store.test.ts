@@ -48,3 +48,24 @@ describe('Thread session store', () => {
     }
   })
 })
+
+it('publishes immutable snapshots, ignores duplicate delivery and stops notifying after disposal', () => {
+  const registry = new ThreadSessionRegistry()
+  const session = registry.get(null, 'thread')
+  const notify = vi.fn()
+  session.subscribe(notify)
+  session.replaceConversation(createConversationSnapshot('thread' as ConversationId))
+  const initial = session.getSnapshot()
+  const change = { type: 'conversation.updated' as const, conversationId: 'thread' as ConversationId, title: 'Updated', identity: { sourceId: 'test' as import('@codex-web/conversation').SourceId, sourceEventId: '1' as import('@codex-web/conversation').SourceEventId, applicationSequence: 1, receivedAt: '2026-01-01T00:00:00Z' } }
+  session.applyConversationChange(change)
+  expect(initial.title).toBe('Untitled thread')
+  expect(session.state.title).toBe('Updated')
+  session.applyConversationChange(change)
+  expect(notify).toHaveBeenCalledTimes(2)
+  session.setError('Connection lost')
+  expect(session.state.status).toBe('ready')
+  expect(session.state.title).toBe('Updated')
+  registry.dispose()
+  session.applyConversationChange(change)
+  expect(notify).toHaveBeenCalledTimes(3)
+})

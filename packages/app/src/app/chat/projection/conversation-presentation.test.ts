@@ -8,7 +8,7 @@ import {
   type TurnId,
 } from '@codex-web/conversation'
 import { describe, expect, it } from 'vitest'
-import { projectConversation } from './conversation-presentation'
+import { createConversationProjector, projectConversation } from './conversation-presentation'
 
 const conversationId = 'thread-1' as ConversationId
 const turnId = 'turn-1' as TurnId
@@ -248,4 +248,18 @@ describe('Conversation presentation', () => {
       { type: 'activity', kind: 'file', activities: [{ aggregatedDiff: diff }] },
     ])
   })
+})
+
+it('keeps an unchanged turn projection stable across unrelated metadata updates', () => {
+  const state = fixture()
+  const project = createConversationProjector()
+  const first = project(state, null)
+  expect(project({ ...state, title: 'Renamed' }, null).turns[0]).toBe(first.turns[0])
+})
+
+it.each(['completed', 'failed', 'cancelled'] as const)('keeps an answer without final phase visible after %s', (status) => {
+  const state = fixture()
+  state.turns[turnId]!.status = status
+  state.messages.answer = { id: 'answer' as MessageId, turnId, role: 'assistant', status: 'completed', parts: [{ id: 'text' as MessagePartId, type: 'text', text: 'Available output' }] }
+  expect(projectConversation(state, null).turns[0]?.blocks).toMatchObject([{ type: 'assistant', final: true, text: 'Available output' }])
 })

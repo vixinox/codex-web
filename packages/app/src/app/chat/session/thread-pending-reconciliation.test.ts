@@ -109,3 +109,11 @@ describe('pending turn reconciliation', () => {
     expect(pendingMatchesTarget(accepted, 'project-1', 'thread-1')).toBe(false)
   })
 })
+
+it('does not merge a repeated message into an unrelated running turn', () => {
+  const source = thread([{ id: 'unrelated', status: 'inProgress', blocks: [{ id: 'user', type: 'user', content: [{ type: 'text', text: pending.text }] }] }])
+  const result = reconcilePendingThread(source, pending)
+  expect(result.turns).toHaveLength(2)
+  expect(result.turns[0]).toBe(source.turns[0])
+  expect(result.turns[1].id).toBe(pending.clientTurnId)
+})

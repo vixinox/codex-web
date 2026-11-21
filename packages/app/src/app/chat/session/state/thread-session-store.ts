@@ -1,11 +1,10 @@
 import * as React from 'react'
-import { proxy, useSnapshot } from 'valtio'
 import { createConversationState, type ConversationState } from '@codex-web/conversation'
 import { applyConversationDelivery } from '@/app/chat/domain/conversation-state'
-import { projectConversation } from '@/app/chat/projection/conversation-presentation'
+import { createConversationProjector } from '@/app/chat/projection/conversation-presentation'
 import { releaseComposerUser, retainComposerUser } from '@/app/chat/composer/state/composer-store'
 
-import type { ChatThreadPresentation, ChatTurnPresentation } from '@/app/chat/model/types'
+import type { ChatThreadPresentation } from '@/app/chat/model/types'
 import type { ThreadSession, ThreadSessionPresentation, ThreadSessionSnapshot } from '../interface'
 
 export type { ThreadSession, ThreadSessionPresentation } from '../interface'
@@ -96,7 +95,7 @@ export function useThreadSessionRegistry() {
   return registry ?? fallback
 }
 
-const emptyThreadSessionState = proxy<ThreadSessionPresentation>({
+const emptyThreadSessionState: ThreadSessionPresentation = {
   status: 'idle',
   id: 'invalid-thread',
   projectId: null,
@@ -108,10 +107,15 @@ const emptyThreadSessionState = proxy<ThreadSessionPresentation>({
   hasCompactionTurn: false,
   latestUserBlockId: null,
   inputErrors: [],
-})
+}
+
+const emptySubscribe = () => () => {}
 
 export function useThreadSessionSnapshot(session: ThreadSession | null): ThreadSessionSnapshot {
-  return useSnapshot(session?.state ?? emptyThreadSessionState)
+  return React.useSyncExternalStore(
+    session?.subscribe ?? emptySubscribe,
+    session?.getSnapshot ?? (() => emptyThreadSessionState),
+  )
 }
 
 export function toThreadPresentationSnapshot(
@@ -126,6 +130,7 @@ export function toThreadPresentationSnapshot(
     ...(snapshot.modelProvider ? { modelProvider: snapshot.modelProvider } : {}),
     updatedAt: snapshot.updatedAt,
     isBusy: snapshot.isBusy,
+    pendingInputCount: snapshot.pendingInputCount,
     ...(snapshot.tokenUsage ? { tokenUsage: snapshot.tokenUsage } : {}),
     ...(snapshot.userInput
       ? { userInput: snapshot.userInput as unknown as ChatThreadPresentation['userInput'] }
@@ -137,109 +142,50 @@ export function toThreadPresentationSnapshot(
   }
 }
 
-function createThreadSession(key: string, projectId: string | null): ThreadSession {
+export function createThreadSession(key: string, projectId: string | null): ThreadSession {
   let conversation: ConversationState | null = null
   let disposed = false
-  const state = proxy<ThreadSessionPresentation>({
-    status: 'idle',
-    id: 'invalid-thread',
-    projectId,
-    title: 'Untitled thread',
-    updatedAt: null,
-    isBusy: false,
-    turnOrder: [],
-    turnsById: {},
-    hasCompactionTurn: false,
-    latestUserBlockId: null,
-    inputErrors: [],
-  })
-
-  function syncConversation(snapshot: ConversationState) {
-    const { turns, ...metadata } = projectConversation(snapshot, projectId)
-    syncMetadata(state, metadata)
-    const nextOrder = turns.map((turn) => turn.id)
-    const nextIds = new Set(nextOrder)
-    for (const id of Object.keys(state.turnsById)) {
-      if (!nextIds.has(id)) delete state.turnsById[id]
-    }
-    for (const turn of turns) syncTurn(state, turn)
-    if (
-      nextOrder.length !== state.turnOrder.length ||
-      nextOrder.some((id, index) => id !== state.turnOrder[index])
-    ) {
-      state.turnOrder = nextOrder
-    }
-    state.hasCompactionTurn = turns.some((turn) =>
-      turn.blocks.some((block) => block.type === 'article' && block.kind === 'context-compaction'),
-    )
-    state.latestUserBlockId =
-      turns
-        .findLast((turn) => turn.blocks.some((block) => block.type === 'user'))
-        ?.blocks.findLast((block) => block.type === 'user')?.id ?? null
-    state.status = 'ready'
-    delete state.error
+  let state: ThreadSessionPresentation = { ...emptyThreadSessionState, projectId }
+  const listeners = new Set<() => void>()
+  const projectConversation = createConversationProjector()
+  const publish = (next: ThreadSessionPresentation) => {
+    state = next
+    for (const listener of listeners) listener()
   }
-
+  const update = (next: ConversationState, source: 'initial' | 'live' | 'recovery') => {
+    conversation = next
+    const { turns, ...metadata } = projectConversation(next, projectId)
+    publish({
+      ...metadata, status: 'ready', updateSource: source,
+      turnOrder: turns.map((turn) => turn.id),
+      turnsById: Object.fromEntries(turns.map((turn) => [turn.id, turn])),
+      hasCompactionTurn: turns.some((turn) => turn.blocks.some((block) => block.type === 'article')),
+      latestUserBlockId: turns.findLast((turn) => turn.blocks.some((block) => block.type === 'user'))?.blocks.findLast((block) => block.type === 'user')?.id ?? null,
+      inputErrors: next.diagnostics.map((entry) => entry.summary),
+    })
+  }
   return {
     key,
-    state,
+    get state() { return state },
+    getSnapshot: () => state,
+    getConversation: () => conversation,
+    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
     replaceConversation(snapshot) {
-      if (disposed) return
-      conversation = createConversationState(snapshot)
-      syncConversation(conversation)
+      if (!disposed) update(createConversationState(snapshot), conversation ? 'recovery' : 'initial')
     },
     applyConversationChange(change) {
       if (disposed || !conversation) return
       const next = applyConversationDelivery(conversation, change)
-      if (next === conversation) return
-      conversation = next
-      syncConversation(next)
+      if (next !== conversation) update(next, 'live')
     },
     beginLoad() {
-      if (disposed || state.status !== 'error') return
-      state.status = 'idle'
-      delete state.error
+      if (!disposed && state.status === 'error') publish({ ...state, status: 'idle', error: undefined })
     },
     setError(message) {
-      if (disposed) return
-      state.status = 'error'
-      state.error = message
+      if (!disposed) publish({ ...state, status: conversation ? 'ready' : 'error', error: message })
     },
-    dispose() {
-      disposed = true
-      conversation = null
-    },
+    dispose() { disposed = true; conversation = null; listeners.clear() },
   }
-}
-
-function syncMetadata(
-  target: ThreadSessionPresentation,
-  source: Omit<ChatThreadPresentation, 'turns'>,
-) {
-  target.id = source.id
-  target.projectId = source.projectId
-  target.title = source.title
-  target.modelProvider = source.modelProvider
-  target.model = source.model
-  target.reasoningEffort = source.reasoningEffort
-  target.updatedAt = source.updatedAt
-  target.isBusy = source.isBusy
-  if (source.tokenUsage) target.tokenUsage = source.tokenUsage
-  else delete target.tokenUsage
-  if (source.userInput) target.userInput = source.userInput
-  else delete target.userInput
-}
-
-function syncTurn(target: ThreadSessionPresentation, source: ChatTurnPresentation) {
-  const existing = target.turnsById[source.id]
-  if (!existing) {
-    target.turnsById[source.id] = source
-    return
-  }
-  for (const key of Object.keys(existing) as Array<keyof ChatTurnPresentation>) {
-    if (!(key in source)) delete existing[key]
-  }
-  Object.assign(existing, source)
 }
 
 function threadKey(projectId: string | null, threadId: string) {

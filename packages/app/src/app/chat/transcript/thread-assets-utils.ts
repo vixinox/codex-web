@@ -3,7 +3,6 @@ import { splitCompleteMarkdownBlocks } from './streaming-assistant'
 import { transcriptDebug } from './transcript-debug'
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
-const REASONING_SUMMARY_TITLE = 'Reasoning summary'
 
 export function visibleTurnContent(
   turn: ChatTurnPresentation,
@@ -19,7 +18,7 @@ export function visibleTurnContent(
         })()) ||
       block.type === 'article' ||
       (block.type === 'activity' &&
-        block.activities.some((activity) => activity.title !== REASONING_SUMMARY_TITLE)),
+        block.activities.some((activity) => activity.sourceType !== 'reasoning')),
   )
   const hasQuestionnaire = Boolean(pendingQuestionnaire || turn.questionnaire)
   const hasFinalPlan = Boolean(finalPlan)
@@ -56,7 +55,7 @@ export function hasAssistantText(turn: ChatTurnPresentation) {
 export function withoutReasoningSummaryActivity(block: ChatBlock): ChatBlock | null {
   if (block.type !== 'activity') return block
   const activities = block.activities.filter(
-    (activity) => activity.title !== REASONING_SUMMARY_TITLE,
+    (activity) => activity.sourceType !== 'reasoning',
   )
   return activities.length ? { ...block, activities } : null
 }
@@ -84,6 +83,8 @@ export function formatUserContentForCopy(content: Extract<ChatBlock, { type: 'us
         ? item.text
         : item.type === 'attachment'
           ? `${item.kind === 'image' ? 'Image' : 'Audio'}: ${item.label}`
+          : item.type === 'resource'
+            ? item.label
           : item.type === 'codeSnippet'
             ? item.text || `${item.title} (${item.lineCount} lines)`
             : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`,

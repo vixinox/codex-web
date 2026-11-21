@@ -3,7 +3,6 @@ import type {
   ChatThreadPresentation,
   ChatTurnPresentation,
 } from '@/app/chat/model/types'
-import { parseMarkdownBlocks } from '@/app/chat/composer/logic/chat-input-markdown'
 
 export function pendingMatchesTarget(
   pending: ChatPendingTurn,
@@ -22,18 +21,7 @@ export function reconcilePendingThread(
   const exactTurnIndex = pending.nativeTurnId
     ? thread.turns.findIndex((turn) => turn.id === pending.nativeTurnId)
     : -1
-  const matchingUserTurnIndex = findMatchingUserTurn(thread, pending)
-  const inProgressIndexes = thread.turns.flatMap((turn, index) =>
-    turn.status === 'inProgress' ? [index] : [],
-  )
-  const nativeTurnIndex =
-    exactTurnIndex >= 0
-      ? exactTurnIndex
-      : matchingUserTurnIndex >= 0
-        ? matchingUserTurnIndex
-        : inProgressIndexes.length === 1
-          ? inProgressIndexes[0]
-          : -1
+  const nativeTurnIndex = exactTurnIndex
   if (nativeTurnIndex < 0)
     return {
       ...thread,
@@ -70,21 +58,6 @@ export function reconcilePendingThread(
       }
     }),
   }
-}
-
-function findMatchingUserTurn(thread: ChatThreadPresentation, pending: ChatPendingTurn) {
-  for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
-    const user = thread.turns[index]?.blocks.find((block) => block.type === 'user')
-    if (!user || user.type !== 'user') continue
-    const text = user.content
-      .map((part) => (part.type === 'text' || part.type === 'codeSnippet' ? part.text : ''))
-      .join('')
-    const pendingText = parseMarkdownBlocks(pending.text)
-      .flatMap((part) => (part.kind === 'skill' ? [] : [part.text]))
-      .join('')
-    if (text === pendingText || text === pending.text) return index
-  }
-  return -1
 }
 
 export function optimisticThread(pending: ChatPendingTurn): ChatThreadPresentation {

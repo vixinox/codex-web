@@ -18,6 +18,7 @@
 - 前端线程详情遵循“Conversation snapshot/change → 共享 reducer → presentation model → renderer”的单向路径。页面和 renderer 只依赖 UI-facing model；原生 Codex DTO 保留在 Owner runtime adapter 边界。
 - Owner 用游标前的已存储 Interaction change 补充原生快照。请求关联绑定线程和运行时实例；回复结果作为类型化 Interaction outcome 保存，不清空答案正文。
 - 前端目录按 `app + lib` 组织：启动与路由位于 `packages/app/src/app/entry`，组合层位于 `packages/app/src/app/composition`，Chat/Workspace/Settings 按领域分别维护 application、domain 与 UI modules，跨运行时基础设施位于 `packages/app/src/lib`，`packages/app/src/components/ui` 保持 shadcn primitives。
+- 开发场景工具通过独立 Vite dev bootstrap `/__dev/ui` 提供，仅使用合成 Conversation 与本地内存操作；复用主题、无业务依赖的 WorkspaceLayout、Sidebar 和聊天展示链路，不初始化认证或 Owner runtime，生产构建排除该入口。
 - `/app/*` 是唯一真实应用入口；不提供旧 `/ui/*`、`/preview/*` 或离线工作台兼容路由。
 - Owner 是唯一执行环境和用户工作区；浏览器通过 loopback Fastify Owner WebSocket 访问本地 Gateway。Guest 匿名执行、lease、quota 和管理工作流已完全移除，不作为兼容模式。
 - Owner 控制面使用 `CODEX_DATA_ROOT/owner.sqlite` 持久化 Owner、Passkey 公钥凭据、设备/session、Project、Credential 和安全事件；Thread transcript 由 Codex App Server/Codex Home 管理，remote trust 与加密密钥保持独立本地 secret 边界。Owner 运行期间 CLI 管理通过本机 IPC 转发，停止后才持锁运行临时 runtime。

@@ -119,7 +119,8 @@ export function useThreadPageController({
         })
       : []
   const userInput = detail.model.status === 'ready' ? detailSnapshot.userInput : undefined
-  const composerSlot = buildThreadComposerSlot(composer.viewModel, turns, userInput)
+  const slot = buildThreadComposerSlot(composer.viewModel, turns, userInput)
+  const composerSlot = slot.kind === 'questionnaire' ? { ...slot, pendingCount: mergedThread?.pendingInputCount } : slot
 
   return {
     model,

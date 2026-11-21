@@ -6,6 +6,7 @@ export function getTurnWorkLabel(
   nowMs: number,
   localCompacting = false,
 ): string | null {
+  if (turn.executionStatus === 'queued') return 'Waiting to start'
   if (turn.status === 'inProgress') {
     if (
       localCompacting ||

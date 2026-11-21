@@ -12,7 +12,7 @@ const plan = {
 }
 
 describe('thread composer slot selection', () => {
-  it('prioritizes errors over every other slot', () => {
+  it('retains errors alongside an actionable questionnaire', () => {
     expect(
       buildThreadComposerSlot(composer('Composer failed'), [{ status: 'inProgress', plan }], {
         requestId: 1,
@@ -21,7 +21,7 @@ describe('thread composer slot selection', () => {
         questions: [],
         isBlocking: true,
       }),
-    ).toEqual({ kind: 'error', message: 'Composer failed' })
+    ).toMatchObject({ kind: 'questionnaire', composer: { error: 'Composer failed' } })
   })
 
   it('prioritizes a pending questionnaire over a final plan', () => {
@@ -38,7 +38,7 @@ describe('thread composer slot selection', () => {
         [{ status: 'completed', plan: { ...plan, final: true } }],
         request,
       ),
-    ).toEqual({ kind: 'questionnaire', request })
+    ).toEqual({ kind: 'questionnaire', request, composer: composer() })
   })
 
   it('renders the active plan with the normal input slot', () => {

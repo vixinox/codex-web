@@ -1,5 +1,4 @@
-import type { Snapshot } from 'valtio'
-import type { ConversationChange, ConversationSnapshot } from '@codex-web/conversation'
+import type { ConversationChange, ConversationSnapshot, ConversationState } from '@codex-web/conversation'
 
 import type { ComposerHost, ComposerRuntimeAdapter } from './adapters/composer-adapter'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
@@ -19,10 +18,11 @@ import type {
 export type ThreadLifecycleMethod = 'thread/archived' | 'thread/deleted' | 'thread/closed'
 export type ThreadLifecycleHandler = (method: ThreadLifecycleMethod) => void
 
-/** Mutable presentation state owned by the Conversation session store. */
+/** Immutable derived snapshot; Conversation owns the facts. */
 export type ThreadSessionPresentation = Omit<ChatThreadPresentation, 'turns'> & {
   status: 'idle' | 'ready' | 'error'
   error?: string
+  updateSource?: 'initial' | 'live' | 'recovery'
   turnOrder: string[]
   turnsById: Record<string, ChatTurnPresentation>
   hasCompactionTurn: boolean
@@ -30,12 +30,15 @@ export type ThreadSessionPresentation = Omit<ChatThreadPresentation, 'turns'> & 
   inputErrors: string[]
 }
 
-export type ThreadSessionSnapshot = Snapshot<ThreadSessionPresentation>
+export type ThreadSessionSnapshot = ThreadSessionPresentation
 
 /** The reducer session interface used by the detail controller and transcript assets. */
 export type ThreadSession = {
   readonly key: string
   readonly state: ThreadSessionPresentation
+  subscribe(listener: () => void): () => void
+  getSnapshot(): ThreadSessionSnapshot
+  getConversation(): ConversationState | null
   replaceConversation(snapshot: ConversationSnapshot): void
   applyConversationChange(change: ConversationChange): void
   beginLoad(): void

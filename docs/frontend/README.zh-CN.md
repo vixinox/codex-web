@@ -51,3 +51,7 @@ Owner event envelope 由 `@codex-web/protocol/owner` 共享 parser 校验，应�
 Conversation → presentation → renderer 保留，展示模型重构另开任务。展示转换不再清空秘密问答答案；输入控件的 isSecret 行为保留。Skills 使用稳定 name/path，前端不保存临时授权 handle；发送时服务端重新校验当前 cwd 目录。Skills scope 直接使用 user/repo/system/admin，不保留 project→repo 兼容转换。
 
 Owner 详细错误保持本地化操作提示，同时按文本显示原始 message/details；不解释 HTML，也不自动记录到遥测。浏览器收到的 frame、Conversation snapshot/change 和 cursor 仍执行结构检查。
+
+## 开发场景工作台
+
+Vite 开发入口 `/__dev/ui` 使用合成 Conversation 数据并复用正式 reducer、展示投影和聊天 renderer。它共用 ThemeProvider、纯 WorkspaceLayout 与 Sidebar 基础组件，控制侧栏替换业务导航；不初始化 Owner 认证、runtime 或正式草稿存储。仅面向桌面，生产构建不包含入口与场景。主题选择共用正式偏好存储，回放、草稿和侧栏宽度保存在内存。

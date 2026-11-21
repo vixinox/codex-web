@@ -17,8 +17,7 @@ export function buildThreadComposerSlot(
   const lastPlan = isPlanPresentation(lastPlanValue) ? lastPlanValue : undefined
   const finalPlan = lastPlan?.final ? lastPlan : undefined
 
-  if (composer.error) return { kind: 'error', message: composer.error }
-  if (isUserInputRequest(userInput)) return { kind: 'questionnaire', request: userInput }
+  if (isUserInputRequest(userInput)) return { kind: 'questionnaire', request: userInput, composer }
   if (finalPlan) return { kind: 'final-plan', plan: finalPlan, composer }
   return {
     kind: 'input',

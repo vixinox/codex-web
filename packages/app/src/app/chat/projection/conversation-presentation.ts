@@ -33,9 +33,17 @@ const activityDisplay = {
   exitedReviewMode: ['system', 'Exited review mode'],
 } as const satisfies Partial<Record<Activity['kind'], readonly [ChatActivity['kind'], string]>>
 
+type TurnCache = Map<string, { dependencies: unknown[]; value: ChatTurnPresentation }>
+
+export function createConversationProjector() {
+  const cache: TurnCache = new Map()
+  return (state: ConversationSnapshot, projectId: string | null) => projectConversation(state, projectId, cache)
+}
+
 export function projectConversation(
   state: ConversationSnapshot,
   projectId: string | null,
+  cache?: TurnCache,
 ): ChatThreadPresentation {
   const interactions = new Map<string, Interaction[]>()
   for (const interaction of Object.values(state.interactions)) {
@@ -43,15 +51,19 @@ export function projectConversation(
     entries.push(interaction)
     interactions.set(interaction.turnId, entries)
   }
-  const pending = Object.values(state.interactions).find(
-    (entry) => entry.status === 'pending' && entry.details?.kind === 'userInput',
-  )
+  const pendingInputs = Object.values(state.interactions)
+    .filter((entry) => entry.status === 'pending' && entry.details?.kind === 'userInput')
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id))
+  const pending = pendingInputs[0]
   const userInput = pending && projectUserInput(pending)
   const turns = Object.values(state.turns).map((turn): ChatTurnPresentation => {
     const messages = Object.values(state.messages).filter((message) => message.turnId === turn.id)
     const activities = Object.values(state.activities).filter(
       (activity) => activity.turnId === turn.id,
     )
+    const dependencies = [turn, ...messages, ...activities, ...(interactions.get(turn.id) ?? []), ...Object.values(state.agentLinks).filter((link) => link.turnId === turn.id || activities.some((activity) => activity.id === link.activityId)), userInput?.turnId === turn.id ? pending : undefined]
+    const cached = cache?.get(turn.id)
+    if (cached && dependencies.length === cached.dependencies.length && dependencies.every((value, index) => value === cached.dependencies[index])) return cached.value
     const byMessageId = new Map(messages.map((message) => [message.id, message]))
     const byActivityId = new Map(activities.map((activity) => [activity.id, activity]))
     const orderedMessages = [...new Set([...turn.messageIds, ...byMessageId.keys()])].flatMap(
@@ -87,6 +99,9 @@ export function projectConversation(
       const message = byMessageId.get(item.id)
       return message?.role === 'assistant' && message.phase === 'final_answer'
     })
+    const answer = final ?? (status !== 'inProgress'
+      ? [...order.values()].findLast((item) => item.type === 'message' && byMessageId.get(item.id)?.role === 'assistant' && byMessageId.get(item.id)?.parts.some((part) => part.type === 'text' && part.text.trim()))
+      : undefined)
     let planText: string | undefined
     for (const item of order.values()) {
       if (item.type === 'activity') {
@@ -105,7 +120,8 @@ export function projectConversation(
         id: message.id,
         type: 'assistant',
         text: message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join(''),
-        ...(item === final ? { final: true } : {}),
+        parts: message.parts,
+        ...(item === answer ? { final: true } : {}),
       })
     }
     if (turn.diff) attachDiff(blocks, turn.id, turn.diff)
@@ -130,12 +146,15 @@ export function projectConversation(
       .get(turn.id)
       ?.findLast((entry) => entry.status !== 'pending' && entry.details?.kind === 'userInput')
     const questionnaire = resolved && projectQuestionnaire(resolved)
+    const questionnaires = interactions.get(turn.id)?.filter((entry) => entry.status !== 'pending' && entry.details?.kind === 'userInput').flatMap((entry) => projectQuestionnaire(entry) ?? [])
     const startedAt = timestamp(turn.startedAt)
     const completedAt = timestamp(turn.completedAt)
-    return {
+    const result: ChatTurnPresentation = {
       id: turn.id,
       status,
+      executionStatus: turn.status,
       blocks,
+      ...(questionnaires?.length ? { questionnaires } : {}),
       ...(questionnaire ? { questionnaire } : {}),
       ...(startedAt === undefined ? {} : { startedAt }),
       ...(completedAt === undefined ? {} : { completedAt }),
@@ -148,7 +167,10 @@ export function projectConversation(
         userInput: userInput?.turnId === turn.id ? userInput : undefined,
       }),
     }
+    cache?.set(turn.id, { dependencies, value: result })
+    return result
   })
+  if (cache) for (const id of cache.keys()) if (!state.turns[id]) cache.delete(id)
   return {
     id: state.id,
     title: state.title ?? 'Untitled thread',
@@ -164,6 +186,7 @@ export function projectConversation(
           },
         }
       : {}),
+    pendingInputCount: pendingInputs.length,
     ...(userInput ? { userInput } : {}),
   }
 }
@@ -181,9 +204,9 @@ function projectUserContent(message: Message): ChatUserContent[] {
   return message.parts.flatMap((part): ChatUserContent[] => {
     if (part.type === 'image' || part.type === 'audio')
       return [
-        { type: 'attachment', kind: part.type, label: part.type === 'image' ? 'Image' : 'Audio' },
+        { type: 'attachment', kind: part.type, label: part.type === 'image' ? 'Image' : 'Audio', part },
       ]
-    if (part.type !== 'text') return []
+    if (part.type !== 'text') return [{ type: 'resource', label: part.type === 'file' ? (part.name ?? 'File') : 'Structured content', part }]
     return parseMarkdownBlocks(part.text).flatMap((block): ChatUserContent[] => {
       if (block.kind === 'code' && shouldUseCard(block.text)) {
         const { text, title, lineCount, characterCount } = createAttachment(block.text)
@@ -214,8 +237,9 @@ function appendActivity(blocks: ChatBlock[], activity: Activity, state: Conversa
     })
     return
   }
-  if (!Object.hasOwn(activityDisplay, activity.kind)) return
-  const [kind, defaultTitle] = activityDisplay[activity.kind as keyof typeof activityDisplay]
+  const [kind, defaultTitle] = Object.hasOwn(activityDisplay, activity.kind)
+    ? activityDisplay[activity.kind as keyof typeof activityDisplay]
+    : ['system' as const, activity.title ?? `Unsupported activity: ${activity.kind}`]
   const agentCount =
     kind === 'agent'
       ? Object.values(state.agentLinks).filter((link) => link.activityId === activity.id).length
@@ -238,7 +262,7 @@ function appendActivity(blocks: ChatBlock[], activity: Activity, state: Conversa
     ...(activity.durationMs === undefined ? {} : { durationMs: activity.durationMs }),
     ...(activity.changes?.length ? { changes: activity.changes } : {}),
     ...(activity.truncated ? { truncated: true } : {}),
-    ...(agentCount ? { meta: `${agentCount} agents` } : {}),
+    ...(agentCount ? { agentLinks: Object.values(state.agentLinks).filter((link) => link.activityId === activity.id), meta: Object.values(state.agentLinks).filter((link) => link.activityId === activity.id).map((link) => `${link.task ?? link.childAgentId ?? link.id}: ${link.status}`).join(' · ') } : {}),
   }
   pushActivity(blocks, projected)
 }
@@ -299,6 +323,7 @@ function projectQuestionnaire(entry: Interaction): ChatTurnPresentation['questio
   const answers = entry.outcome?.kind === 'answers' ? entry.outcome.answers : undefined
   return {
     requestId: entry.id,
+    status: entry.status,
     questionCount: entry.details.questions.length,
     questions: entry.details.questions.map((question) => ({
       id: question.id,

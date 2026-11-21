@@ -16,7 +16,7 @@ export function QuestionnaireSummary({
       <div className="group min-w-0 text-sm">
         <CollapsibleTrigger className="inline-flex min-h-6 max-w-full items-center gap-2 text-left text-app-text-muted hover:text-foreground">
           <CircleHelpIcon className="size-3.5 shrink-0" />
-          <span>Asked {summary.questionCount} questions</span>
+          <span>{summary.status === 'cancelled' ? 'Cancelled' : summary.status === 'expired' ? 'Expired' : 'Answered'} {summary.questionCount} questions</span>
           {summary.questions.length ? (
             <ChevronRightIcon
               className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`}
@@ -74,7 +74,6 @@ export function WorkSummary({
   const nowMs = useWorkingClock(working)
   const label = getTurnWorkLabel(turn, nowMs, hasRunningCompaction)
   if (!label) return null
-  if (working) return <span className="text-sm text-app-text-muted select-none">{label}</span>
   if (!expandable) return <span className="text-sm text-app-text-muted select-none">{label}</span>
   return (
     <CollapsibleTrigger className="group flex items-center self-start text-sm text-app-text-muted select-none">

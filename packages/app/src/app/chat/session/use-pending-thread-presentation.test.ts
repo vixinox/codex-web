@@ -100,7 +100,7 @@ describe('shared pending Thread presentation', () => {
       }),
     )
 
-    act(() => result.current.onPendingChange(pending, 'user:user-1\0thread:<root>\0thread-1'))
+    act(() => result.current.onPendingChange({ ...pending, nativeTurnId: 'native-turn' }, 'user:user-1\0thread:<root>\0thread-1'))
 
     await waitFor(() => expect(result.current.pending).toBeNull())
     expect(result.current.working).toBe(false)

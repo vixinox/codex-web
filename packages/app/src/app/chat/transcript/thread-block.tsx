@@ -38,6 +38,7 @@ export function ThreadBlock({
           animate={animate}
           onSettled={onAssistantSettled}
         />
+        {block.parts?.filter((part) => part.type !== 'text').map((part) => <div key={part.id} className="text-xs text-app-text-muted">{part.type === 'structured' ? `Structured content (${part.mediaType})` : `${part.type}: ${part.resourceId}`}</div>)}
       </div>
     )
   if (block.type === 'article')
@@ -126,7 +127,7 @@ export function UserContent({
           <span key={index} className="text-xs text-app-text-muted">
             {item.type === 'attachment'
               ? `${item.kind === 'image' ? 'Image' : 'Audio'}: ${item.label}`
-              : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`}
+              : item.type === 'resource' ? item.label : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`}
           </span>
         ),
       )}

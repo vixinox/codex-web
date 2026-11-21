@@ -1,3 +1,4 @@
+import type { AgentLink, MessagePart, InteractionStatus } from '@codex-web/conversation'
 import type { ChatEffort, ChatModel } from './composer-types'
 
 export type ChatPresentationStatus = 'inProgress' | 'completed' | 'failed' | 'interrupted'
@@ -29,12 +30,14 @@ export type ChatSearchAction =
 
 export type ChatUserContent =
   | { type: 'text'; text: string }
-  | { type: 'attachment'; kind: 'image' | 'audio'; label: string }
+  | { type: 'attachment'; kind: 'image' | 'audio'; label: string; part?: MessagePart }
+  | { type: 'resource'; label: string; part: MessagePart }
   | { type: 'reference'; kind: 'skill' | 'mention'; label: string }
   | { type: 'codeSnippet'; text: string; title: string; lineCount: number; characterCount: number }
 
 export type ChatActivity = {
   id: string
+  agentLinks?: AgentLink[]
   sourceType: string
   kind: ChatActivityKind
   title: string
@@ -57,7 +60,7 @@ export type ChatFileChange = { path: string; kind: string; movePath?: string; di
 
 export type ChatBlock =
   | { id: string; type: 'user'; content: ChatUserContent[] }
-  | { id: string; type: 'assistant'; text: string; final?: boolean }
+  | { id: string; type: 'assistant'; text: string; final?: boolean; parts?: MessagePart[] }
   | { id: string; type: 'activity'; kind: ChatActivityKind; activities: ChatActivity[] }
   | {
       id: string
@@ -73,6 +76,8 @@ export type ChatTurnPresentation = {
   presentationId?: string
   status: ChatPresentationStatus
   blocks: ChatBlock[]
+  questionnaires?: ChatQuestionnaireSummary[]
+  executionStatus?: import('@codex-web/conversation').TurnStatus
   questionnaire?: ChatQuestionnaireSummary
   startedAt?: number
   completedAt?: number
@@ -85,6 +90,7 @@ export type ChatTurnPresentation = {
 export type ChatQuestionnaireSummary = {
   /** Bridge request identity used to reconcile persisted answered/resolved event ordering. */
   requestId?: number | string
+  status?: InteractionStatus
   questionCount: number
   questions: { id?: string; question: string; answers: string[] }[]
 }
@@ -120,6 +126,7 @@ export type ChatThreadPresentation = {
   turns: ChatTurnPresentation[]
   isBusy: boolean
   tokenUsage?: ChatTokenUsage
+  pendingInputCount?: number
   userInput?: ChatUserInputRequest
 }
 
