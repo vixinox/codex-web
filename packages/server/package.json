@@ -8,12 +8,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test src/**/*.test.ts",
     "test:integration": "tsx --test src/**/*.integration.ts",
+    "capture:app-server": "node scripts/run-with-env.mjs tsx scripts/collect-app-server-data.ts",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:reset": "node scripts/run-with-env.mjs tsx scripts/reset-local-database.ts",
     "manage": "node scripts/run-with-env.mjs tsx scripts/owner-cli.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
+    "@codex-web/conversation": "workspace:*",
     "@codex-web/protocol": "workspace:*",
     "@codex-web/telemetry": "workspace:*",
     "@fastify/sensible": "^6.0.5",

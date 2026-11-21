@@ -4,6 +4,8 @@ import test from 'node:test'
 import { encodeOwnerFrame, type OwnerFrame } from '@codex-web/protocol/owner'
 import type { Logger } from '@codex-web/telemetry/logger'
 import { setServerLogger } from '../logger.js'
+import { createOwnerMethodRegistry } from './methods.js'
+import type { OwnerApplicationServices } from './application-services.js'
 import {
   OwnerSessionRuntime,
   VirtualOwnerTransport,
@@ -122,6 +124,35 @@ test('requires hello first, rejects unsupported fields, and resumes sessions bef
   })
 })
 
+test('rejects removed Conversation RPC aliases with method-not-found', async () => {
+  const transport = new FakeTransport()
+  const runtime = createRuntime(
+    transport,
+    createOwnerMethodRegistry({} as OwnerApplicationServices),
+  )
+  transport.receive({ type: 'hello', clientId: 'client-1', capabilities: [] })
+  await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
+  const retired = [
+    'threads.send',
+    'threads.cancel',
+    'threads.compact',
+    'threads.status',
+    'userInput.respond',
+    'approvals.resolve',
+  ]
+  for (const [index, method] of retired.entries())
+    transport.receive({ type: 'request', requestId: `removed-${index}`, method })
+  await waitFor(
+    () =>
+      readFrames(transport).filter((frame) => frame.type === 'response').length === retired.length,
+  )
+  for (const frame of readFrames(transport)) {
+    if (frame.type !== 'response') continue
+    assert.equal(frame.error?.code, 'owner.request.method-not-found')
+  }
+  runtime.close()
+})
+
 test('gates local and authenticated methods and prevents request replay', async () => {
   const transport = new FakeTransport()
   let calls = 0
@@ -188,14 +219,79 @@ test('gates local and authenticated methods and prevents request replay', async 
     (frame) => frame.type === 'response' && frame.requestId === 'broken-1',
   )
   assert.ok(brokenResponse && brokenResponse.type === 'response')
-  assert.deepEqual(brokenResponse.error, {
-    code: 'owner.internal.unavailable',
-    message: 'The request failed.',
-    retryable: true,
-  })
+  assert.equal(brokenResponse.error?.code, 'owner.internal.unavailable')
+  assert.equal(brokenResponse.error?.message, 'The request failed.')
   assert.equal(transport.sent.join('').includes('sk-secret'), false)
   assert.equal(transport.sent.join('').includes('/home/owner'), false)
   assert.equal(runtime !== undefined, true)
+})
+
+test('returns detailed causes only after Owner authentication', async () => {
+  const transport = new FakeTransport()
+  createRuntime(
+    transport,
+    new Map([
+      [
+        'owner.session.open',
+        {
+          access: 'public',
+          handle: (_params, context) => {
+            context.authenticate({ ownerId: 'owner-1', sessionId: 'session-1' })
+            return { opened: true }
+          },
+        },
+      ],
+      [
+        'public.broken',
+        {
+          access: 'public',
+          handle: () => {
+            throw new Error('public detail')
+          },
+        },
+      ],
+      [
+        'owner.broken',
+        {
+          access: 'authenticated',
+          handle: () => {
+            throw new Error('Owner detail C:/private/path')
+          },
+        },
+      ],
+    ]),
+  )
+  transport.receive({ type: 'hello', clientId: 'c1', capabilities: [] })
+  await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
+  transport.receive({ type: 'request', requestId: 'public', method: 'public.broken' })
+  await waitFor(() =>
+    readFrames(transport).some(
+      (frame) => frame.type === 'response' && frame.requestId === 'public',
+    ),
+  )
+  const publicError = readFrames(transport).find(
+    (frame) => frame.type === 'response' && frame.requestId === 'public',
+  )
+  assert.ok(publicError?.type === 'response')
+  assert.equal(publicError.error?.message, 'The request failed.')
+  transport.receive({ type: 'request', requestId: 'auth', method: 'owner.session.open' })
+  await waitFor(() =>
+    readFrames(transport).some((frame) => frame.type === 'response' && frame.requestId === 'auth'),
+  )
+  transport.receive({ type: 'request', requestId: 'owner', method: 'owner.broken' })
+  await waitFor(() =>
+    readFrames(transport).some((frame) => frame.type === 'response' && frame.requestId === 'owner'),
+  )
+  const ownerError = readFrames(transport).find(
+    (frame) => frame.type === 'response' && frame.requestId === 'owner',
+  )
+  assert.ok(ownerError?.type === 'response')
+  assert.equal(ownerError.error?.message, 'Owner detail C:/private/path')
+  assert.equal(
+    ownerError.error && 'details' in ownerError.error ? ownerError.error.details : undefined,
+    undefined,
+  )
+  assert.equal(JSON.stringify(ownerError).includes('stack'), false)
 })
 
 test('logs the sanitized cause of a Passkey method failure', async () => {
@@ -640,4 +736,26 @@ test('virtual remote transport binds verified device identity and carries frames
   assert.equal(closeReason, 'revoked')
   transport.receive('ignored')
   assert.equal(received, 'owner-request')
+})
+
+test('returns an explicit error instead of sending an oversized result frame', async () => {
+  const transport = new FakeTransport()
+  const runtime = createRuntime(
+    transport,
+    new Map([
+      ['large.read', { access: 'public', handle: () => ({ text: 'x'.repeat(1_048_576) }) }],
+    ]),
+  )
+  transport.receive({ type: 'hello', clientId: 'client', capabilities: [] })
+  await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
+  transport.receive({ type: 'request', requestId: 'large', method: 'large.read' })
+  await waitFor(() =>
+    readFrames(transport).some((frame) => frame.type === 'response' && frame.requestId === 'large'),
+  )
+  const frame = readFrames(transport).find(
+    (frame) => frame.type === 'response' && frame.requestId === 'large',
+  )
+  assert.ok(frame?.type === 'response')
+  assert.equal(frame.error?.code, 'owner.protocol.frame-too-large')
+  runtime.close()
 })

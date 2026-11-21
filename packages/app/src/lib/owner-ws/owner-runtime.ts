@@ -5,7 +5,7 @@ import {
   type OwnerCapability,
   type OwnerFrame,
 } from '@codex-web/protocol/owner'
-import type { PublicErrorDto } from '@codex-web/telemetry/errors'
+import type { OwnerErrorDto } from '@codex-web/telemetry/errors'
 import { AppLocalError, AppLocalErrorCode } from '@/lib/errors/app-local-error'
 
 export type OwnerTarget = {
@@ -50,12 +50,12 @@ export type OwnerAuthenticationState =
 export type OwnerRuntimePhase = 'idle' | 'resuming' | 'ready' | 'blocked' | 'failed'
 
 export class OwnerRequestError extends Error {
-  readonly publicError: PublicErrorDto
-  readonly code: PublicErrorDto['code']
-  readonly params: PublicErrorDto['params']
-  readonly retryable: PublicErrorDto['retryable']
+  readonly publicError: OwnerErrorDto
+  readonly code: OwnerErrorDto['code']
+  readonly params: OwnerErrorDto['params']
+  readonly retryable: OwnerErrorDto['retryable']
 
-  constructor(error: PublicErrorDto, options?: ErrorOptions) {
+  constructor(error: OwnerErrorDto, options?: ErrorOptions) {
     super(error.message ?? 'Owner request failed.', options)
     this.name = 'OwnerRequestError'
     this.publicError = error

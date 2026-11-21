@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import {
   TelemetryErrorCode,
+  createOwnerError,
+  isOwnerErrorDto,
   createPublicError,
   isKnownTelemetryErrorCode,
   isPublicErrorDto,
@@ -97,4 +99,19 @@ test('public DTO guard rejects unsafe keys, values, bounds, and extra fields', (
     }),
     false,
   )
+})
+
+test('detailed Owner errors preserve content without changing Relay/public DTO validation', () => {
+  const value = {
+    code: 'owner.runtime.unavailable',
+    retryable: true,
+    message: 'token=synthetic C:/workspace',
+    details: '/private/synthetic-path',
+  }
+  assert.deepEqual(createOwnerError(value), value)
+  assert.equal(isOwnerErrorDto(value), true)
+  assert.equal(isPublicErrorDto(value), false)
+  assert.equal(isOwnerErrorDto({ ...value, stack: 'internal' }), false)
+  assert.equal(isOwnerErrorDto({ ...value, details: {} }), false)
+  assert.equal(isOwnerErrorDto({ ...value, code: 'relay.attach.unauthorized' }), false)
 })

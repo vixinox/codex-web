@@ -29,7 +29,6 @@ import type {
 } from '@/app/chat/model/composer-types'
 import type { ChatPendingTurn } from '@/app/chat/model/types'
 import type { CodeSnippetAttachment } from '@/app/chat/composer/model/draft-model'
-import { waitForThreadAvailability } from '@/lib/bridge/thread-availability'
 import type { ComposerSession, ComposerSessionOptions } from '../interface'
 import type { AcceptedTurn } from '../adapters/composer-adapter'
 import { presentAppError } from '@/lib/errors/presentation'
@@ -324,7 +323,7 @@ export function useComposerController({
         model: snapshot.preferences.model,
         reasoningEffort: snapshot.preferences.effort,
         collaborationMode: mode,
-        skillHandles: submittedSkills.map((skill) => skill.handle),
+        skills: submittedSkills.map(({ name, path }) => ({ name, path })),
       }
       let accepted: AcceptedTurn | undefined
       try {
@@ -396,9 +395,9 @@ export function useComposerController({
         // updates above synchronous with the accepted response.
         if (!target.threadId) hostRef.current.onThreadCreated?.(acceptedTurn)
         if (!target.threadId)
-          await waitForThreadAvailability(
-            (signal) =>
-              adapter.threads.readThread(acceptedTurn.projectId, acceptedTurn.threadId, signal),
+          await adapter.waitForThread?.(
+            acceptedTurn.projectId,
+            acceptedTurn.threadId,
             controller.signal,
           )
         if (target.threadId) hostRef.current.onTurnFollowed?.(acceptedTurn)

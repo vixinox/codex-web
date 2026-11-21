@@ -35,7 +35,7 @@ export function ComposerInput({
     () => [
       ...viewModel.selectedSkills,
       ...viewModel.skills.items.filter(
-        (s) => !viewModel.selectedSkills.some((x) => x.handle === s.handle),
+        (s) => !viewModel.selectedSkills.some((x) => x.path === s.path),
       ),
     ],
     [viewModel.selectedSkills, viewModel.skills.items],

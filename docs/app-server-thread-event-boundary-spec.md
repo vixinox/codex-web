@@ -1,5 +1,7 @@
 # App Server Thread Event 边界规格
 
+> 历史实施规格。后续 [Conversation 主规格](impl/conversation-model/development-spec.md) 与 [05 Owner 内容过滤删除](impl/conversation-model/05-owner-filter-removal-and-simplification.md) 已取代本文的 native reducer、安全投影和 runtime.extension 约定；当前持久化与恢复以共享 Conversation 模型为准。本文保留原验收记录，不代表当前原生消息透传合同。
+
 ## 状态与启动说明
 
 - 状态：**Verified**。

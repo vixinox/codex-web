@@ -3,7 +3,12 @@ import path from 'node:path'
 import type { ProjectLocation } from './thread-contract.js'
 
 export type ThreadClient = {
-  request(method: string, params?: Record<string, unknown>): Promise<unknown>
+  request(
+    method: string,
+    params?: Record<string, unknown>,
+    signal?: AbortSignal,
+    onResponse?: () => void,
+  ): Promise<unknown>
 }
 
 export function pathIsWithin(value: unknown, root: string) {

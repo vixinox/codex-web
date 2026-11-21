@@ -59,7 +59,7 @@ class SkillNode extends TextNode {
   }
   static importJSON(n: SerializedSkill) {
     return new SkillNode({
-      handle: n.handle,
+      path: n.path,
       name: n.name,
       displayName: n.displayName,
       description: n.description,

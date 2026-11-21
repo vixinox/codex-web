@@ -1,5 +1,5 @@
 import { encodeOwnerFrame, parseOwnerFrame } from '@codex-web/protocol/owner'
-import type { PublicErrorDto } from '@codex-web/telemetry/errors'
+import type { OwnerErrorDto } from '@codex-web/telemetry/errors'
 import { OwnerRequestError } from './owner-runtime'
 
 export type OwnerManagementRpc = {
@@ -85,6 +85,6 @@ export function connectOwnerManagementRpc(sessionToken?: string): Promise<OwnerM
   })
 }
 
-function ownerError(error: PublicErrorDto) {
+function ownerError(error: OwnerErrorDto) {
   return new OwnerRequestError(error)
 }

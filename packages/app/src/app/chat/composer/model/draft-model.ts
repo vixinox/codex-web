@@ -55,7 +55,7 @@ export function parseDraft(source: string, skills: readonly ComposerSkill[] = []
         new Map(
           skills
             .filter((skill) => skill.name === block.name && skill.scope === block.scope)
-            .map((skill) => [skill.handle, skill]),
+            .map((skill) => [skill.path, skill]),
         ).values(),
       )
       if (matches.length === 1)
@@ -96,8 +96,8 @@ export function serializeDraftSubmission(draft: InputDraft) {
 export function draftSkills(draft: InputDraft) {
   const seen = new Set<string>()
   return draft.blocks.flatMap((block) => {
-    if (block.kind !== 'skill' || seen.has(block.skill.handle)) return []
-    seen.add(block.skill.handle)
+    if (block.kind !== 'skill' || seen.has(block.skill.path)) return []
+    seen.add(block.skill.path)
     return [block.skill]
   })
 }

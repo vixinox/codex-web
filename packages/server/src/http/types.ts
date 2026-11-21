@@ -1,6 +1,5 @@
 import type { ServerConfig } from '../config.js'
 import type { DomainEventEnvelope } from '@codex-web/protocol/owner'
-import type { ThreadRuntimeStatus } from '../codex/event-hub.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { RuntimeModel } from '../codex/model-catalog.js'
 import type { OwnerConnector } from '../remote/connector.js'
@@ -57,7 +56,6 @@ export type CodexBridge = {
   markDangerousAccessConfirmed?: (userId: string) => void
   stop?: (userId: string) => Promise<void>
   events: {
-    publish?: (userId: string, message: unknown) => Promise<void>
     latestEventId: (userId: string, threadId?: string) => number
     isCursorExpired?: (
       userId: string,
@@ -75,7 +73,11 @@ export type CodexBridge = {
       threadId: string,
     ) => Promise<Array<{ id: number; message: DomainEventEnvelope }>>
     isHealthy?: () => boolean
-    threadRuntimeStatus?: (userId: string, threadId: string) => ThreadRuntimeStatus
+    captureThreadSnapshot?: (
+      userId: string,
+      threadId: string,
+    ) => Promise<{ history: Array<{ id: number; message: DomainEventEnvelope }>; sequence: number }>
+    isCursorAhead?: (userId: string, threadId: string | undefined, sequence: number) => boolean
     subscribe(
       userId: string,
       threadId: string | undefined,

@@ -1,9 +1,5 @@
 import type { WorkspaceService } from './workspace.js'
-import {
-  createProjectPathIndex,
-  projectIdForThread,
-  sanitizeThreadSummary,
-} from './thread-contract.js'
+import { createProjectPathIndex, projectIdForThread, toThreadSummary } from './thread-contract.js'
 import { pathIsWithin, type ThreadClient } from './thread-ownership.js'
 
 export type ThreadCollectionRequest = {
@@ -58,7 +54,7 @@ export function createThreadCollection(dependencies: ThreadCollectionDependencie
                 ? projectId === request.projectId
                 : pathIsWithin(cwd, userRoot) && (request.archived || projectId === null)
               if (!allowed) return []
-              const summary = sanitizeThreadSummary(thread, projectId)
+              const summary = toThreadSummary(thread, projectId)
               return summary ? [summary] : []
             })
           : []

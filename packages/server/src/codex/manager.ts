@@ -1,13 +1,27 @@
 import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import type {
+  EventIdentity,
+  Interaction,
+  InteractionOutcome,
+  SourceEventId,
+  SourceId,
+  TurnId,
+} from '@codex-web/conversation'
 import path from 'node:path'
 
 import type { ServerConfig } from '../config.js'
 import type { WorkspaceService } from '../workspace.js'
 import { CodexRpcClient, type RpcTransport } from './rpc-client.js'
 import { EventHub } from './event-hub.js'
+import {
+  adaptCodexNotification,
+  isCodexInteractionRequest,
+  isFileChangeDecision,
+} from './conversation-adapter.js'
 import { CodexStdioTransport } from './stdio-transport.js'
-import { adaptCodexMessage, createDomainEvent } from './domain-events.js'
-import { requestIdCandidates, type RequestId } from './request-id.js'
+import { workspaceEvent } from './domain-events.js'
+import type { RequestId } from './request-id.js'
 import { CodexRuntimeManager } from './runtime-manager.js'
 import type { CodexCommand } from './stdio-transport.js'
 import { projectModelCatalog, type RuntimeModel } from './model-catalog.js'
@@ -35,8 +49,53 @@ type TurnTask = {
   timer?: NodeJS.Timeout
   settled: boolean
 }
-type PendingServerRequest = { client: CodexRpcClient; threadId: string }
+type PendingServerRequest = {
+  client: CodexRpcClient
+  threadId: string
+  rpcId: RequestId
+  interaction: Interaction
+  fileChange: boolean
+}
 type ActiveTurn = { threadId: string; turnId: string }
+
+function codexEventIdentity(): EventIdentity {
+  return {
+    sourceId: 'codex-app-server' as SourceId,
+    sourceEventId: randomUUID() as SourceEventId,
+    receivedAt: new Date().toISOString(),
+  }
+}
+
+function interactionResponseOutcome(interaction: Interaction, result: unknown): InteractionOutcome {
+  if (interaction.kind !== 'approval') {
+    const answers =
+      result && typeof result === 'object' && 'answers' in result ? result.answers : undefined
+    return {
+      kind: 'answers',
+      answers: Object.fromEntries(
+        answers && typeof answers === 'object'
+          ? Object.entries(answers).flatMap(([key, entry]) =>
+              entry &&
+              typeof entry === 'object' &&
+              'answers' in entry &&
+              Array.isArray(entry.answers) &&
+              entry.answers.every((answer: unknown) => typeof answer === 'string')
+                ? [[key, entry.answers]]
+                : [],
+            )
+          : [],
+      ),
+    }
+  }
+  const decision =
+    result && typeof result === 'object' && 'decision' in result ? result.decision : result
+  if (decision === 'accept' || decision === 'acceptForSession') return { kind: 'approved' }
+  if (decision === 'decline') return { kind: 'rejected' }
+  if (decision === 'cancel') return { kind: 'dismissed' }
+  if (decision && typeof decision === 'object' && 'acceptWithExecpolicyAmendment' in decision)
+    return { kind: 'approved' }
+  return { kind: 'submitted', value: null }
+}
 export class CodexLifecycleError extends Error {
   readonly code: 'CODEX_START_REQUIRED' | 'CODEX_UNAVAILABLE'
   constructor(code: 'CODEX_START_REQUIRED' | 'CODEX_UNAVAILABLE', message: string) {
@@ -219,14 +278,12 @@ export class CodexManager {
 
   async restart(userId: string, projectId: string, credentialId: string) {
     for (const turn of this.activeTurnsByUser.get(userId)?.values() ?? [])
-      void this.events.publishDomain(
-        userId,
-        createDomainEvent(
-          'codex.turn/completed',
-          { threadId: turn.threadId, turn: { id: turn.turnId, status: 'interrupted' } },
-          { threadId: turn.threadId, turnId: turn.turnId },
-        ),
-      )
+      void this.publishConversationChange(userId, turn.threadId, {
+        type: 'turn.statusChanged',
+        identity: codexEventIdentity(),
+        turnId: turn.turnId as TurnId,
+        status: 'cancelled',
+      })
     this.lifecycle.set(userId, {
       status: 'restarting',
       projectId,
@@ -280,7 +337,8 @@ export class CodexManager {
       error: null,
     })
     this.rejectQueued(userId, new Error('Codex App Server stopped'))
-    this.serverRequests.delete(userId)
+    const activeClient = this.activeClients.get(userId)
+    if (activeClient) this.expireServerRequests(userId, activeClient)
     this.activeTurnsByUser.delete(userId)
     this.loadedThreads.delete(userId)
     let instance: Instance | undefined
@@ -292,6 +350,7 @@ export class CodexManager {
       return
     }
     if (this.activeClients.get(userId) === instance.client) this.activeClients.delete(userId)
+    this.expireServerRequests(userId, instance.client)
     this.stopping.add(userId)
     instance.client.stop()
   }
@@ -331,12 +390,70 @@ export class CodexManager {
 
   respondToServerRequest(userId: string, threadId: string, requestId: RequestId, result: unknown) {
     const requests = this.serverRequests.get(userId)
-    const resolvedId = requestIdCandidates(requestId).find((candidate) => requests?.has(candidate))
-    const pending = resolvedId === undefined ? undefined : requests?.get(resolvedId)
-    if (!pending || pending.threadId !== threadId) throw new Error('Approval request not found')
-    requests!.delete(resolvedId!)
-    pending.client.respond(resolvedId!, result)
-    return resolvedId
+    const correlation = requests?.has(requestId)
+      ? requestId
+      : [...(requests ?? [])].find(([, entry]) => entry.interaction.id === requestId)?.[0]
+    const pending = correlation === undefined ? undefined : requests?.get(correlation)
+    if (!requests || !pending || pending.threadId !== threadId)
+      throw new Error('Approval request not found')
+    if (pending.fileChange && !isFileChangeDecision(result))
+      throw new Error('Invalid file change approval decision')
+    if (correlation !== undefined) requests.delete(correlation)
+    if (requests.size === 0) this.serverRequests.delete(userId)
+    try {
+      pending.client.respond(pending.rpcId, pending.fileChange ? { decision: result } : result)
+    } catch {
+      this.finishInteraction(userId, pending, 'expired')
+      throw new Error('Codex RPC response failed')
+    }
+    this.finishInteraction(userId, pending, interactionResponseOutcome(pending.interaction, result))
+    return pending.rpcId
+  }
+
+  private publishConversationChange(
+    userId: string,
+    conversationId: string,
+    change: import('@codex-web/conversation').ConversationChange,
+  ) {
+    return this.events
+      .publishConversationChange(userId, conversationId, change)
+      .catch(() => log.warn('codex.conversation.delivery-failed'))
+  }
+
+  private finishInteraction(
+    userId: string,
+    pending: PendingServerRequest,
+    result: InteractionOutcome | 'cancelled' | 'expired',
+  ) {
+    const identity = codexEventIdentity()
+    const terminal = {
+      identity,
+      interactionId: pending.interaction.id,
+      resolvedAt: identity.receivedAt,
+    }
+    void this.publishConversationChange(
+      userId,
+      pending.threadId,
+      typeof result === 'string'
+        ? { ...terminal, type: 'interaction.cancelled', status: result }
+        : { ...terminal, type: 'interaction.resolved', outcome: result },
+    )
+  }
+
+  private expireServerRequests(userId: string, client: CodexRpcClient, turn?: ActiveTurn) {
+    const requests = this.serverRequests.get(userId)
+    if (!requests) return
+    for (const [correlation, pending] of requests) {
+      if (pending.client !== client) continue
+      if (
+        turn &&
+        (turn.threadId !== pending.threadId || turn.turnId !== pending.interaction.turnId)
+      )
+        continue
+      requests.delete(correlation)
+      this.finishInteraction(userId, pending, turn ? 'cancelled' : 'expired')
+    }
+    if (requests.size === 0) this.serverRequests.delete(userId)
   }
 
   enqueueTurn(
@@ -488,6 +605,7 @@ export class CodexManager {
     })
     const client = new CodexRpcClient(transport)
     client.onClose(() => {
+      this.expireServerRequests(userId, client)
       if (this.stopping.has(userId)) {
         this.stopping.delete(userId)
         return
@@ -497,7 +615,6 @@ export class CodexManager {
         this.instances.delete(userId)
       }
       this.rejectQueued(userId, new Error('Codex App Server exited'))
-      this.serverRequests.delete(userId)
       const current = this.lifecycle.get(userId)
       this.lifecycle.set(userId, {
         status: 'failed',
@@ -508,8 +625,33 @@ export class CodexManager {
         error: 'Codex App Server exited',
       })
     })
+    const publishConversation = (
+      threadId: string,
+      method: string,
+      params: Record<string, unknown>,
+    ) => {
+      const identity = codexEventIdentity()
+      for (const change of adaptCodexNotification(method, { ...params, threadId }, identity))
+        void this.publishConversationChange(userId, threadId, change)
+    }
     client.onEvent((message) => {
       const params = message.params as Record<string, unknown> | undefined
+      if (message.method === 'serverRequest/resolved') {
+        const requests = this.serverRequests.get(userId)
+        for (const [correlation, pending] of requests ?? []) {
+          if (
+            pending.client !== client ||
+            pending.threadId !== params?.threadId ||
+            pending.rpcId !== params?.requestId
+          )
+            continue
+          requests?.delete(correlation)
+          if (requests?.size === 0) this.serverRequests.delete(userId)
+          this.finishInteraction(userId, pending, { kind: 'dismissed' })
+          break
+        }
+        return
+      }
       if (message.method === 'turn/failed') {
         const turn = params?.turn as Record<string, unknown> | undefined
         const error = turn?.error as Record<string, unknown> | undefined
@@ -539,43 +681,72 @@ export class CodexManager {
       if (threadId && turnId && typeof message.method === 'string') {
         const map = this.activeTurnsByUser.get(userId) ?? new Map<string, ActiveTurn>()
         if (message.method === 'turn/started') map.set(turnId, { threadId, turnId })
-        if (message.method === 'turn/completed' || message.method === 'turn/failed')
+        if (message.method === 'turn/completed' || message.method === 'turn/failed') {
           map.delete(turnId)
+          this.expireServerRequests(userId, client, { threadId, turnId })
+        }
         this.activeTurnsByUser.set(userId, map)
       }
-      const adapted = adaptCodexMessage(message)
-      if (adapted.kind === 'invalid')
-        log.warn('codex.runtime.event-rejected', {
-          method:
-            typeof message.method === 'string'
-              ? message.method.replace(/[^A-Za-z0-9._/-]/gu, '?').slice(0, 80)
-              : 'unknown',
-        })
-      void this.events.publishDomain(
-        userId,
-        adapted.kind === 'invalid'
-          ? createDomainEvent('runtime.diagnostic', adapted.diagnostic)
-          : adapted.event,
-      )
+      const workspace = workspaceEvent(message)
+      if (workspace)
+        void this.events
+          .publishDomain(userId, workspace)
+          .catch(() => log.warn('codex.workspace.delivery-failed'))
+      const conversationId =
+        threadId ??
+        (params?.thread &&
+        typeof params.thread === 'object' &&
+        'id' in params.thread &&
+        typeof params.thread.id === 'string'
+          ? params.thread.id
+          : undefined)
+      if (conversationId && typeof message.method === 'string')
+        publishConversation(conversationId, message.method, params ?? {})
     })
     client.onRequest((message) => {
       const requestId = message.id
-      const adapted = adaptCodexMessage(message)
-      const threadId = adapted.kind === 'invalid' ? undefined : adapted.event.threadId
-      if ((typeof requestId !== 'number' && typeof requestId !== 'string') || !threadId) {
-        if (typeof requestId === 'number')
-          client.respondError(requestId, { code: -32602, message: 'threadId is required' })
+      if (typeof requestId !== 'number' && typeof requestId !== 'string') return
+      const method = message.method
+      if (typeof method !== 'string' || !isCodexInteractionRequest(method)) {
+        client.respondError(requestId, { code: -32601, message: 'Unsupported interaction request' })
         return
       }
-      const requests = this.serverRequests.get(userId) ?? new Map()
-      requests.set(requestId, { client, threadId })
-      this.serverRequests.set(userId, requests)
-      void this.events.publishDomain(
-        userId,
-        adapted.kind === 'invalid'
-          ? createDomainEvent('runtime.diagnostic', adapted.diagnostic)
-          : adapted.event,
+      const params = message.params as Record<string, unknown> | undefined
+      const threadId = typeof params?.threadId === 'string' ? params.threadId : undefined
+      if (!threadId) {
+        client.respondError(requestId, { code: -32602, message: 'threadId is required' })
+        return
+      }
+      const requests = this.serverRequests.get(userId) ?? new Map<RequestId, PendingServerRequest>()
+      if (
+        [...requests.values()].some(
+          (pending) => pending.client === client && pending.rpcId === requestId,
+        )
       )
+        return
+      const correlation = `interaction-${randomUUID()}`
+      const [change] = adaptCodexNotification(
+        method,
+        {
+          ...(message.params as Record<string, unknown> | undefined),
+          threadId,
+          requestId: correlation,
+        },
+        codexEventIdentity(),
+      )
+      if (change?.type !== 'interaction.opened') {
+        client.respondError(requestId, { code: -32602, message: 'Invalid interaction request' })
+        return
+      }
+      requests.set(correlation, {
+        client,
+        threadId,
+        rpcId: requestId,
+        interaction: change.interaction,
+        fileChange: method === 'item/fileChange/requestApproval',
+      })
+      this.serverRequests.set(userId, requests)
+      void this.publishConversationChange(userId, threadId, change)
     })
     try {
       await startupRequest('initialize', () => client.initialize())

@@ -1,3 +1,4 @@
+import { record } from './record.js'
 import type { JsonRpcMessage } from './stdio-transport.js'
 import { log } from '../logger.js'
 import { formatRpcMessageId, summarizeRpcShape } from './rpc-message-summary.js'
@@ -44,6 +45,7 @@ export class CodexRpcClient {
     method: string,
     params: Record<string, unknown> | null = {},
     signal?: AbortSignal,
+    onResponse?: () => void,
   ): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('Codex RPC client is closed'))
     if (signal?.aborted)
@@ -63,7 +65,12 @@ export class CodexRpcClient {
         method,
         resolve: (value) => {
           signal?.removeEventListener('abort', abort)
-          resolve(value)
+          try {
+            onResponse?.()
+            resolve(value)
+          } catch (error) {
+            reject(error)
+          }
         },
         reject: (error) => {
           signal?.removeEventListener('abort', abort)
@@ -145,8 +152,21 @@ export class CodexRpcClient {
     if (isRequestId(message.id) && ('result' in message || 'error' in message)) {
       if (!pending) return
       this.pending.delete(message.id)
-      if ('error' in message) pending.reject(new Error(JSON.stringify(message.error)))
-      else pending.resolve(message.result)
+      if ('error' in message) {
+        const value = record(message.error) ? message.error : undefined
+        const error = new Error(
+          typeof value?.message === 'string' ? value.message : 'Codex RPC request failed',
+        )
+        const data = record(value?.data) ? value.data : undefined
+        const details = [
+          value?.details,
+          value?.additionalDetails,
+          data?.details,
+          data?.additionalDetails,
+        ].find((entry): entry is string => typeof entry === 'string')
+        if (details !== undefined) Object.assign(error, { details })
+        pending.reject(error)
+      } else pending.resolve(message.result)
       return
     }
     if (typeof message.method === 'string' && isRequestId(message.id)) {

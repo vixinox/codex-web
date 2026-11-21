@@ -1,11 +1,23 @@
-import { asc, desc, and, count, eq, gt, isNotNull, lte, max, min } from 'drizzle-orm'
-import { domainEvent } from '../db/schema.js'
+import type { ConversationChange } from '@codex-web/conversation'
+import { asc, desc, and, count, eq, gt, lte, max, min, sql } from 'drizzle-orm'
+import { conversationEvent } from '../db/schema.js'
 import type { Database } from '../database.js'
-import type { EventHubSnapshot } from './event-hub.js'
-import { parseDomainEventEnvelope, type DomainEventEnvelope } from '@codex-web/protocol/owner'
+import type { EventHubSnapshot, EventPage } from './event-hub.js'
+import {
+  isConversationChange,
+  parseDomainEventEnvelope,
+  type DomainEventEnvelope,
+} from '@codex-web/protocol/owner'
 import { log } from '../logger.js'
 
 const THREAD_EVENT_LIMIT = 1_000
+const eventColumns = {
+  id: conversationEvent.id,
+  ownerId: conversationEvent.ownerId,
+  conversationId: conversationEvent.conversationId,
+  change: sql<string>`cast(${conversationEvent.change} as text)`,
+  createdAt: conversationEvent.createdAt,
+}
 
 export class SqliteEventStore {
   private readonly db: Database
@@ -17,18 +29,19 @@ export class SqliteEventStore {
   async load(): Promise<EventHubSnapshot> {
     // EventHub replays a bounded window; loading the entire historical table
     // made restart time grow without bound despite the in-memory cap.
-    const [sequence] = await this.db.select({ maxId: max(domainEvent.id) }).from(domainEvent)
+    const [sequence] = await this.db
+      .select({ maxId: max(conversationEvent.id) })
+      .from(conversationEvent)
     const rows = await this.db
-      .select()
-      .from(domainEvent)
-      .where(isNotNull(domainEvent.threadId))
-      .orderBy(desc(domainEvent.id))
+      .select(eventColumns)
+      .from(conversationEvent)
+      .orderBy(desc(conversationEvent.id))
       .limit(500)
     const events: EventHubSnapshot['events'] = {}
     const rejected = rejectionTracker()
-    let nextId = Number(sequence?.maxId ?? 0) + 1
+    const nextId = Number(sequence?.maxId ?? 0) + 1
     for (const row of rows.reverse()) {
-      const message = parseStoredMessage(row.payload, row.id, row.type, rejected.reject)
+      const message = parseStoredChange(row, rejected.reject)
       if (!message) continue
       const list = events[row.ownerId] ?? (events[row.ownerId] = [])
       list.push({ id: row.id, message })
@@ -42,16 +55,25 @@ export class SqliteEventStore {
   async loadThread(
     userId: string,
     threadId: string,
+    throughId = Number.MAX_SAFE_INTEGER,
+    rejectGaps = false,
   ): Promise<Array<{ id: number; message: DomainEventEnvelope }>> {
     const rows = await this.db
-      .select()
-      .from(domainEvent)
-      .where(and(eq(domainEvent.ownerId, userId), eq(domainEvent.threadId, threadId)))
-      .orderBy(desc(domainEvent.id))
+      .select(eventColumns)
+      .from(conversationEvent)
+      .where(
+        and(
+          eq(conversationEvent.ownerId, userId),
+          eq(conversationEvent.conversationId, threadId),
+          lte(conversationEvent.id, throughId),
+        ),
+      )
+      .orderBy(desc(conversationEvent.id))
       .limit(THREAD_EVENT_LIMIT)
     const rejected = rejectionTracker()
     const events = rows.reverse().flatMap((row) => {
-      const message = parseStoredMessage(row.payload, row.id, row.type, rejected.reject)
+      const message = parseStoredChange(row, rejected.reject)
+      if (!message && rejectGaps) throw new Error('Conversation snapshot history is incomplete')
       return message ? [{ id: row.id, message }] : []
     })
     rejected.log('thread-history')
@@ -59,38 +81,67 @@ export class SqliteEventStore {
   }
 
   async append(userId: string, event: { id: number; message: DomainEventEnvelope }) {
-    const threadId = event.message.threadId
-    if (!threadId) throw new Error('Thread event persistence requires threadId')
-    await this.db.insert(domainEvent).values({
-      id: event.id,
-      ownerId: userId,
-      threadId,
-      type: event.message.type,
-      payload: event.message,
+    const { threadId, createdAt, payload } = event.message
+    const change = payload.change as ConversationChange | undefined
+    if (
+      event.message.type !== 'conversation.change' ||
+      event.message.eventId !== event.id ||
+      !threadId ||
+      !change ||
+      change.identity?.applicationSequence !== event.id
+    )
+      throw new Error('Invalid Conversation event identity')
+    this.db.transaction((transaction) => {
+      transaction
+        .insert(conversationEvent)
+        .values({
+          id: event.id,
+          ownerId: userId,
+          conversationId: threadId,
+          change,
+          createdAt,
+        })
+        .run()
+      this.retainThread(userId, threadId, THREAD_EVENT_LIMIT, transaction)
     })
-    if (threadId) await this.retainThread(userId, threadId)
   }
 
-  async loadAfter(userId: string, afterId: number, filterThreadId?: string) {
-    if (!filterThreadId) return { events: [], scannedThrough: afterId, hasMore: false }
+  async loadAfter(
+    userId: string,
+    afterId: number,
+    filterThreadId?: string,
+    throughId = Number.MAX_SAFE_INTEGER,
+  ): Promise<EventPage> {
     const rows = await this.db
-      .select()
-      .from(domainEvent)
+      .select(eventColumns)
+      .from(conversationEvent)
       .where(
         and(
-          eq(domainEvent.ownerId, userId),
-          eq(domainEvent.threadId, filterThreadId),
-          gt(domainEvent.id, afterId),
+          eq(conversationEvent.ownerId, userId),
+          filterThreadId === undefined
+            ? undefined
+            : eq(conversationEvent.conversationId, filterThreadId),
+          gt(conversationEvent.id, afterId),
+          lte(conversationEvent.id, throughId),
         ),
       )
-      .orderBy(asc(domainEvent.id))
+      .orderBy(asc(conversationEvent.id))
       .limit(500)
     const rejected = rejectionTracker()
-    const events = rows.flatMap((row) => {
-      const message = parseStoredMessage(row.payload, row.id, row.type, rejected.reject)
-      return message ? [{ id: row.id, message }] : []
-    })
-    rejected.log('replay')
+    const events: EventPage['events'] = []
+    for (const row of rows) {
+      const message = parseStoredChange(row, rejected.reject)
+      if (!message) {
+        rejected.log('replay')
+        return {
+          events,
+          scannedThrough: events.at(-1)?.id ?? afterId,
+          hasMore: false,
+          gapAt: row.id,
+        }
+      }
+      events.push({ id: row.id, message })
+    }
     return {
       events,
       scannedThrough: rows.at(-1)?.id ?? afterId,
@@ -101,9 +152,14 @@ export class SqliteEventStore {
   async cursorExpired(userId: string, filterThreadId: string | undefined, afterId: number) {
     if (!filterThreadId) return false
     const [result] = await this.db
-      .select({ count: count(), earliestId: min(domainEvent.id) })
-      .from(domainEvent)
-      .where(and(eq(domainEvent.ownerId, userId), eq(domainEvent.threadId, filterThreadId)))
+      .select({ count: count(), earliestId: min(conversationEvent.id) })
+      .from(conversationEvent)
+      .where(
+        and(
+          eq(conversationEvent.ownerId, userId),
+          eq(conversationEvent.conversationId, filterThreadId),
+        ),
+      )
     return (
       Number(result?.count ?? 0) >= THREAD_EVENT_LIMIT &&
       result?.earliestId !== null &&
@@ -114,46 +170,77 @@ export class SqliteEventStore {
 
   async retainPerThread(limit = THREAD_EVENT_LIMIT) {
     const threads = await this.db
-      .select({ ownerId: domainEvent.ownerId, threadId: domainEvent.threadId })
-      .from(domainEvent)
-      .where(isNotNull(domainEvent.threadId))
-      .groupBy(domainEvent.ownerId, domainEvent.threadId)
-    for (const thread of threads)
-      if (thread.threadId) await this.retainThread(thread.ownerId, thread.threadId, limit)
+      .select({ ownerId: conversationEvent.ownerId, threadId: conversationEvent.conversationId })
+      .from(conversationEvent)
+      .groupBy(conversationEvent.ownerId, conversationEvent.conversationId)
+    for (const thread of threads) this.retainThread(thread.ownerId, thread.threadId, limit, this.db)
   }
 
-  private async retainThread(userId: string, threadId: string, limit = THREAD_EVENT_LIMIT) {
-    const cutoff = await this.db
-      .select({ id: domainEvent.id })
-      .from(domainEvent)
-      .where(and(eq(domainEvent.ownerId, userId), eq(domainEvent.threadId, threadId)))
-      .orderBy(desc(domainEvent.id))
+  private retainThread(
+    userId: string,
+    threadId: string,
+    limit: number,
+    db: Pick<Database, 'select' | 'delete'>,
+  ) {
+    const cutoff = db
+      .select({ id: conversationEvent.id })
+      .from(conversationEvent)
+      .where(
+        and(eq(conversationEvent.ownerId, userId), eq(conversationEvent.conversationId, threadId)),
+      )
+      .orderBy(desc(conversationEvent.id))
       .offset(limit)
       .limit(1)
-    const id = cutoff[0]?.id
+      .get()
+    const id = cutoff?.id
     if (id !== undefined)
-      await this.db
-        .delete(domainEvent)
+      db.delete(conversationEvent)
         .where(
           and(
-            eq(domainEvent.ownerId, userId),
-            eq(domainEvent.threadId, threadId),
-            lte(domainEvent.id, id),
+            eq(conversationEvent.ownerId, userId),
+            eq(conversationEvent.conversationId, threadId),
+            lte(conversationEvent.id, id),
           ),
         )
+        .run()
   }
 }
 
-function parseStoredMessage(
-  value: unknown,
-  id: number,
-  type: string,
+function parseStoredChange(
+  row: Omit<typeof conversationEvent.$inferSelect, 'change'> & { change: string },
   onRejected: (reason: string) => void,
 ): DomainEventEnvelope | undefined {
-  const parsed = parseDomainEventEnvelope(value)
-  if (!parsed.ok || parsed.event.eventId !== id || parsed.event.type !== type) {
-    const reason = parsed.ok ? 'STORED_EVENT_METADATA_MISMATCH' : parsed.error.code
-    onRejected(reason)
+  let change: unknown
+  try {
+    change = JSON.parse(row.change)
+  } catch {
+    onRejected('STORED_EVENT_INVALID_JSON')
+    return undefined
+  }
+  if (!isConversationChange(change) || change.identity.applicationSequence !== row.id) {
+    onRejected('STORED_EVENT_METADATA_MISMATCH')
+    return undefined
+  }
+  const parsed = parseDomainEventEnvelope({
+    eventId: row.id,
+    type: 'conversation.change',
+    runtime: 'codex',
+    threadId: row.conversationId,
+    ...(change.type === 'turn.upserted'
+      ? { turnId: change.turn.id }
+      : 'turnId' in change
+        ? { turnId: change.turnId }
+        : {}),
+    ...(change.type === 'activity.upserted'
+      ? { itemId: change.activity.id }
+      : change.type === 'message.upserted'
+        ? { itemId: change.message.id }
+        : {}),
+    createdAt: row.createdAt,
+    payload: { change },
+  })
+  if (!parsed.ok) {
+    onRejected(parsed.error.code)
     return undefined
   }
   return parsed.event
@@ -162,7 +249,7 @@ function parseStoredMessage(
 function rejectionTracker() {
   const counts = new Map<string, number>()
   return {
-    reject(reason: string) {
+    reject(this: void, reason: string) {
       counts.set(reason, (counts.get(reason) ?? 0) + 1)
     },
     log(scope: string) {

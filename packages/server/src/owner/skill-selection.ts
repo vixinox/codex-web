@@ -1,32 +1,47 @@
-import { type SkillHandleStore, matchingSkills, skillsForCwd, type NativeSkill } from '../skills.js'
+import { skillsForCwd, type NativeSkill } from '../skills.js'
 
-const MAX_SKILL_HANDLES = 32
+export type SkillSelection = Pick<NativeSkill, 'name' | 'path'>
 
-export function parseSkillHandles(value: unknown): string[] | null {
+export function parseSkills(value: unknown): SkillSelection[] | null {
   if (value === undefined) return []
-  if (
-    !Array.isArray(value) ||
-    value.length > MAX_SKILL_HANDLES ||
-    !value.every((handle) => typeof handle === 'string' && /^[0-9a-f-]{36}$/i.test(handle))
-  )
-    return null
-  const handles = value as string[]
-  return new Set(handles).size === handles.length ? handles : null
+  if (!Array.isArray(value) || value.length > 32) return null
+  const selected: SkillSelection[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      typeof item.name !== 'string' ||
+      !item.name ||
+      typeof item.path !== 'string' ||
+      !item.path
+    )
+      return null
+    const key = JSON.stringify([item.name, item.path])
+    if (seen.has(key)) return null
+    seen.add(key)
+    selected.push({ name: item.name, path: item.path })
+  }
+  return selected
 }
 
 export async function resolveSelectedSkills(
   client: { request(method: string, params?: Record<string, unknown>): Promise<unknown> },
-  skillHandles: SkillHandleStore,
-  userId: string,
   cwd: string,
-  handles: readonly string[],
+  selected: readonly SkillSelection[],
 ): Promise<NativeSkill[] | null> {
-  if (handles.length === 0) return []
-  const selected = skillHandles.resolve(userId, cwd, handles)
-  if (!selected) return null
-  const refreshed = skillsForCwd(
+  if (selected.length === 0) return []
+  const available = skillsForCwd(
     await client.request('skills/list', { cwds: [cwd], forceReload: true }),
     cwd,
   )
-  return matchingSkills(selected, refreshed) ? selected : null
+  const result: NativeSkill[] = []
+  for (const skill of selected) {
+    const match = available.find(
+      (candidate) => candidate.name === skill.name && candidate.path === skill.path,
+    )
+    if (!match) return null
+    result.push(match)
+  }
+  return result
 }

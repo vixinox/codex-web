@@ -53,7 +53,7 @@ describe('composer store', () => {
     const first = 'skills-first'
     const second = 'skills-second'
     const skill = {
-      handle: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+      path: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
       name: 'pdf',
       displayName: 'PDF',
       description: 'Create a PDF',
@@ -64,7 +64,7 @@ describe('composer store', () => {
     expect(ensureComposerScope(first).skills).toEqual([skill])
     expect(ensureComposerScope(second).skills).toEqual([])
 
-    removeComposerSkill(first, skill.handle)
+    removeComposerSkill(first, skill.path)
     expect(ensureComposerScope(first).skills).toEqual([])
   })
 })

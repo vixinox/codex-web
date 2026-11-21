@@ -6,7 +6,7 @@
 
 Codex Web 是单 Owner、本地优先的 Codex 工作台。Owner Gateway 运行在 Owner 机器上，远程浏览器通过 Relay 的 E2EE transport 接入同一个 Owner runtime。产品不支持 Guest 运行时、Relay 账户、多 Owner 节点、离线业务队列或匿名远程工作区。
 
-Owner 是唯一的身份和业务权威。浏览器不直接连接 Codex App Server，也不接收 API key、宿主路径、`CODEX_HOME`、rollout 路径、Git remote 或 App Server 进程信息。
+Owner 是唯一的身份和业务权威。浏览器不直接连接 Codex App Server；已认证 Owner 通过应用接口接收业务正文、路径、命令、diff 和交互结果，内容不再经过保密性过滤。凭据库、私钥、服务端密钥和认证内部对象不新增读取入口，也不提供任意原始 RPC 透传。
 
 ## 系统拓扑
 
@@ -59,8 +59,8 @@ localhost 是独立的本地入口，使用 `http://localhost:5173` / `localhost
 
 ## 组件职责
 
-- **App**：管理本地 connection profiles、设备邀请 deep link、配对恢复、remote Passkey、设备测试和用户可见的设备状态；不接触私钥明文、API key、宿主路径或原始 runtime payload。
-- **Owner Gateway / Server**：负责 Owner 身份、Passkey/session、设备 enrollment、设备撤销、trust reset、应用服务和安全 DTO。
+- **App**：管理本地 connection profiles、设备邀请 deep link、配对恢复、remote Passkey、设备测试和用户可见的设备状态；消费 Owner 业务模型及其原始内容和路径，保留独立 presentation 模型。
+- **Owner Gateway / Server**：负责 Owner 身份、Passkey/session、设备 enrollment、设备撤销、trust reset、应用服务和协议结构校验；Conversation adapter 负责领域转换。
 - **Application Services**：提供设备邀请、认证、会话、设备生命周期和 Owner 管理操作；不依赖具体 HTTP 或 Relay socket 实现。
 - **Relay**：只处理已验证的 Owner/client attach、enrollment reference 路由、E2EE payload 和连接生命周期。
 - **Protocol**：分别定义 Owner WebSocket 和 Relay attach/handshake/encrypted frame；用户可见的连接配置不等同于 Relay 内部身份字段。

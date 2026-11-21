@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@codex-web/conversation": "workspace:*",
     "@codex-web/protocol": "workspace:*",
     "@codex-web/telemetry": "workspace:*",
     "@lexical/code": "^0.50.0",

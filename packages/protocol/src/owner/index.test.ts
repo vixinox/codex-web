@@ -5,6 +5,7 @@ import {
   MAX_DOMAIN_EVENT_PAYLOAD_BYTES,
   OWNER_MAX_FRAME_BYTES,
   encodeOwnerFrame,
+  isConversationSnapshot,
   parseDomainEventEnvelope,
   parseOwnerEventStreamMessage,
   parseOwnerFrame,
@@ -21,6 +22,48 @@ const validEvent = {
   createdAt: '2026-01-01T00:00:00.000Z',
   payload: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', delta: 'hello' },
 }
+
+test('validates Conversation changes before accepting their Owner envelope', () => {
+  const change = {
+    type: 'conversation.updated',
+    conversationId: 'thread-1',
+    status: 'active',
+    identity: { sourceId: 'adapter', sourceEventId: 'event-1', receivedAt: validEvent.createdAt },
+  }
+  const event = { ...validEvent, type: 'conversation.change', payload: { change } }
+  assert.equal(parseDomainEventEnvelope(event).ok, true)
+  for (const invalid of [
+    { ...change, conversationId: 'another-thread' },
+    { ...change, status: 'unrecognized' },
+    { ...change, identity: { ...change.identity, rawParams: {} } },
+    { ...change, type: 'unknown' },
+  ]) {
+    assert.equal(parseDomainEventEnvelope({ ...event, payload: { change: invalid } }).ok, false)
+  }
+  assert.equal(parseDomainEventEnvelope({ ...event, payload: { change, raw: {} } }).ok, false)
+})
+
+test('validates nested Conversation snapshot members and their map identities', () => {
+  const turn = { id: 'turn-1', status: 'inProgress', messageIds: [], activityIds: [] }
+  const snapshot = {
+    id: 'thread-1',
+    status: 'active',
+    watermark: 7,
+    turns: { 'turn-1': turn },
+    messages: {},
+    activities: {},
+    interactions: {},
+    agentLinks: {},
+    diagnostics: [],
+  }
+  assert.equal(isConversationSnapshot(snapshot), true)
+  assert.equal(isConversationSnapshot({ ...snapshot, watermark: -1 }), false)
+  assert.equal(isConversationSnapshot({ ...snapshot, turns: { 'wrong-key': turn } }), false)
+  assert.equal(
+    isConversationSnapshot({ ...snapshot, turns: { 'turn-1': { ...turn, cwd: 'private' } } }),
+    false,
+  )
+})
 
 test('round trips hello without a version and request frames', () => {
   const hello = {
@@ -194,4 +237,23 @@ test('frame parser issues stay separate from business DTOs and never echo input'
     assert.equal(parsed.error.code, 'INVALID_JSON')
     assert.equal(parsed.error.message.includes('never-echo'), false)
   }
+})
+
+test('accepts detailed Owner errors while rejecting arbitrary error objects', () => {
+  const error = {
+    code: 'owner.runtime.unavailable',
+    retryable: true,
+    message: 'token=synthetic C:/workspace',
+    details: '/synthetic/path',
+  }
+  const parsed = parseOwnerFrame(JSON.stringify({ type: 'response', requestId: 'detail', error }))
+  assert.equal(parsed.ok, true)
+  const invalid = parseOwnerFrame(
+    JSON.stringify({
+      type: 'response',
+      requestId: 'detail',
+      error: { ...error, stack: 'private' },
+    }),
+  )
+  assert.equal(invalid.ok, false)
 })

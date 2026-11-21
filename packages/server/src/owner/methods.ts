@@ -260,31 +260,10 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'threads.status',
+      'conversation.command',
       {
         access: 'authenticated' as const,
-        handle: (params, context) => services.threadsStatus(context, asRecord(params)),
-      },
-    ],
-    [
-      'threads.send',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.threadsSend(context, asRecord(params)),
-      },
-    ],
-    [
-      'threads.cancel',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.threadsCancel(context, asRecord(params)),
-      },
-    ],
-    [
-      'threads.compact',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.threadsCompact(context, asRecord(params)),
+        handle: (params, context) => services.conversationCommand(context, asRecord(params)),
       },
     ],
     [
@@ -313,20 +292,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (params, context) => services.threadsDeleteAll(context, asRecord(params)),
-      },
-    ],
-    [
-      'userInput.respond',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.userInputRespond(context, asRecord(params)),
-      },
-    ],
-    [
-      'approvals.resolve',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.approvalsResolve(context, asRecord(params)),
       },
     ],
     [

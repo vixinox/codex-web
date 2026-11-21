@@ -73,10 +73,16 @@ try {
   await app.listen({ host: config.host, port: config.port })
   log.info('owner.server.listening', { port: config.port })
 } catch (error) {
-  log.error('owner.server.startup-failed', {
-    errorType:
-      error instanceof Error ? error.name.replace(/[^A-Za-z0-9]/gu, '').slice(0, 48) : typeof error,
-  })
+  log.error(
+    'owner.server.startup-failed',
+    {
+      errorType:
+        error instanceof Error
+          ? error.name.replace(/[^A-Za-z0-9]/gu, '').slice(0, 48)
+          : typeof error,
+    },
+    error,
+  )
   try {
     await remote?.stop()
   } catch {

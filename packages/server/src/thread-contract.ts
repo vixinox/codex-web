@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { record } from './codex/native-protocol.js'
+import { record } from './codex/record.js'
 
 export type ProjectLocation = { id: string; path: string }
 
@@ -40,10 +40,7 @@ export function projectIdForThread(value: unknown, projects: Map<string, string>
   return typeof cwd === 'string' ? (projects.get(normalizedPath(cwd)) ?? null) : null
 }
 
-export function sanitizeThreadSummary(
-  value: unknown,
-  projectId: string | null,
-): ThreadSummary | null {
+export function toThreadSummary(value: unknown, projectId: string | null): ThreadSummary | null {
   if (!record(value)) return null
   if (value.ephemeral === true || value.parentThreadId != null) return null
   if (typeof value.id !== 'string' || typeof value.preview !== 'string') return null

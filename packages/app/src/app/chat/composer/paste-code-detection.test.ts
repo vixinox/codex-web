@@ -100,7 +100,7 @@ describe('markdown input fences', () => {
 
   it('round trips safe Skill links without parsing links inside code fences', () => {
     const pdf = {
-      handle: 'pdf-user',
+      path: 'pdf-user',
       name: 'pdf export',
       displayName: 'PDF export',
       description: 'Create PDFs',
@@ -126,13 +126,13 @@ describe('markdown input fences', () => {
 
   it('only converts a unique available Skill link and leaves unsafe paths as text', () => {
     const userPdf = {
-      handle: 'pdf-user',
+      path: 'pdf-user',
       name: 'pdf',
       displayName: 'PDF',
       description: 'Create PDFs',
       scope: 'user' as const,
     }
-    const repoPdf = { ...userPdf, handle: 'pdf-repo', scope: 'repo' as const }
+    const repoPdf = { ...userPdf, path: 'pdf-repo', scope: 'repo' as const }
     expect(
       parseDraft(skillMarkdownLink('pdf', 'repo'), [userPdf, repoPdf]).blocks[0],
     ).toMatchObject({
@@ -145,8 +145,8 @@ describe('markdown input fences', () => {
     })
     expect(
       parseDraft(skillMarkdownLink('pdf', 'user'), [
-        { ...userPdf, handle: 'one' },
-        { ...userPdf, handle: 'two' },
+        { ...userPdf, path: 'one' },
+        { ...userPdf, path: 'two' },
       ]).blocks[0],
     ).toMatchObject({
       kind: 'text',

@@ -1,363 +1,124 @@
 import * as React from 'react'
-
-import {
-  domainEventToCodexNotification,
-  type CodexHistoryEvent,
-  type CodexNotification,
-} from '@/app/chat/native/codex-thread'
+import type { ConversationId } from '@codex-web/conversation'
+import { ownerConversationClient } from '@/app/chat/domain/owner-conversation-client'
+import type { ConversationClient } from '@/app/chat/domain/conversation-client'
+import type { ThreadClient } from '@/lib/bridge/interfaces/thread'
+import { presentAppError } from '@/lib/errors/presentation'
 import type { ChatSession, ChatSessionModel, ThreadLifecycleHandler } from '../interface'
 import {
   toThreadPresentationSnapshot,
   useThreadSessionRegistry,
   useThreadSessionSnapshot,
 } from '../state/thread-session-store'
-import { waitForThreadAvailability } from '@/lib/bridge/thread-availability'
-import type {
-  ThreadClient,
-  ThreadEvent,
-  ThreadSnapshot,
-  ThreadEventCursor,
-} from '@/lib/bridge/interfaces/thread'
-import { ThreadEventContractError } from '@/app/chat/domain/owner-thread-adapter'
-import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
-import { trackProductEvent } from '@/lib/connection/telemetry'
-import { presentAppError } from '@/lib/errors/presentation'
-
-const STATUS_RECONCILE_INTERVAL_MS = 15_000
 
 export type { ChatSession, ChatSessionModel, ThreadLifecycleHandler } from '../interface'
 export type ThreadDetailModel = ChatSessionModel
 
 export function useThreadDetailController(
-  client: ThreadClient,
+  client: Pick<ThreadClient, 'answerUserInput' | 'cancelTurn'>,
   projectId: string | null | undefined,
   threadId: string | null,
   onUnavailable?: () => void,
   onThreadLifecycle?: ThreadLifecycleHandler,
+  conversationClient: Pick<ConversationClient, 'watch'> = ownerConversationClient,
 ): ChatSession {
   const registry = useThreadSessionRegistry()
   const [retryKey, setRetryKey] = React.useState(0)
-  const [eventError, setEventError] = React.useState<string | null>(null)
-  const requestKey =
-    projectId !== undefined && threadId ? `${projectId ?? '<root>'}\0${threadId}` : null
-  const session = requestKey && threadId ? registry.get(projectId ?? null, threadId) : null
+  const [streamFailure, setStreamFailure] = React.useState<{ key: string; message: string } | null>(
+    null,
+  )
+  const session = projectId !== undefined && threadId ? registry.get(projectId, threadId) : null
   const snapshot = useThreadSessionSnapshot(session)
+  const retry = React.useCallback(() => setRetryKey((value) => value + 1), [])
 
   React.useEffect(() => {
-    if (projectId === undefined || !threadId || !requestKey || !session) return
+    if (projectId === undefined || !threadId || !session) return
     const controller = new AbortController()
-    registry.retain(projectId ?? null, threadId)
-    let active = true
-    let lastEventId = 0
-    let snapshotEventCursor: ThreadEventCursor = { epoch: '', sequence: 0 }
-    let lastEventCursor: ThreadEventCursor = snapshotEventCursor
-    let sparseTurnIds = new Set<string>()
-    let unsubscribe: () => void = () => undefined
-    let recoveryTimer: number | null = null
-    let recoveryAttempts = 0
-    let recovering = false
-    let contractFailed = false
-    let forceSnapshotRecovery = false
-    let resetRecoveryEpoch: string | null = null
-    const lifecycleMethods = new Set(['thread/archived', 'thread/deleted', 'thread/closed'])
-    const lifecycleEventIds = new Set<string>()
-    const receive = (event: ThreadEvent) => {
-      if (!active) return
-      const eventCursor = event.cursor
-      const eventKey = `${eventCursor.epoch}:${eventCursor.sequence}`
-      if (eventCursor.epoch !== lastEventCursor.epoch) {
-        if (resetRecoveryEpoch !== eventCursor.epoch) {
-          scheduleRecovery(eventCursor, true)
-          return
-        }
-      }
-      const notification = domainEventToCodexNotification(event.event)
-      const parsed = parseNotification(notification)
-      if (
-        event.id <= snapshotEventCursor.sequence &&
-        sparseTurnIds.size > 0 &&
-        (!parsed.ok || !notificationReferencesTurn(parsed.value, sparseTurnIds))
+    registry.retain(projectId, threadId)
+    session.beginLoad()
+    let stopped = false
+    setStreamFailure(null)
+    const transportError = (error: unknown) => {
+      if (controller.signal.aborted || stopped) return
+      stopped = true
+      if (isCodexUnavailable(error)) onUnavailable?.()
+      const message = presentAppError(error, 'Could not load this thread. Try again.')
+      if (session.state.status === 'ready') setStreamFailure({ key: session.key, message })
+      else session.setError(message)
+    }
+    void conversationClient
+      .watch(
+        { projectId, conversationId: threadId as ConversationId },
+        {
+          replaceSnapshot(value) {
+            if (!controller.signal.aborted) session.replaceConversation(value)
+          },
+          applyChange(change) {
+            if (controller.signal.aborted) return
+            session.applyConversationChange(change)
+            if (change.type === 'conversation.updated') {
+              if (change.status === 'archived') onThreadLifecycle?.('thread/archived')
+              if (change.status === 'deleted') onThreadLifecycle?.('thread/deleted')
+            }
+          },
+          transportError,
+        },
+        controller.signal,
       )
-        return
-      if (event.id <= lastEventId) return
-      lastEventId = event.id
-      lastEventCursor = eventCursor
-      transcriptDebug({
-        phase: 'event',
-        threadId,
-        turnId:
-          parsed.ok && typeof parsed.value.params.turnId === 'string'
-            ? parsed.value.params.turnId
-            : undefined,
-        itemId:
-          parsed.ok && typeof parsed.value.params.itemId === 'string'
-            ? parsed.value.params.itemId
-            : undefined,
-        eventId: event.id,
-        method: parsed.ok ? parsed.value.method : undefined,
-        cursorSequence: eventCursor.sequence,
-        eventCreatedAtAgeMs: Date.now() - Date.parse(event.event.createdAt),
-        deltaChars:
-          parsed.ok && typeof parsed.value.params.delta === 'string'
-            ? parsed.value.params.delta.length
-            : undefined,
-      })
-      if (!parsed.ok) {
-        session.applyEvent(
-          { method: 'webcodex/protocol-error', params: { code: parsed.error } },
-          eventKey,
-        )
-        return
-      }
-      if (lifecycleMethods.has(parsed.value.method)) {
-        if (lifecycleEventIds.has(eventKey)) return
-        lifecycleEventIds.add(eventKey)
-        onThreadLifecycle?.(
-          parsed.value.method as 'thread/archived' | 'thread/deleted' | 'thread/closed',
-        )
-        return
-      }
-      session.applyEvent(parsed.value, eventKey)
-      transcriptDebug({ phase: 'turn', threadId, eventId: event.id, method: parsed.value.method })
+      .catch(transportError)
+    const reconnect = () => {
+      if (stopped) retry()
     }
-    const subscribe = (cursor: ThreadEventCursor) => {
-      unsubscribe()
-      unsubscribe = client.subscribe(threadId, cursor, receive, handleStreamError)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') reconnect()
     }
-    const hydrateAndSubscribe = (response: ThreadSnapshot) => {
-      trackProductEvent('thread_opened')
-      if (!active || contractFailed) return
-      const historyEvents: CodexHistoryEvent[] = (response.historyEvents ?? []).map((event) => ({
-        id: event.id,
-        message: domainEventToCodexNotification(event.event),
-      }))
-      const eventCursor = normalizeCursor(response.eventCursor)
-      const hydration = session.hydrate(response.thread, eventCursor.sequence, historyEvents)
-      snapshotEventCursor = eventCursor
-      lastEventCursor = { ...eventCursor, sequence: hydration.replayAfterId }
-      sparseTurnIds = hydration.sparseTurnIds
-      lastEventId = hydration.replayAfterId
-      contractFailed = false
-      setEventError(null)
-      subscribe({ ...response.eventCursor, sequence: hydration.replayAfterId })
-    }
-    const reconcileTimer = window.setInterval(() => {
-      if (
-        !active ||
-        contractFailed ||
-        document.visibilityState !== 'visible' ||
-        !session.state.isBusy ||
-        recovering
-      )
-        return
-      void client
-        .readThreadStatus(projectId, threadId, controller.signal)
-        .then((status) => {
-          if (!active) return undefined
-          const statusCursor = normalizeCursor(status.eventCursor)
-          if (statusCursor.epoch !== lastEventCursor.epoch || statusCursor.sequence > lastEventId)
-            return client
-              .readThread(projectId, threadId, controller.signal)
-              .then(hydrateAndSubscribe)
-          return undefined
-        })
-        .catch(() => undefined)
-    }, STATUS_RECONCILE_INTERVAL_MS)
-    const recover = async () => {
-      if (!active || recovering || contractFailed) return
-      recovering = true
-      try {
-        const status = await client.readThreadStatus(projectId, threadId, controller.signal)
-        if (!active || contractFailed) return
-        const statusCursor = normalizeCursor(status.eventCursor)
-        const mustReadSnapshot = forceSnapshotRecovery
-        forceSnapshotRecovery = false
-        const expectedResetEpoch = resetRecoveryEpoch
-        resetRecoveryEpoch = null
-        const statusEpochChanged = statusCursor.epoch !== lastEventCursor.epoch
-        if (
-          mustReadSnapshot ||
-          (statusEpochChanged && statusCursor.epoch !== expectedResetEpoch) ||
-          (!statusEpochChanged && statusCursor.sequence > lastEventId)
-        ) {
-          hydrateAndSubscribe(await client.readThread(projectId, threadId, controller.signal))
-        } else {
-          const cursor =
-            expectedResetEpoch && statusCursor.epoch === expectedResetEpoch
-              ? statusCursor
-              : { ...lastEventCursor, sequence: lastEventId }
-          if (expectedResetEpoch && statusCursor.epoch === expectedResetEpoch) {
-            snapshotEventCursor = { ...statusCursor, sequence: 0 }
-            lastEventCursor = statusCursor
-            lastEventId = statusCursor.sequence
-          }
-          subscribe(cursor)
-        }
-        recoveryAttempts = 0
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') return
-        if (error instanceof ThreadEventContractError) {
-          failContract(error.message)
-          return
-        }
-        if (isCodexUnavailable(error)) onUnavailable?.()
-        if (recoveryAttempts >= 5) {
-          session.setError(presentAppError(error, 'Could not restore this thread. Try again.'))
-          return
-        }
-        recoveryAttempts += 1
-        const delay = Math.min(8_000, 2 ** (recoveryAttempts - 1) * 1_000)
-        recoveryTimer = window.setTimeout(() => {
-          recoveryTimer = null
-          void recover()
-        }, delay)
-      } finally {
-        recovering = false
-      }
-    }
-    function failContract(message: string) {
-      contractFailed = true
-      if (recoveryTimer !== null) {
-        window.clearTimeout(recoveryTimer)
-        recoveryTimer = null
-      }
-      unsubscribe()
-      setEventError(message)
-      if (session && session.state.status !== 'ready') session.setError(message)
-    }
-    function handleStreamError(
-      resetCursor?: ThreadEventCursor,
-      reset = false,
-      error?: { code: string; message: string },
-    ) {
-      if (error) {
-        failContract(error.message)
-        return
-      }
-      scheduleRecovery(resetCursor, reset)
-    }
-    function scheduleRecovery(resetCursor?: ThreadEventCursor, reset = false) {
-      trackProductEvent('sse_reconnected')
-      if (contractFailed) return
-      if (reset) {
-        forceSnapshotRecovery = true
-        resetRecoveryEpoch = resetCursor?.epoch ?? null
-      } else if (resetCursor) lastEventCursor = resetCursor
-      if (!active || recoveryTimer !== null || recovering) return
-      recoveryTimer = window.setTimeout(() => {
-        recoveryTimer = null
-        void recover()
-      }, 1_000)
-    }
-    const handleNetworkResume = () => scheduleRecovery()
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') scheduleRecovery()
-    }
-    window.addEventListener('online', handleNetworkResume)
-    document.addEventListener('visibilitychange', handleVisibility)
-    void waitForThreadAvailability(
-      (signal) => client.readThread(projectId, threadId, signal),
-      controller.signal,
-    )
-      .then(hydrateAndSubscribe)
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return
-        if (error instanceof ThreadEventContractError) {
-          failContract(error.message)
-          return
-        }
-        if (isCodexUnavailable(error)) onUnavailable?.()
-        session.setError(presentAppError(error, 'Could not load this thread. Try again.'))
-      })
+    window.addEventListener('online', reconnect)
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      active = false
       controller.abort()
-      if (recoveryTimer !== null) window.clearTimeout(recoveryTimer)
-      window.clearInterval(reconcileTimer)
-      window.removeEventListener('online', handleNetworkResume)
-      document.removeEventListener('visibilitychange', handleVisibility)
-      unsubscribe()
-      registry.release(projectId ?? null, threadId)
+      window.removeEventListener('online', reconnect)
+      document.removeEventListener('visibilitychange', onVisibility)
+      registry.release(projectId, threadId)
     }
   }, [
+    conversationClient,
     onThreadLifecycle,
     onUnavailable,
-    client,
     projectId,
     registry,
-    requestKey,
+    retry,
     retryKey,
     session,
     threadId,
   ])
 
-  const model: ChatSessionModel =
-    !requestKey || !session
-      ? { status: 'idle' }
-      : snapshot.status === 'ready'
-        ? { status: 'ready', session, thread: toThreadPresentationSnapshot(snapshot) }
-        : snapshot.status === 'error'
-          ? { status: 'error', message: snapshot.error ?? 'Could not load this thread. Try again.' }
-          : { status: 'loading' }
-  const retry = React.useCallback(() => setRetryKey((value) => value + 1), [])
-  const answer = React.useCallback(
+  const model: ChatSessionModel = !session
+    ? { status: 'idle' }
+    : snapshot.status === 'ready'
+      ? { status: 'ready', session, thread: toThreadPresentationSnapshot(snapshot) }
+      : snapshot.status === 'error'
+        ? { status: 'error', message: snapshot.error ?? 'Could not load this thread. Try again.' }
+        : { status: 'loading' }
+  const answerUserInput = React.useCallback(
     async (answers: Record<string, { answers: string[] }>) => {
       const request = snapshot.userInput
-      if (!threadId || !request || !session) return
-      await client.answerUserInput(threadId, request.requestId, answers)
-      // Do not make the composer wait for the transport event to clear. The
-      // persisted answered event remains the source of truth on reconnect,
-      // while this same notification keeps the live session deterministic if
-      // resolved/answered SSE events arrive in either order.
-      session.applyEvent({
-        method: 'webcodex/userInput/answered',
-        params: { threadId, requestId: request.requestId, answers },
-      })
+      if (threadId && request) await client.answerUserInput(threadId, request.requestId, answers)
     },
-    [client, session, snapshot.userInput, threadId],
+    [client, snapshot.userInput, threadId],
   )
   const cancelUserInput = React.useCallback(async () => {
     const request = snapshot.userInput
-    if (!threadId || !request || !session) return
-    await client.cancelTurn(threadId, request.turnId)
-    session.interruptUserInput()
-  }, [client, session, snapshot.userInput, threadId])
-  const followTurn = React.useCallback(() => {
-    setRetryKey((value) => value + 1)
-  }, [])
+    if (threadId && request) await client.cancelTurn(threadId, request.turnId)
+  }, [client, snapshot.userInput, threadId])
   return {
     model,
     retry,
-    followTurn,
-    answerUserInput: answer,
+    followTurn: retry,
+    answerUserInput,
     cancelUserInput,
     inputErrors: snapshot.inputErrors,
-    eventError,
+    eventError: streamFailure && streamFailure.key === session?.key ? streamFailure.message : null,
   }
-}
-
-function normalizeCursor(value: ThreadEventCursor): ThreadEventCursor {
-  return value
-}
-
-function parseNotification(
-  value: unknown,
-): { ok: true; value: CodexNotification } | { ok: false; error: string } {
-  if (!isRecord(value)) return { ok: false, error: 'SSE event must be an object.' }
-  if (typeof value.method !== 'string' || !value.method || !isRecord(value.params))
-    return { ok: false, error: 'SSE event must contain method and params.' }
-  return {
-    ok: true,
-    value: {
-      method: value.method,
-      params: value.params,
-      ...(typeof value.id === 'number' || typeof value.id === 'string' ? { id: value.id } : {}),
-    },
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function isCodexUnavailable(error: unknown) {
@@ -368,12 +129,4 @@ function isCodexUnavailable(error: unknown) {
     candidate?.status === 409 ||
     candidate?.status === 502
   )
-}
-
-function notificationReferencesTurn(notification: CodexNotification, turnIds: Set<string>) {
-  const directTurnId =
-    typeof notification.params.turnId === 'string' ? notification.params.turnId : undefined
-  if (directTurnId && turnIds.has(directTurnId)) return true
-  const turn = notification.params.turn
-  return isRecord(turn) && typeof turn.id === 'string' && turnIds.has(turn.id)
 }

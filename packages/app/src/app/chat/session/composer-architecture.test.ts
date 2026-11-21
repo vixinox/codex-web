@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { ownerComposerAdapter } from './adapters/owner-composer-adapter'
-import { ownerThreadClient } from '@/lib/bridge/thread-adapters'
+import { ownerThreadDomainAdapter } from '../domain/owner-thread-adapter'
 
 const source = (path: string) =>
   readFileSync(fileURLToPath(new URL(path, import.meta.url)), { encoding: 'utf8' })
@@ -27,7 +27,7 @@ describe('Composer architecture boundaries', () => {
   })
 
   it('wires the Owner adapter to the Owner Thread client', () => {
-    expect(ownerComposerAdapter.threads).toBe(ownerThreadClient)
+    expect(ownerComposerAdapter.threads).toBe(ownerThreadDomainAdapter)
     expect(ownerComposerAdapter.capabilities.availableModels).toEqual([])
   })
 })

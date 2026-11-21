@@ -74,6 +74,38 @@ export type PublicErrorDto = {
   message?: string
 }
 
+/** Detailed business errors are only emitted after Owner authentication. */
+export type OwnerErrorDto = PublicErrorDto & { details?: string }
+
+export function isOwnerErrorDto(value: unknown): value is OwnerErrorDto {
+  if (!isRecord(value) || typeof value.code !== 'string' || !value.code.startsWith('owner.'))
+    return false
+  if (
+    Object.keys(value).some(
+      (key) => !['code', 'params', 'retryable', 'message', 'details'].includes(key),
+    )
+  )
+    return false
+  if (value.message !== undefined && typeof value.message !== 'string') return false
+  if (value.details !== undefined && typeof value.details !== 'string') return false
+  return isPublicErrorDto({
+    code: value.code,
+    retryable: value.retryable,
+    ...(value.params === undefined ? {} : { params: value.params }),
+  })
+}
+
+export function createOwnerError(value: OwnerErrorDto): OwnerErrorDto {
+  if (!isOwnerErrorDto(value)) throw new TypeError('Owner error is invalid')
+  return {
+    code: value.code,
+    retryable: value.retryable,
+    ...(value.params === undefined ? {} : { params: value.params }),
+    ...(value.message === undefined ? {} : { message: value.message }),
+    ...(value.details === undefined ? {} : { details: value.details }),
+  }
+}
+
 export type PublicErrorProjection = PublicErrorDto
 
 export function createPublicError(projection: PublicErrorProjection): PublicErrorDto {
@@ -136,16 +168,20 @@ function sanitizeParameters(
 }
 
 function sanitizeText(value: string) {
-  return value
-    .replace(
-      /(api[_-]?key|authorization|bearer|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,
-      '$1=[redacted]',
-    )
-    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
-    .replace(/[A-Za-z]:\\[^\r\n]*/g, '[path]')
-    .replace(/(?:^|\s)(?:\/[^\s]+){2,}/g, ' [path]')
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?')
-    .slice(0, 500)
+  return (
+    value
+      .replace(
+        /(api[_-]?key|authorization|bearer|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,
+        '$1=[redacted]',
+      )
+      .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+      .replace(/[A-Za-z]:\\[^\r\n]*/g, '[path]')
+      .replace(/(?:^|\s)(?:\/[^\s]+){2,}/g, ' [path]')
+      // Intentional control-character sanitization for the unchanged public/Relay error contract.
+      // oxlint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?')
+      .slice(0, 500)
+  )
 }
 
 const SENSITIVE_KEY =

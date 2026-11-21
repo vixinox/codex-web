@@ -1,9 +1,9 @@
 import {
   isKnownTelemetryErrorCode,
-  isPublicErrorDto,
+  isOwnerErrorDto,
   TelemetryErrorCode,
   type KnownTelemetryErrorCode,
-  type PublicErrorDto,
+  type OwnerErrorDto,
 } from '@codex-web/telemetry/errors'
 import { AppLocalError, type AppLocalErrorCode } from './app-local-error'
 
@@ -210,7 +210,15 @@ const GENERIC_ERROR_COPY: LocalizedCopy = {
 }
 
 export function presentPublicError(error: unknown, locale = currentLocale()): string {
-  if (!isPublicErrorDto(error) || !error.code.startsWith('owner.'))
+  const summary = presentOwnerErrorSummary(error, locale)
+  if (!isOwnerErrorDto(error)) return summary
+  return [
+    ...new Set([summary, error.message, error.details].filter((value): value is string => !!value)),
+  ].join('\n')
+}
+
+function presentOwnerErrorSummary(error: unknown, locale: string): string {
+  if (!isOwnerErrorDto(error) || !error.code.startsWith('owner.'))
     return localized(GENERIC_ERROR_COPY, locale)
   const copy =
     isKnownTelemetryErrorCode(error.code) && error.code.startsWith('owner.')
@@ -245,10 +253,10 @@ export function presentAppError(
   return fallback ?? localized(GENERIC_ERROR_COPY, locale)
 }
 
-function getPublicError(value: unknown): PublicErrorDto | null {
-  if (isPublicErrorDto(value)) return value
+function getPublicError(value: unknown): OwnerErrorDto | null {
+  if (isOwnerErrorDto(value)) return value
   if (!isRecord(value) || !('publicError' in value)) return null
-  return isPublicErrorDto(value.publicError) ? value.publicError : null
+  return isOwnerErrorDto(value.publicError) ? value.publicError : null
 }
 
 function currentLocale() {

@@ -1,4 +1,7 @@
-import { isPublicErrorDto, type PublicErrorDto } from '@codex-web/telemetry/errors'
+import { isOwnerErrorDto, type OwnerErrorDto } from '@codex-web/telemetry/errors'
+import { isConversationChange } from './conversation.js'
+
+export { isConversationChange, isConversationSnapshot } from './conversation.js'
 
 export const DOMAIN_EVENT_RUNTIME = 'codex' as const
 export const MAX_DOMAIN_EVENT_PAYLOAD_BYTES = 128_000
@@ -94,7 +97,7 @@ export type OwnerResponseFrame = {
   type: 'response'
   requestId: string
   result?: unknown
-  error?: PublicErrorDto
+  error?: OwnerErrorDto
 }
 
 export type OwnerNotificationFrame = {
@@ -252,6 +255,12 @@ export function parseDomainEventEnvelope(value: unknown): DomainEventParseResult
     !isRecord(value.payload) ||
     !isJsonValue(value.payload) ||
     byteLength(JSON.stringify(value.payload)) > MAX_DOMAIN_EVENT_PAYLOAD_BYTES ||
+    (value.type === 'conversation.change' &&
+      (!isIdentifier(value.threadId) ||
+        !hasOnlyKeys(value.payload, ['change']) ||
+        !isConversationChange(value.payload.change) ||
+        (value.payload.change.type === 'conversation.updated' &&
+          value.payload.change.conversationId !== value.threadId))) ||
     !optionalIdentifier(value.threadId) ||
     !optionalIdentifier(value.turnId) ||
     !optionalIdentifier(value.itemId) ||
@@ -463,8 +472,15 @@ function isJsonValue(value: unknown): boolean {
   return true
 }
 
-function isOwnerPublicError(value: unknown): value is PublicErrorDto {
-  return isPublicErrorDto(value) && value.code.startsWith('owner.')
+function isOwnerPublicError(value: unknown): value is OwnerErrorDto {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'code' in value &&
+    typeof value.code === 'string' &&
+    value.code.startsWith('owner.') &&
+    isOwnerErrorDto(value)
+  )
 }
 
 function isCapabilities(value: unknown): value is string[] {

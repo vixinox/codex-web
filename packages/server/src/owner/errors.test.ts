@@ -46,3 +46,16 @@ test('auth diagnostics use explicit non-retryable classifications', () => {
   assert.equal(error.retryable, false)
   assert.equal(projectOwnerError(error).message, 'Passkey verification failed.')
 })
+
+test('retains original causes as Owner details only when explicitly requested', () => {
+  const cause = new Error('failed at C:/private/path')
+  Object.assign(cause, { details: 'upstream diagnostic' })
+  const error = new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause })
+  const generic = projectOwnerError(error)
+  assert.equal(generic.message, 'Codex is unavailable.')
+  assert.equal('details' in generic, false)
+  const detailed = projectOwnerError(error, true)
+  assert.equal(detailed.message, 'failed at C:/private/path')
+  assert.equal(detailed.details, 'upstream diagnostic')
+  assert.equal(JSON.stringify(detailed).includes('stack'), false)
+})

@@ -4,11 +4,11 @@ import type { ThreadSummary } from '@/lib/bridge/interfaces/thread'
 import type { RuntimeCapabilityModel } from '@/app/chat/composer/model/composer-capabilities'
 
 export type WorkspaceSkill = {
-  handle: string
+  path: string
   name: string
   displayName: string
   description: string
-  scope: 'system' | 'user' | 'project'
+  scope: 'system' | 'user' | 'repo' | 'admin'
 }
 
 export const ownerWorkspace = {

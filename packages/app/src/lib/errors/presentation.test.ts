@@ -59,7 +59,7 @@ describe('Owner error presentation', () => {
         },
         'en',
       ),
-    ).toBe('Something went wrong. Please try again.')
+    ).toBe('token=secret')
     expect(
       presentPublicError(
         {
@@ -73,7 +73,7 @@ describe('Owner error presentation', () => {
     ).toBe('Something went wrong. Please try again.')
   })
 
-  it('does not let a missing known-code translation fall back to server text', () => {
+  it('includes Owner message alongside stable operation hints', () => {
     expect(
       presentPublicError(
         {
@@ -83,7 +83,7 @@ describe('Owner error presentation', () => {
         },
         'en',
       ),
-    ).toBe('Sign in to continue.')
+    ).toBe('Sign in to continue.\nServer controlled text')
   })
 
   it('preserves retryability and localizes app-owned errors', () => {
@@ -93,7 +93,9 @@ describe('Owner error presentation', () => {
       message: 'ignored for a known code',
     }
     expect(isKnownTelemetryErrorCode(dto.code)).toBe(true)
-    expect(presentPublicError(dto, 'en')).toBe('The request timed out. Try again.')
+    expect(presentPublicError(dto, 'en')).toBe(
+      'The request timed out. Try again.\nignored for a known code',
+    )
     expect(
       presentAppError(
         new AppLocalError(AppLocalErrorCode.ownerRequestCancelled, 'localized'),
@@ -102,4 +104,18 @@ describe('Owner error presentation', () => {
       ),
     ).toBe('The request was cancelled.')
   })
+})
+
+it('shows raw Owner diagnostic text with the localized operation hint', () => {
+  expect(
+    presentPublicError(
+      {
+        code: 'owner.runtime.unavailable',
+        retryable: true,
+        message: 'token=synthetic',
+        details: 'C:/synthetic/path',
+      },
+      'en',
+    ),
+  ).toBe('Codex is temporarily unavailable. Try again.\ntoken=synthetic\nC:/synthetic/path')
 })

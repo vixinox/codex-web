@@ -1,5 +1,7 @@
 # Transcript 渲染架构
 
+> 本文保留 renderer 行为说明。数据入口已按 [Conversation 规格](../impl/conversation-model/development-spec.md) 切换到共享领域模型和 `conversation-presentation.ts`；下文 native DTO/reducer/旧文件名属于迁移前说明。presentation/renderer 的独立层次仍保留，[05](../impl/conversation-model/05-owner-filter-removal-and-simplification.md) 已移除业务内容脱敏及问答答案清空规则。
+
 本文档描述当前 Chat transcript 的真实前端实现。它记录数据边界、状态归一化、组件职责和流式渲染行为；协议字段的完整定义仍以 [API 契约](../api/README.zh-CN.md) 和 `packages/app/src/app/chat/native` 为准。
 
 ## 总体路径
@@ -53,7 +55,7 @@ ThreadAssets
 
 - 安全化 model/reasoning effort、状态、时间和 token usage；effort 能力由当前 runtime model catalog 决定。
 - 将原生 item 归一为 `ChatBlock`：user、assistant、activity、context-compaction article、error。
-- 按连续 activity kind 聚合为 activity block，并补充 command、file diff、状态、输出和脱敏后的展示字段。
+- 按连续 activity kind 聚合为 activity block，并补充 command、file diff、状态、输出和展示字段；业务内容与路径保留原值。
 - 从原生 plan 和 diff 生成 `ChatPlanPresentation` 与 diff 统计。
 - 将用户输入中的 text、skill、mention、image、audio 转换为 `ChatUserContent`，并移除注入的 skill marker。
 - 将问答请求和已回答/已 resolved 事件归一为 questionnaire summary；renderer 不解释 bridge 事件。

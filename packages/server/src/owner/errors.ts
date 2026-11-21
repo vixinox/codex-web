@@ -1,8 +1,9 @@
 import {
   createPublicError,
+  createOwnerError,
+  type OwnerErrorDto,
   isKnownTelemetryErrorCode,
   type KnownTelemetryErrorCode,
-  type PublicErrorDto,
   type PublicErrorParameter,
 } from '@codex-web/telemetry/errors'
 import { DiagnosticError } from '@codex-web/telemetry/diagnostic-error'
@@ -144,22 +145,33 @@ export class AuthDomainError extends DiagnosticError {
   }
 }
 
-export function projectOwnerError(error: unknown): PublicErrorDto {
-  if (!(error instanceof DiagnosticError))
-    return createPublicError({
-      code: 'owner.internal.unavailable',
-      message: SAFE_ERROR_MESSAGES['owner.internal.unavailable'],
-      retryable: true,
-    })
-
-  const code = mapOwnerErrorCode(error.code)
-  const message = SAFE_ERROR_MESSAGES[code] ?? SAFE_ERROR_MESSAGES['owner.internal.unavailable']
-  const params = error instanceof OwnerMethodError ? error.params : undefined
-  return createPublicError({
+export function projectOwnerError(error: unknown, detailed = false): OwnerErrorDto {
+  const diagnostic = error instanceof DiagnosticError
+  const code = diagnostic ? mapOwnerErrorCode(error.code) : 'owner.internal.unavailable'
+  const base = createPublicError({
     code,
-    ...(params ? { params } : {}),
-    message,
-    retryable: error.retryable,
+    message: SAFE_ERROR_MESSAGES[code] ?? SAFE_ERROR_MESSAGES['owner.internal.unavailable'],
+    retryable: diagnostic ? error.retryable : true,
+    ...(error instanceof OwnerMethodError && error.params ? { params: error.params } : {}),
+  })
+  if (!detailed) return base
+  // Follow explicit Error causes only, never serialize arbitrary error objects.
+  let current: unknown = error
+  let message: string | undefined
+  let details: string | undefined
+  const seen = new Set<Error>()
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current)
+    if (!(current instanceof DiagnosticError)) message = current.message
+    if ('details' in current && typeof current.details === 'string') details = current.details
+    else if ('additionalDetails' in current && typeof current.additionalDetails === 'string')
+      details = current.additionalDetails
+    current = current.cause
+  }
+  return createOwnerError({
+    ...base,
+    ...(message === undefined ? {} : { message }),
+    ...(details === undefined ? {} : { details }),
   })
 }
 

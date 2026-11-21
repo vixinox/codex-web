@@ -1,11 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { CodexBridge } from '../http/types.js'
-import { projectThreadSnapshot } from '../codex/domain-events.js'
-import { parseOwnerEventCursor, type OwnerEventCursor } from '@codex-web/protocol/owner'
-import { parseRequestId } from '../codex/request-id.js'
+import { applyChange, createConversationState, type Interaction } from '@codex-web/conversation'
+import { adaptCodexSnapshot } from '../codex/conversation-adapter.js'
+import {
+  isConversationChange,
+  parseOwnerEventCursor,
+  type OwnerEventCursor,
+} from '@codex-web/protocol/owner'
 import { createThreadDomain } from '../threads/index.js'
-import { SkillHandleStore, skillsForCwd, turnInput } from '../skills.js'
-import { parseSkillHandles, resolveSelectedSkills } from './skill-selection.js'
+import { summarizeSkill, skillsForCwd, turnInput } from '../skills.js'
+import { parseSkills, resolveSelectedSkills } from './skill-selection.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { OwnerConnector } from '../remote/connector.js'
 import { EnrollmentInvitationStore } from '../remote/enrollment-invitation-store.js'
@@ -48,8 +52,8 @@ function safeId(value: unknown): value is string {
   )
 }
 
-function mapThreadAccessFailure(kind: string): OwnerMethodError {
-  switch (kind) {
+function mapThreadAccessFailure(result: { kind: string; error?: unknown }): OwnerMethodError {
+  switch (result.kind) {
     case 'project_not_found':
       return new OwnerMethodError('PROJECT_NOT_FOUND')
     case 'codex_start_required':
@@ -59,7 +63,7 @@ function mapThreadAccessFailure(kind: string): OwnerMethodError {
     case 'not_found':
       return new OwnerMethodError('THREAD_NOT_FOUND')
     default:
-      return new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      return new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: result.error })
   }
 }
 
@@ -152,7 +156,6 @@ export function createOwnerApplicationServices(
     workspace: dependencies.workspace,
     codex: dependencies.codex,
   })
-  const skillHandles = new SkillHandleStore()
   const subscriptions = new Map<
     string,
     {
@@ -449,8 +452,8 @@ export function createOwnerApplicationServices(
         })
         dependencies.codex.markCredentialPending?.(owner.ownerId, saved.id)
         return saved
-      } catch {
-        throw new OwnerMethodError('INVALID_CREDENTIAL')
+      } catch (error) {
+        throw new OwnerMethodError('INVALID_CREDENTIAL', false, { cause: error })
       }
     },
 
@@ -462,8 +465,8 @@ export function createOwnerApplicationServices(
         throw new OwnerMethodError('CREDENTIAL_NOT_FOUND')
       try {
         await dependencies.workspace.testCredential(owner.ownerId, input.credentialId)
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      } catch (error) {
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
       return { ok: true }
     },
@@ -491,7 +494,7 @@ export function createOwnerApplicationServices(
       } catch (error) {
         if (error instanceof Error && error.name === 'ProjectConflictError')
           throw new OwnerMethodError('PROJECT_EXISTS')
-        throw new OwnerMethodError('INVALID_PARAMS')
+        throw new OwnerMethodError('INVALID_PARAMS', false, { cause: error })
       }
     },
 
@@ -514,7 +517,7 @@ export function createOwnerApplicationServices(
         if (error instanceof OwnerMethodError) throw error
         if (error instanceof Error && error.name === 'ProjectConflictError')
           throw new OwnerMethodError('PROJECT_EXISTS')
-        throw new OwnerMethodError('INVALID_PARAMS')
+        throw new OwnerMethodError('INVALID_PARAMS', false, { cause: error })
       }
     },
 
@@ -538,7 +541,7 @@ export function createOwnerApplicationServices(
         restartRequired: status?.restartRequired ?? false,
         activeTurns: status?.activeTurns ?? 0,
         dangerousAccessConfirmed: status?.dangerousAccessConfirmed ?? false,
-        error: status?.error ? 'CODEX_UNAVAILABLE' : null,
+        error: status?.error ?? null,
         currentCredentialId: await dependencies.workspace.getCurrentCredentialId(owner.ownerId),
       }
     },
@@ -547,8 +550,8 @@ export function createOwnerApplicationServices(
       const owner = requireOwner(context)
       try {
         return { models: (await dependencies.codex.modelCatalog?.(owner.ownerId)) ?? [] }
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      } catch (error) {
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
     },
 
@@ -571,8 +574,8 @@ export function createOwnerApplicationServices(
               ? 'configured'
               : 'default',
         }
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      } catch (error) {
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
     },
 
@@ -592,8 +595,8 @@ export function createOwnerApplicationServices(
           mergeStrategy: 'replace',
         })
         return { modelContextWindow: value, source: 'configured' }
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      } catch (error) {
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
     },
 
@@ -629,14 +632,14 @@ export function createOwnerApplicationServices(
         dependencies.codex.markDangerousAccessConfirmed?.(owner.ownerId)
         await dependencies.workspace.setCurrentCredentialId(owner.ownerId, credentialId)
         return this.codexStatus(context)
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      } catch (error) {
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
     },
 
     async skillsList(context: OwnerMethodContext, input: { projectId?: unknown }) {
       const owner = requireOwner(context)
-      if (input.projectId !== undefined && !safeId(input.projectId))
+      if (input.projectId != null && !safeId(input.projectId))
         throw new OwnerMethodError('PROJECT_NOT_FOUND')
       const project = input.projectId
         ? await dependencies.workspace.getProject(owner.ownerId, input.projectId)
@@ -646,13 +649,9 @@ export function createOwnerApplicationServices(
       const client = await readyClient(owner.ownerId)
       try {
         const result = await client.request('skills/list', { cwds: [cwd] })
-        return {
-          data: skillsForCwd(result, cwd).map((skill) =>
-            skillHandles.issue(owner.ownerId, cwd, skill),
-          ),
-        }
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+        return skillsForCwd(result, cwd).map(summarizeSkill)
+      } catch (error) {
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
     },
 
@@ -671,7 +670,7 @@ export function createOwnerApplicationServices(
         limit: Math.min(limitInput, 100),
         archived: input.archived === true,
       })
-      if (result.kind !== 'ok') throw mapThreadAccessFailure(result.kind)
+      if (result.kind !== 'ok') throw mapThreadAccessFailure(result)
       return result
     },
 
@@ -682,7 +681,7 @@ export function createOwnerApplicationServices(
       const model = typeof input.model === 'string' ? input.model.trim() : ''
       const reasoningEffort = input.reasoningEffort
       const collaborationMode = input.collaborationMode
-      const selectedHandles = parseSkillHandles(input.skillHandles)
+      const selection = parseSkills(input.skills)
       if (
         (projectId !== undefined && projectId !== null && !safeId(projectId)) ||
         !text ||
@@ -693,7 +692,7 @@ export function createOwnerApplicationServices(
         (collaborationMode !== undefined &&
           collaborationMode !== 'default' &&
           collaborationMode !== 'plan') ||
-        selectedHandles === null
+        selection === null
       )
         throw new OwnerMethodError('INVALID_TURN_REQUEST')
       const project =
@@ -716,13 +715,7 @@ export function createOwnerApplicationServices(
       )
         throw new OwnerMethodError('INVALID_TURN_REQUEST')
       const cwd = project?.path ?? dependencies.workspace.getUserRoot(owner.ownerId)
-      const selectedSkills = await resolveSelectedSkills(
-        client,
-        skillHandles,
-        owner.ownerId,
-        cwd,
-        selectedHandles,
-      )
+      const selectedSkills = await resolveSelectedSkills(client, cwd, selection)
       if (!selectedSkills) throw new OwnerMethodError('INVALID_TURN_REQUEST')
       try {
         const threadResult = await client.request('thread/start', {
@@ -754,7 +747,7 @@ export function createOwnerApplicationServices(
         return { threadId, turnId, projectId: projectId ?? null }
       } catch (error) {
         if (error instanceof OwnerMethodError) throw error
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
     },
 
@@ -764,190 +757,187 @@ export function createOwnerApplicationServices(
       if (input.projectId !== undefined && input.projectId !== null && !safeId(input.projectId))
         throw new OwnerMethodError('INVALID_THREAD_QUERY')
       const threadId = input.threadId
-      const history =
-        (await dependencies.codex.events.threadHistory?.(owner.ownerId, threadId)) ?? []
-      const eventCursor = makeEventCursor(
-        owner.ownerId,
-        history.at(-1)?.id ?? dependencies.codex.events.latestEventId(owner.ownerId, threadId),
-      )
+      const events = dependencies.codex.events
+      let historyError: unknown
+      const readHistory = () =>
+        events.captureThreadSnapshot?.(owner.ownerId, threadId).catch((error: unknown) => {
+          historyError = error
+          return null
+        }) ?? Promise.resolve(null)
+      let historyAtResponse: ReturnType<typeof readHistory> | undefined
       const access = await threadDomain.access({
         userId: owner.ownerId,
         threadId,
         projectId: typeof input.projectId === 'string' ? input.projectId : undefined,
         includeTurns: true,
         mode: 'read',
+        onReadResponse: () => {
+          historyAtResponse = readHistory()
+        },
       })
-      if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
-      const thread = projectThreadSnapshot(access.rawThread, access.cwd)
-      if (!thread) throw new OwnerMethodError('CODEX_PROTOCOL_ERROR', true)
-      return {
-        thread,
-        eventCursor,
-        historyEvents: history.map((event) => ({ id: event.id, event: event.message })),
-      }
-    },
-
-    async threadsStatus(context: OwnerMethodContext, input: Record<string, unknown>) {
-      const owner = requireOwner(context)
-      if (!safeId(input.threadId)) throw new OwnerMethodError('INVALID_THREAD')
-      const threadId = input.threadId
-      const projectId = input.projectId
-      if (projectId !== undefined && !safeId(projectId))
-        throw new OwnerMethodError('PROJECT_NOT_FOUND')
-      const rootScope = projectId === undefined
-      const project = rootScope
-        ? null
-        : await dependencies.workspace.getProject(owner.ownerId, projectId)
-      if (projectId !== undefined && !project) throw new OwnerMethodError('PROJECT_NOT_FOUND')
-      const client = await readyClient(owner.ownerId)
-      const userRoot = dependencies.workspace.getUserRoot(owner.ownerId)
-      let owned = await threadDomain.appearsInCwd(
-        client,
-        threadId,
-        rootScope ? undefined : project!.path,
-        false,
-        rootScope ? userRoot : undefined,
+      if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
+      const cut = await (historyAtResponse ?? readHistory())
+      if (!cut) throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: historyError })
+      const { history, sequence } = cut
+      const base = adaptCodexSnapshot(access.rawThread, sequence)
+      if (!base || base.id !== threadId) throw new OwnerMethodError('CODEX_PROTOCOL_ERROR', true)
+      const snapshotMessages = new Set(
+        Object.values(base.messages)
+          .filter(
+            (message) =>
+              message.status !== 'inProgress' ||
+              message.parts.some((part) => part.type !== 'text' || part.text.length > 0),
+          )
+          .map((message) => message.id),
       )
-      if (owned && rootScope) {
-        const projects = await dependencies.workspace.listProjectLocations(owner.ownerId)
-        for (const candidate of projects) {
-          // oxlint-disable-next-line no-await-in-loop
-          if (await threadDomain.appearsInCwd(client, threadId, candidate.path)) {
-            owned = false
+      let state = createConversationState(base)
+      for (const { message } of history) {
+        if (message.type !== 'conversation.change') continue
+        const change = message.payload.change
+        if (!isConversationChange(change)) continue
+        switch (change.type) {
+          case 'message.upserted':
+            if (snapshotMessages.has(change.message.id)) continue
+            if (base.turns[change.message.turnId]?.status !== 'inProgress') continue
             break
-          }
+          case 'message.partAdded':
+          case 'message.textDelta':
+          case 'message.statusChanged':
+            if (!Object.hasOwn(state.messages, change.messageId)) continue
+            if (snapshotMessages.has(change.messageId)) continue
+            break
+          case 'activity.upserted':
+            if (Object.hasOwn(base.activities, change.activity.id)) continue
+            if (base.turns[change.activity.turnId]?.status !== 'inProgress') continue
+            break
+          case 'activity.outputDelta':
+          case 'activity.statusChanged':
+            if (!Object.hasOwn(state.activities, change.activityId)) continue
+            if (Object.hasOwn(base.activities, change.activityId)) continue
+            break
+          case 'turn.planUpdated':
+            if (!Object.hasOwn(base.turns, change.turnId)) continue
+            if (base.turns[change.turnId]?.plan !== undefined) continue
+            break
+          case 'turn.diffUpdated':
+            if (!Object.hasOwn(base.turns, change.turnId)) continue
+            if (base.turns[change.turnId]?.diff !== undefined) continue
+            break
+          case 'interaction.opened':
+          case 'interaction.resolved':
+          case 'interaction.cancelled':
+            break
+          default:
+            continue
         }
+        state = applyChange(state, change)
       }
-      if (!owned) throw new OwnerMethodError('THREAD_NOT_FOUND')
-      const runtime = dependencies.codex.events.threadRuntimeStatus?.(owner.ownerId, threadId) ?? {
-        status: 'idle' as const,
-        activeTurnId: null,
-      }
-      return {
-        threadId,
-        projectId: projectId ?? null,
-        status: runtime.status,
-        eventCursor: makeEventCursor(
-          owner.ownerId,
-          dependencies.codex.events.latestEventId(owner.ownerId, threadId),
-        ),
-        activeTurnId: runtime.activeTurnId,
-      }
+      const { seenSourceEvents: _, ...domainSnapshot } = state
+      return { snapshot: domainSnapshot, watermark: makeEventCursor(owner.ownerId, sequence) }
     },
 
-    async threadsSend(context: OwnerMethodContext, input: Record<string, unknown>) {
+    async conversationCommand(context: OwnerMethodContext, input: Record<string, unknown>) {
       const owner = requireOwner(context)
-      const threadId = input.threadId
-      const projectId = input.projectId
-      const text = typeof input.text === 'string' ? input.text.trim() : ''
-      const model = typeof input.model === 'string' ? input.model.trim() : ''
-      const reasoningEffort = input.reasoningEffort
-      const collaborationMode = input.collaborationMode
-      const selectedHandles = parseSkillHandles(input.skillHandles)
-      if (
-        !safeId(threadId) ||
-        (projectId !== undefined && projectId !== null && !safeId(projectId)) ||
-        !text ||
-        text.length > MAX_INITIAL_MESSAGE_LENGTH ||
-        !safeId(model) ||
-        typeof reasoningEffort !== 'string' ||
-        !safeId(reasoningEffort) ||
-        (collaborationMode !== undefined &&
-          collaborationMode !== 'default' &&
-          collaborationMode !== 'plan') ||
-        selectedHandles === null
-      )
-        throw new OwnerMethodError('INVALID_TURN_REQUEST')
-      if (
-        options.requireDangerousAccessConfirmation &&
-        !dependencies.codex.getStatus?.(owner.ownerId)?.dangerousAccessConfirmed
-      )
-        throw new OwnerMethodError('INVALID_TURN_REQUEST')
-      const access = await threadDomain.access({
-        userId: owner.ownerId,
-        threadId,
-        projectId: typeof projectId === 'string' ? projectId : undefined,
-        mode: 'mutation',
-      })
-      if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
-      const catalog = await dependencies.codex.modelCatalog?.(owner.ownerId)
-      const selectedModel = catalog?.find((entry) => entry.id === model)
-      if (
-        catalog &&
-        (!selectedModel ||
-          !selectedModel.reasoningEfforts.some((entry) => entry.id === reasoningEffort))
-      )
-        throw new OwnerMethodError('INVALID_TURN_REQUEST')
-      const userRoot = dependencies.workspace.getUserRoot(owner.ownerId)
-      await dependencies.codex.ensureThread?.(owner.ownerId, threadId)
-      const selectedSkills = await resolveSelectedSkills(
-        access.client,
-        skillHandles,
-        owner.ownerId,
-        access.scope === 'project' ? access.cwd : userRoot,
-        selectedHandles,
-      )
-      if (!selectedSkills) throw new OwnerMethodError('INVALID_TURN_REQUEST')
-      const run = () =>
-        access.client.request('turn/start', {
-          threadId,
-          input: turnInput(text, selectedSkills),
-          model,
-          effort: reasoningEffort,
-          collaborationMode: {
-            mode: collaborationMode ?? 'plan',
-            settings: { model, reasoning_effort: reasoningEffort },
-          },
-        })
-      try {
-        const result = await (dependencies.codex.enqueueTurn
-          ? dependencies.codex.enqueueTurn(owner.ownerId, run, undefined, undefined, threadId)
-          : run())
-        const turn = isRecord(result) ? result.turn : undefined
-        const turnId = isRecord(turn) ? turn.id : undefined
-        if (!safeId(turnId)) throw new OwnerMethodError('CODEX_PROTOCOL_ERROR')
-        return { turnId }
-      } catch (error) {
-        if (error instanceof OwnerMethodError) throw error
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
-      }
-    },
+      const threadId = input.conversationId
+      if (!safeId(threadId)) throw new OwnerMethodError('INVALID_PARAMS')
 
-    async threadsCancel(context: OwnerMethodContext, input: Record<string, unknown>) {
-      const owner = requireOwner(context)
-      if (!safeId(input.threadId) || !safeId(input.turnId))
-        throw new OwnerMethodError('INVALID_TURN_REQUEST')
-      const threadId = input.threadId
-      const turnId = input.turnId
-      if (dependencies.codex.cancelQueuedTurn?.(owner.ownerId, turnId)) return { cancelled: true }
-      const access = await threadDomain.access({
-        userId: owner.ownerId,
-        threadId,
-        mode: 'mutation',
-      })
-      if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
-      try {
-        const result = await access.client.request('turn/interrupt', { threadId, turnId })
-        return { result }
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
-      }
-    },
-
-    async threadsCompact(context: OwnerMethodContext, input: Record<string, unknown>) {
-      const owner = requireOwner(context)
-      if (!safeId(input.threadId)) throw new OwnerMethodError('INVALID_THREAD')
-      const access = await threadDomain.access({
-        userId: owner.ownerId,
-        threadId: input.threadId,
-        mode: 'mutation',
-      })
-      if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
-      try {
-        await access.client.request('thread/compact/start', { threadId: input.threadId })
-        return { accepted: true }
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      switch (input.type) {
+        case 'turn.start': {
+          const part: unknown =
+            Array.isArray(input.input) && input.input.length === 1 ? input.input[0] : undefined
+          if (
+            !isRecord(part) ||
+            part.type !== 'text' ||
+            !safeId(part.id) ||
+            typeof part.text !== 'string'
+          )
+            throw new OwnerMethodError('INVALID_TURN_REQUEST')
+          return startConversationTurn(context, {
+            threadId,
+            text: part.text,
+            projectId: input.projectId,
+            model: input.model,
+            reasoningEffort: input.reasoningEffort,
+            collaborationMode: input.collaborationMode,
+            skills: input.skills,
+          })
+        }
+        case 'turn.cancel':
+          return cancelConversationTurn(context, { threadId, turnId: input.turnId })
+        case 'conversation.compact':
+          return compactConversation(context, { threadId })
+        case 'conversation.archive':
+          return services.threadsArchive(context, { threadId, projectId: input.projectId })
+        case 'interaction.respond': {
+          const { interactionId, outcome } = input
+          if (!safeId(interactionId) || !isRecord(outcome))
+            throw new OwnerMethodError('INVALID_PARAMS')
+          const access = await threadDomain.access({
+            userId: owner.ownerId,
+            threadId,
+            mode: 'mutation',
+          })
+          if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
+          const history = await dependencies.codex.events.threadHistory?.(owner.ownerId, threadId)
+          let interaction: Interaction | undefined
+          for (const { message } of history ?? []) {
+            if (message.type !== 'conversation.change' || message.threadId !== threadId) continue
+            const change = message.payload.change
+            if (!isConversationChange(change)) continue
+            if (change.type === 'interaction.opened' && change.interaction.id === interactionId)
+              interaction ??= change.interaction
+            else if (
+              (change.type === 'interaction.resolved' || change.type === 'interaction.cancelled') &&
+              change.interactionId === interactionId
+            ) {
+              interaction = undefined
+              break
+            }
+          }
+          if (interaction?.status !== 'pending') throw new OwnerMethodError('RESOURCE_NOT_FOUND')
+          const requestId = interaction.id
+          if (
+            interaction.kind === 'userInput' &&
+            outcome.kind === 'answers' &&
+            isRecord(outcome.answers)
+          ) {
+            const entries = Object.entries(outcome.answers)
+            if (
+              !entries.every(
+                ([, answers]) =>
+                  Array.isArray(answers) && answers.every((answer) => typeof answer === 'string'),
+              )
+            )
+              throw new OwnerMethodError('INVALID_PARAMS')
+            return replyToInteraction(owner.ownerId, threadId, requestId, {
+              answers: Object.fromEntries(entries.map(([id, answers]) => [id, { answers }])),
+            })
+          }
+          const decision =
+            outcome.kind === 'approved'
+              ? 'accept'
+              : outcome.kind === 'rejected'
+                ? 'decline'
+                : outcome.kind === 'dismissed'
+                  ? 'cancel'
+                  : outcome.kind === 'submitted'
+                    ? outcome.value
+                    : undefined
+          if (
+            interaction.kind !== 'approval' ||
+            (decision !== 'accept' &&
+              decision !== 'acceptForSession' &&
+              decision !== 'decline' &&
+              decision !== 'cancel') ||
+            (interaction.details?.kind === 'approval' &&
+              interaction.details.choices.length > 0 &&
+              !interaction.details.choices.some((choice) => choice.id === decision))
+          )
+            throw new OwnerMethodError('INVALID_PARAMS')
+          return replyToInteraction(owner.ownerId, threadId, requestId, decision)
+        }
+        default:
+          throw new OwnerMethodError('INVALID_PARAMS')
       }
     },
 
@@ -989,88 +979,10 @@ export function createOwnerApplicationServices(
           }
           cursor = typeof result.nextCursor === 'string' ? result.nextCursor : undefined
         } while (cursor)
-      } catch {
-        throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+      } catch (error) {
+        throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
       }
       return { deleted: true }
-    },
-
-    async userInputRespond(context: OwnerMethodContext, input: Record<string, unknown>) {
-      const owner = requireOwner(context)
-      const threadId = input.threadId
-      const parsedRequestId =
-        typeof input.requestId === 'string' || typeof input.requestId === 'number'
-          ? parseRequestId(String(input.requestId))
-          : null
-      const answers = input.answers
-      if (
-        !safeId(threadId) ||
-        (typeof parsedRequestId !== 'string' && typeof parsedRequestId !== 'number') ||
-        !isRecord(answers) ||
-        Object.values(answers).some(
-          (value) =>
-            !isRecord(value) ||
-            !Array.isArray(value.answers) ||
-            !value.answers.every((answer) => typeof answer === 'string'),
-        ) ||
-        !dependencies.codex.respondToServerRequest
-      )
-        throw new OwnerMethodError('INVALID_PARAMS')
-      const access = await threadDomain.access({
-        userId: owner.ownerId,
-        threadId: threadId as string,
-        mode: 'mutation',
-      })
-      if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
-      const resolvedRequestId = (() => {
-        try {
-          return (
-            dependencies.codex.respondToServerRequest!(owner.ownerId, threadId, parsedRequestId, {
-              answers,
-            }) ?? parsedRequestId
-          )
-        } catch {
-          throw new OwnerMethodError('RESOURCE_NOT_FOUND')
-        }
-      })()
-      await dependencies.codex.events.publish?.(owner.ownerId, {
-        method: 'webcodex/userInput/answered',
-        params: { threadId, requestId: resolvedRequestId, answers },
-      })
-      return { accepted: true }
-    },
-
-    async approvalsResolve(context: OwnerMethodContext, input: Record<string, unknown>) {
-      const owner = requireOwner(context)
-      const threadId = input.threadId
-      const parsedRequestId =
-        typeof input.requestId === 'string' || typeof input.requestId === 'number'
-          ? parseRequestId(String(input.requestId))
-          : null
-      if (
-        !safeId(threadId) ||
-        (typeof parsedRequestId !== 'string' && typeof parsedRequestId !== 'number') ||
-        !('decision' in input) ||
-        !dependencies.codex.respondToServerRequest
-      )
-        throw new OwnerMethodError('INVALID_PARAMS')
-      const access = await threadDomain.access({
-        userId: owner.ownerId,
-        threadId: threadId as string,
-        mode: 'mutation',
-      })
-      if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
-      try {
-        dependencies.codex.respondToServerRequest(
-          owner.ownerId,
-          threadId,
-          parsedRequestId,
-          input.decision,
-        )
-        return { accepted: true }
-      } catch {
-        throw new OwnerMethodError('RESOURCE_NOT_FOUND')
-      }
     },
 
     async eventsSubscribe(context: OwnerMethodContext, input: Record<string, unknown>) {
@@ -1104,7 +1016,7 @@ export function createOwnerApplicationServices(
           mode: 'read',
           includeTurns: false,
         })
-        if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
+        if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
       }
       const latestSequence = dependencies.codex.events.latestEventId(
         owner.ownerId,
@@ -1113,17 +1025,23 @@ export function createOwnerApplicationServices(
       const cursor = parseEventCursor(input.cursor)
       if (cursor === null) throw new OwnerMethodError('INVALID_EVENT_CURSOR')
       const requestedSequence = cursor?.sequence ?? latestSequence
-      const expired = cursor
-        ? await dependencies.codex.events.isCursorExpired?.(
-            owner.ownerId,
-            scope === 'thread' ? (threadId as string) : undefined,
-            cursor.sequence,
-          )
-        : false
+      const threadFilter = scope === 'thread' ? (threadId as string) : undefined
+      const expired = await dependencies.codex.events.isCursorExpired?.(
+        owner.ownerId,
+        threadFilter,
+        requestedSequence,
+      )
       const effectiveResetReason =
         cursor?.epoch !== undefined && cursor.epoch !== eventEpoch(owner.ownerId)
           ? 'epoch_changed'
-          : cursor && (cursor.sequence > latestSequence || expired)
+          : (cursor &&
+                (dependencies.codex.events.isCursorAhead?.(
+                  owner.ownerId,
+                  threadFilter,
+                  cursor.sequence,
+                ) ??
+                  cursor.sequence > latestSequence)) ||
+              expired
             ? 'cursor_gap'
             : undefined
       const subscriptionId = existing ? String(requestedSubscriptionId) : crypto.randomUUID()
@@ -1147,53 +1065,67 @@ export function createOwnerApplicationServices(
             cursor: makeEventCursor(owner.ownerId, requestedSequence),
           },
           run: (emit: (event: unknown) => Promise<void>, signal: AbortSignal) =>
-            new Promise<void>((resolve) => {
-              if (effectiveResetReason) {
+            new Promise<void>((resolve, reject) => {
+              let stopped = false
+              let unsubscribe: (() => unknown) | undefined
+              const stop = () => {
+                stopped = true
+                signal.removeEventListener('abort', abort)
+                unsubscribe?.()
+              }
+              const abort = () => {
+                stop()
+                resolve()
+              }
+              const reset = (reason: 'epoch_changed' | 'cursor_gap') => {
+                if (stopped) return
+                stop()
                 void emit({
                   method: 'events.reset',
                   params: {
-                    cursor: makeEventCursor(owner.ownerId, latestSequence),
-                    reason: effectiveResetReason,
+                    cursor: makeEventCursor(
+                      owner.ownerId,
+                      dependencies.codex.events.latestEventId(owner.ownerId, threadFilter),
+                    ),
+                    reason,
                   },
-                }).finally(resolve)
+                }).then(resolve, reject)
+              }
+              if (signal.aborted) return abort()
+              signal.addEventListener('abort', abort, { once: true })
+              if (effectiveResetReason) {
+                reset(effectiveResetReason)
                 return
               }
-              const subscribe = dependencies.codex.events.subscribeFrom
-                ? dependencies.codex.events.subscribeFrom.bind(dependencies.codex.events)
-                : async (
-                    userId: string,
-                    threadFilter: string | undefined,
-                    afterId: number,
-                    listener: (event: { id: number; message: Record<string, unknown> }) => void,
-                  ) => dependencies.codex.events.subscribe(userId, threadFilter, afterId, listener)
+              const events = dependencies.codex.events
+              type Subscribe = NonNullable<typeof events.subscribeFrom>
+              const subscribe: (
+                ...args: [...Parameters<Subscribe>, onGap: () => void]
+              ) => ReturnType<Subscribe> =
+                events.subscribeFrom?.bind(events) ??
+                (async (...args: Parameters<Subscribe>) => events.subscribe(...args))
               void subscribe(
                 owner.ownerId,
-                scope === 'thread' ? (threadId as string) : undefined,
+                threadFilter,
                 requestedSequence,
                 (event) => {
-                  if (signal.aborted) return
+                  if (stopped) return
                   void emit({
                     cursor: makeEventCursor(owner.ownerId, event.id),
                     event: event.message,
+                  }).catch((error) => {
+                    stop()
+                    reject(error)
                   })
                 },
+                () => reset('cursor_gap'),
               )
-                .then((unsubscribe) => {
-                  signal.addEventListener(
-                    'abort',
-                    () => {
-                      unsubscribe()
-                      resolve()
-                    },
-                    { once: true },
-                  )
-                  if (signal.aborted) {
-                    unsubscribe()
-                    resolve()
-                  }
+                .then((cleanup) => {
+                  unsubscribe = cleanup
+                  if (stopped) cleanup()
                   return undefined
                 })
-                .catch(() => resolve())
+                .catch(() => reset('cursor_gap'))
             }),
         },
       }
@@ -1245,8 +1177,8 @@ export function createOwnerApplicationServices(
         const result = await dependencies.remote.resetRemoteTrust()
         await authDomain?.revokeAllRemoteSessions()
         return result
-      } catch {
-        throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
+      } catch (error) {
+        throw new OwnerMethodError('REMOTE_UNAVAILABLE', true, { cause: error })
       }
     },
 
@@ -1274,6 +1206,8 @@ export function createOwnerApplicationServices(
         throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
       await services.enrollmentInvalidate()
       const devices = await dependencies.remote.listDevices()
+      // Revoke sequentially to preserve device/session invalidation ordering.
+      // eslint-disable-next-line no-await-in-loop
       for (const device of devices) await dependencies.remote.revokeDevice(device.id)
       await authDomain.revokeAllDevices()
       return { revoked: devices.length }
@@ -1349,6 +1283,8 @@ export function createOwnerApplicationServices(
         if (!deps.remote) return { revoked: 0 }
         await services.enrollmentInvalidate()
         const devices = await deps.remote.listDevices()
+        // Revoke sequentially to preserve device/session invalidation ordering.
+        // eslint-disable-next-line no-await-in-loop
         for (const device of devices) await deps.remote.revokeDevice(device.id)
         return authDomain ? authDomain.revokeAllDevices() : { revoked: devices.length }
       },
@@ -1359,6 +1295,142 @@ export function createOwnerApplicationServices(
         await authDomain?.revokeAllDevices()
         return reset
       },
+    }
+  }
+
+  async function startConversationTurn(
+    context: OwnerMethodContext,
+    input: Record<string, unknown>,
+  ) {
+    const owner = requireOwner(context)
+    const threadId = input.threadId
+    const projectId = input.projectId
+    const text = typeof input.text === 'string' ? input.text.trim() : ''
+    const model = typeof input.model === 'string' ? input.model.trim() : ''
+    const reasoningEffort = input.reasoningEffort
+    const collaborationMode = input.collaborationMode
+    const selection = parseSkills(input.skills)
+    if (
+      !safeId(threadId) ||
+      (projectId !== undefined && projectId !== null && !safeId(projectId)) ||
+      !text ||
+      text.length > MAX_INITIAL_MESSAGE_LENGTH ||
+      !safeId(model) ||
+      typeof reasoningEffort !== 'string' ||
+      !safeId(reasoningEffort) ||
+      (collaborationMode !== undefined &&
+        collaborationMode !== 'default' &&
+        collaborationMode !== 'plan') ||
+      selection === null
+    )
+      throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    if (
+      options.requireDangerousAccessConfirmation &&
+      !dependencies.codex.getStatus?.(owner.ownerId)?.dangerousAccessConfirmed
+    )
+      throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    const access = await threadDomain.access({
+      userId: owner.ownerId,
+      threadId,
+      projectId: typeof projectId === 'string' ? projectId : undefined,
+      mode: 'mutation',
+    })
+    if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
+    const catalog = await dependencies.codex.modelCatalog?.(owner.ownerId)
+    const selectedModel = catalog?.find((entry) => entry.id === model)
+    if (
+      catalog &&
+      (!selectedModel ||
+        !selectedModel.reasoningEfforts.some((entry) => entry.id === reasoningEffort))
+    )
+      throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    const userRoot = dependencies.workspace.getUserRoot(owner.ownerId)
+    await dependencies.codex.ensureThread?.(owner.ownerId, threadId)
+    const selectedSkills = await resolveSelectedSkills(
+      access.client,
+      access.scope === 'project' ? access.cwd : userRoot,
+      selection,
+    )
+    if (!selectedSkills) throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    const run = () =>
+      access.client.request('turn/start', {
+        threadId,
+        input: turnInput(text, selectedSkills),
+        model,
+        effort: reasoningEffort,
+        collaborationMode: {
+          mode: collaborationMode ?? 'plan',
+          settings: { model, reasoning_effort: reasoningEffort },
+        },
+      })
+    try {
+      const result = await (dependencies.codex.enqueueTurn
+        ? dependencies.codex.enqueueTurn(owner.ownerId, run, undefined, undefined, threadId)
+        : run())
+      const turn = isRecord(result) ? result.turn : undefined
+      const turnId = isRecord(turn) ? turn.id : undefined
+      if (!safeId(turnId)) throw new OwnerMethodError('CODEX_PROTOCOL_ERROR')
+      return { turnId }
+    } catch (error) {
+      if (error instanceof OwnerMethodError) throw error
+      throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
+    }
+  }
+
+  async function cancelConversationTurn(
+    context: OwnerMethodContext,
+    input: Record<string, unknown>,
+  ) {
+    const owner = requireOwner(context)
+    if (!safeId(input.threadId) || !safeId(input.turnId))
+      throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    const threadId = input.threadId
+    const turnId = input.turnId
+    const access = await threadDomain.access({
+      userId: owner.ownerId,
+      threadId,
+      mode: 'mutation',
+    })
+    if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
+    if (dependencies.codex.cancelQueuedTurn?.(owner.ownerId, turnId)) return { cancelled: true }
+    try {
+      const result = await access.client.request('turn/interrupt', { threadId, turnId })
+      return { result }
+    } catch (error) {
+      throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
+    }
+  }
+
+  async function compactConversation(context: OwnerMethodContext, input: Record<string, unknown>) {
+    const owner = requireOwner(context)
+    if (!safeId(input.threadId)) throw new OwnerMethodError('INVALID_THREAD')
+    const access = await threadDomain.access({
+      userId: owner.ownerId,
+      threadId: input.threadId,
+      mode: 'mutation',
+    })
+    if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
+    try {
+      await access.client.request('thread/compact/start', { threadId: input.threadId })
+      return { accepted: true }
+    } catch (error) {
+      throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
+    }
+  }
+
+  function replyToInteraction(
+    ownerId: string,
+    threadId: string,
+    requestId: string | number,
+    result: unknown,
+  ) {
+    const respond = dependencies.codex.respondToServerRequest
+    if (!respond) throw new OwnerMethodError('INVALID_PARAMS')
+    try {
+      respond.call(dependencies.codex, ownerId, threadId, requestId, result)
+      return { accepted: true }
+    } catch (error) {
+      throw new OwnerMethodError('RESOURCE_NOT_FOUND', false, { cause: error })
     }
   }
 
@@ -1380,12 +1452,12 @@ export function createOwnerApplicationServices(
       archived,
       mode: 'mutation',
     })
-    if (access.kind !== 'owned') throw mapThreadAccessFailure(access.kind)
+    if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
     try {
       await access.client.request(method, { threadId: input.threadId })
       return { accepted: true }
-    } catch {
-      throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+    } catch (error) {
+      throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
     }
   }
 
@@ -1393,8 +1465,8 @@ export function createOwnerApplicationServices(
     if (!dependencies.codex.getReady) throw new OwnerMethodError('CODEX_START_REQUIRED', true)
     try {
       return await dependencies.codex.getReady(ownerId)
-    } catch {
-      throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
+    } catch (error) {
+      throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
     }
   }
 }

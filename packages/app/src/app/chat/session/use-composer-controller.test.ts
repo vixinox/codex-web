@@ -7,7 +7,7 @@ import { useComposerController } from './controllers/use-composer-controller'
 import type { ComposerRuntimeAdapter } from './adapters/composer-adapter'
 
 const skill = {
-  handle: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+  path: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
   name: 'pdf',
   displayName: 'PDF',
   description: 'Create PDFs',
@@ -38,15 +38,10 @@ function createAdapter(overrides: Partial<ComposerRuntimeAdapter> = {}): Compose
         turnId: 'turn-1',
         projectId: null,
       })),
-      readThread: vi.fn(async () => ({
-        thread: { id: 'thread-1', turns: [] },
-        eventCursor: 0,
-      })),
-      readThreadStatus: vi.fn(),
       startTurn: vi.fn(async () => ({ turnId: 'turn-2' })),
       cancelTurn: vi.fn(async () => undefined),
       compactThread: vi.fn(async () => undefined),
-      subscribe: vi.fn(() => () => undefined),
+      answerUserInput: vi.fn(async () => undefined),
     },
     ...overrides,
   }
@@ -78,7 +73,7 @@ describe('shared composer controller', () => {
     await act(async () => result.current.actions.submit('Create a report.'))
 
     expect(adapter.threads.createThread).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Create a report.', skillHandles: [] }),
+      expect.objectContaining({ text: 'Create a report.', skills: [] }),
       expect.any(AbortSignal),
     )
     expect(onThreadCreated).toHaveBeenCalledWith({
@@ -174,7 +169,7 @@ describe('shared composer controller', () => {
 
     expect(adapter.threads.startTurn).toHaveBeenCalledWith(
       'thread-1',
-      expect.objectContaining({ skillHandles: [skill.handle] }),
+      expect.objectContaining({ skills: [{ name: skill.name, path: skill.path }] }),
       expect.any(AbortSignal),
     )
     expect(onTurnFollowed).toHaveBeenCalledWith({

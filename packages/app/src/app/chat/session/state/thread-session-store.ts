@@ -1,23 +1,11 @@
 import * as React from 'react'
 import { proxy, useSnapshot } from 'valtio'
+import { createConversationState, type ConversationState } from '@codex-web/conversation'
+import { applyConversationDelivery } from '@/app/chat/domain/conversation-state'
+import { projectConversation } from '@/app/chat/projection/conversation-presentation'
 import { releaseComposerUser, retainComposerUser } from '@/app/chat/composer/state/composer-store'
 
-import {
-  applyCodexNotification,
-  applyHistoryEvents,
-  createCodexThreadState,
-  interruptUserInput,
-  mergeCodexThreads,
-  type CodexThreadChange,
-  type CodexThreadState,
-} from '@/app/chat/native/codex-thread'
-import {
-  toChatThreadPresentation,
-  toChatTurnPresentation,
-} from '@/app/chat/projection/thread-presentation'
-import { transcriptDebug } from '@/app/chat/transcript/transcript-debug'
 import type { ChatThreadPresentation, ChatTurnPresentation } from '@/app/chat/model/types'
-import type { CodexThread } from '@/lib/protocol/protocol'
 import type { ThreadSession, ThreadSessionPresentation, ThreadSessionSnapshot } from '../interface'
 
 export type { ThreadSession, ThreadSessionPresentation } from '../interface'
@@ -150,18 +138,8 @@ export function toThreadPresentationSnapshot(
 }
 
 function createThreadSession(key: string, projectId: string | null): ThreadSession {
-  let native: CodexThreadState | null = null
+  let conversation: ConversationState | null = null
   let disposed = false
-  const turnIndexById = new Map<string, number>()
-  const turnVersionById = new Map<string, number>()
-  const presentationCache = new Map<
-    string,
-    { version: number; presentation: ChatTurnPresentation }
-  >()
-  const latestUserBlockByTurn = new Map<string, string | null>()
-  const compactionTurns = new Set<string>()
-  const inProgressTurns = new Set<string>()
-  let latestUserTurnId: string | null = null
   const state = proxy<ThreadSessionPresentation>({
     status: 'idle',
     id: 'invalid-thread',
@@ -176,216 +154,51 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
     inputErrors: [],
   })
 
-  const updateTurnDerived = (turnId: string, turn: ChatTurnPresentation) => {
-    const userBlock = [...turn.blocks].reverse().find((block) => block.type === 'user')
-    latestUserBlockByTurn.set(turnId, userBlock?.id ?? null)
-    if (
-      turn.blocks.some((block) => block.type === 'article' && block.kind === 'context-compaction')
-    )
-      compactionTurns.add(turnId)
-    else compactionTurns.delete(turnId)
-    if (turn.status === 'inProgress') inProgressTurns.add(turnId)
-    else inProgressTurns.delete(turnId)
-  }
-
-  const syncInputErrors = () => {
-    if (!native) return
-    const next = native.protocolErrors
-    const unchanged =
-      state.inputErrors.length === next.length &&
-      state.inputErrors.every((value, index) => value === next[index])
-    if (!unchanged) state.inputErrors = [...next]
-  }
-
-  const syncTranscriptState = (turnOrder: readonly string[]) => {
-    let latestUserBlockId: string | null = null
-    for (let index = turnOrder.length - 1; index >= 0; index -= 1) {
-      const userBlockId = latestUserBlockByTurn.get(turnOrder[index])
-      if (userBlockId) {
-        latestUserBlockId = userBlockId
-        latestUserTurnId = turnOrder[index]
-        break
-      }
-    }
-    state.latestUserBlockId = latestUserBlockId
-    state.hasCompactionTurn = compactionTurns.size > 0
-  }
-
-  const updateTranscriptDerived = (turnId: string) => {
-    const userBlockId = latestUserBlockByTurn.get(turnId)
-    const currentIndex = turnIndexById.get(turnId) ?? -1
-    const latestIndex = latestUserTurnId ? (turnIndexById.get(latestUserTurnId) ?? -1) : -1
-    if (userBlockId && currentIndex >= latestIndex) {
-      latestUserTurnId = turnId
-      state.latestUserBlockId = userBlockId
-    } else if (!userBlockId && latestUserTurnId === turnId) {
-      latestUserTurnId = null
-      state.latestUserBlockId = null
-      syncTranscriptState(state.turnOrder)
-    }
-    state.hasCompactionTurn = compactionTurns.size > 0
-  }
-
-  const syncAll = () => {
-    if (!native) return
-    const presentation = toChatThreadPresentation(native)
-    syncMetadata(state, presentation)
-    const nextTurnIds = presentation.turns.map((turn) => turn.id)
-    const orderChanged =
-      state.turnOrder.length !== nextTurnIds.length ||
-      state.turnOrder.some((id, index) => id !== nextTurnIds[index])
-    if (orderChanged) state.turnOrder = nextTurnIds
-    turnIndexById.clear()
-    for (const [index, id] of nextTurnIds.entries()) turnIndexById.set(id, index)
-    const nextIds = new Set(nextTurnIds)
+  function syncConversation(snapshot: ConversationState) {
+    const { turns, ...metadata } = projectConversation(snapshot, projectId)
+    syncMetadata(state, metadata)
+    const nextOrder = turns.map((turn) => turn.id)
+    const nextIds = new Set(nextOrder)
     for (const id of Object.keys(state.turnsById)) {
-      if (!nextIds.has(id)) {
-        delete state.turnsById[id]
-        latestUserBlockByTurn.delete(id)
-        compactionTurns.delete(id)
-        inProgressTurns.delete(id)
-        presentationCache.delete(id)
-        turnVersionById.delete(id)
-      }
+      if (!nextIds.has(id)) delete state.turnsById[id]
     }
-    for (const turn of presentation.turns) {
-      const version = turnVersionById.get(turn.id) ?? 0
-      presentationCache.set(turn.id, { version, presentation: turn })
-      syncTurn(state, turn)
-      updateTurnDerived(turn.id, turn)
+    for (const turn of turns) syncTurn(state, turn)
+    if (
+      nextOrder.length !== state.turnOrder.length ||
+      nextOrder.some((id, index) => id !== state.turnOrder[index])
+    ) {
+      state.turnOrder = nextOrder
     }
-    syncTranscriptState(turnOrderFromIndex())
-    syncInputErrors()
-  }
-
-  const syncChange = (change: CodexThreadChange) => {
-    if (!native || change.scope === 'none') return
-    if (change.scope === 'thread') {
-      syncAll()
-      return
-    }
-    const index = turnIndexById.get(change.turnId)
-    const turns = Array.isArray(native.thread.turns) ? native.thread.turns : []
-    if (index === undefined) {
-      syncAll()
-      return
-    }
-    const previousStatus = state.turnsById[change.turnId]?.status
-    const version = (turnVersionById.get(change.turnId) ?? 0) + 1
-    turnVersionById.set(change.turnId, version)
-    const cached = presentationCache.get(change.turnId)
-    const presentation =
-      cached && cached.version === version
-        ? cached.presentation
-        : toChatTurnPresentation(
-            turns[index],
-            index,
-            index === 0 ? native.protocolErrors : [],
-            native.questionnaireSummaries?.[change.turnId],
-          )
-    presentationCache.set(change.turnId, { version, presentation })
-    if (!state.turnOrder.includes(presentation.id))
-      state.turnOrder = [...state.turnOrder, presentation.id]
-    syncTurn(state, presentation)
-    updateTurnDerived(presentation.id, presentation)
-    updateTranscriptDerived(presentation.id)
-    transcriptDebug({
-      phase: 'render',
-      turnId: presentation.id,
-      status: presentation.status,
-      blockCount: presentation.blocks.length,
-      assistantBlockCount: presentation.blocks.filter((block) => block.type === 'assistant').length,
-      assistantTextLength: presentation.blocks
-        .filter(
-          (
-            block,
-          ): block is Extract<ChatTurnPresentation['blocks'][number], { type: 'assistant' }> =>
-            block.type === 'assistant',
-        )
-        .reduce((total, block) => total + block.text.length, 0),
-    })
-    if (previousStatus !== presentation.status) {
-      transcriptDebug({
-        phase: 'turn',
-        turnId: presentation.id,
-        status: `${previousStatus ?? 'unknown'}->${presentation.status}`,
-        blockCount: presentation.blocks.length,
-      })
-    }
-    state.isBusy = inProgressTurns.size > 0
-    syncInputErrors()
-  }
-
-  function turnOrderFromIndex() {
-    return [...turnIndexById.entries()].sort((left, right) => left[1] - right[1]).map(([id]) => id)
+    state.hasCompactionTurn = turns.some((turn) =>
+      turn.blocks.some((block) => block.type === 'article' && block.kind === 'context-compaction'),
+    )
+    state.latestUserBlockId =
+      turns
+        .findLast((turn) => turn.blocks.some((block) => block.type === 'user'))
+        ?.blocks.findLast((block) => block.type === 'user')?.id ?? null
+    state.status = 'ready'
+    delete state.error
   }
 
   return {
     key,
     state,
-    hydrate(thread, eventCursor, historyEvents = []) {
-      if (disposed) return { replayAfterId: eventCursor, sparseTurnIds: new Set() }
-      const snapshot = createCodexThreadState(thread, projectId)
-      if (native) {
-        native = {
-          ...snapshot,
-          thread: {
-            ...mergeCodexThreads(native.thread, snapshot.thread),
-            ...(snapshot.thread.tokenUsage === undefined && native.thread.tokenUsage !== undefined
-              ? { tokenUsage: native.thread.tokenUsage }
-              : {}),
-          },
-          seenEventIds: native.seenEventIds,
-          protocolErrors: native.protocolErrors,
-          ...(native.questionnaireSummaries
-            ? { questionnaireSummaries: native.questionnaireSummaries }
-            : {}),
-          ...(native.userInput ? { userInput: native.userInput } : {}),
-        }
-      } else native = snapshot
-      applyHistoryEvents(native, historyEvents)
-      syncAll()
-      state.status = 'ready'
+    replaceConversation(snapshot) {
+      if (disposed) return
+      conversation = createConversationState(snapshot)
+      syncConversation(conversation)
+    },
+    applyConversationChange(change) {
+      if (disposed || !conversation) return
+      const next = applyConversationDelivery(conversation, change)
+      if (next === conversation) return
+      conversation = next
+      syncConversation(next)
+    },
+    beginLoad() {
+      if (disposed || state.status !== 'error') return
+      state.status = 'idle'
       delete state.error
-      const sparseTurnIds = sparseInProgressTurnIds(native.thread)
-      return { replayAfterId: sparseTurnIds.size ? 0 : eventCursor, sparseTurnIds }
-    },
-    applyEvent(notification, eventId) {
-      if (disposed || !native) return
-      const reducerStartedAt = performance.now()
-      transcriptDebug({ phase: 'event', eventId, method: notification.method })
-      const change = applyCodexNotification(
-        native,
-        notification,
-        eventId === undefined ? undefined : String(eventId),
-      )
-      syncChange(change)
-      const turnId =
-        typeof notification.params.turnId === 'string' ? notification.params.turnId : undefined
-      const turn = turnId ? state.turnsById[turnId] : undefined
-      transcriptDebug({
-        phase: 'turn',
-        turnId,
-        status: turn?.status,
-        blockCount: turn?.blocks.length,
-        eventId,
-        method: notification.method,
-        reducerMs: Number((performance.now() - reducerStartedAt).toFixed(2)),
-        changeScope: change.scope,
-        deltaChars:
-          typeof notification.params.delta === 'string' ? notification.params.delta.length : 0,
-        accumulatedTextLength: turn?.blocks
-          .filter((block) => block.type === 'assistant')
-          .reduce((total, block) => total + block.text.length, 0),
-      })
-    },
-    interruptUserInput() {
-      if (disposed || !native) return
-      syncChange(interruptUserInput(native))
-    },
-    hasActiveFollowedTurn(turnId) {
-      if (!turnId) return false
-      return state.turnsById[turnId]?.status === 'inProgress'
     },
     setError(message) {
       if (disposed) return
@@ -394,7 +207,7 @@ function createThreadSession(key: string, projectId: string | null): ThreadSessi
     },
     dispose() {
       disposed = true
-      native = null
+      conversation = null
     },
   }
 }
@@ -427,22 +240,6 @@ function syncTurn(target: ThreadSessionPresentation, source: ChatTurnPresentatio
     if (!(key in source)) delete existing[key]
   }
   Object.assign(existing, source)
-}
-
-function sparseInProgressTurnIds(thread: CodexThread) {
-  const ids = new Set<string>()
-  for (const turn of Array.isArray(thread.turns) ? thread.turns : []) {
-    if (
-      !turn ||
-      typeof turn !== 'object' ||
-      Array.isArray(turn) ||
-      turn.status !== 'inProgress' ||
-      !Array.isArray(turn.items)
-    )
-      continue
-    if (turn.items.length === 0 && typeof turn.id === 'string') ids.add(turn.id)
-  }
-  return ids
 }
 
 function threadKey(projectId: string | null, threadId: string) {

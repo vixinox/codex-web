@@ -1,9 +1,4 @@
-import {
-  adaptCodexMessage,
-  createDomainEvent,
-  domainEventThreadId,
-  projectDomainEvent,
-} from './domain-events.js'
+import type { ConversationChange } from '@codex-web/conversation'
 import {
   parseDomainEventEnvelope,
   type DomainEventEnvelope,
@@ -13,24 +8,34 @@ import { log } from '../logger.js'
 
 export type StoredEvent = { id: number; message: DomainEventEnvelope }
 export type EventHubSnapshot = { nextId: number; events: Record<string, StoredEvent[]> }
-export type EventPage = { events: StoredEvent[]; scannedThrough: number; hasMore: boolean }
+export type EventPage = {
+  events: StoredEvent[]
+  scannedThrough: number
+  hasMore: boolean
+  gapAt?: number
+}
 export type EventStore = {
   append(userId: string, event: StoredEvent): Promise<void>
-  loadThread?(userId: string, threadId: string): Promise<StoredEvent[]>
-  loadAfter?(userId: string, afterId: number, filterThreadId?: string): Promise<EventPage>
+  loadThread?(
+    userId: string,
+    threadId: string,
+    throughId?: number,
+    rejectGaps?: boolean,
+  ): Promise<StoredEvent[]>
+  loadAfter?(
+    userId: string,
+    afterId: number,
+    filterThreadId?: string,
+    throughId?: number,
+  ): Promise<EventPage>
   cursorExpired?(
     userId: string,
     filterThreadId: string | undefined,
     afterId: number,
   ): Promise<boolean>
 }
-export type ThreadRuntimeStatus = {
-  status: 'idle' | 'inProgress' | 'completed' | 'failed'
-  activeTurnId: string | null
-}
-
 function threadId(event: DomainEventEnvelope): string | undefined {
-  return domainEventThreadId(event)
+  return event.threadId
 }
 
 export class EventHub {
@@ -39,6 +44,9 @@ export class EventHub {
   private readonly events = new Map<string, StoredEvent[]>()
   private readonly listeners = new Map<string, Set<(event: StoredEvent) => void>>()
   private readonly evictedThrough = new Map<string, number>()
+  private readonly failedThrough = new Map<string, number>()
+  private readonly gapListeners = new Map<string, Set<(event: StoredEvent) => void>>()
+  private settledThrough = 0
   private pendingWrite: Promise<void> = Promise.resolve()
   private writeError: Error | undefined
 
@@ -79,16 +87,46 @@ export class EventHub {
     }
   }
 
-  async threadHistory(userId: string, requestedThreadId: string) {
-    await this.pendingWrite
+  threadHistory(userId: string, requestedThreadId: string) {
+    const cut = this.captureThreadHistory(userId, requestedThreadId, false)
+    return cut.then(({ history }) => history)
+  }
+
+  captureThreadSnapshot(userId: string, requestedThreadId: string) {
+    return this.captureThreadHistory(userId, requestedThreadId, true)
+  }
+
+  private captureThreadHistory(userId: string, requestedThreadId: string, rejectGaps: boolean) {
+    const throughId = this.nextId - 1
+    const capture = this.pendingWrite.then(async () => {
+      if (rejectGaps && this.hasWriteGap(userId, requestedThreadId, 0))
+        throw new Error('Conversation snapshot history is incomplete')
+      const history = await this.readThreadHistory(userId, requestedThreadId, throughId, rejectGaps)
+      return { history, sequence: history.at(-1)?.id ?? 0 }
+    })
+    this.pendingWrite = capture.then(
+      () => undefined,
+      () => undefined,
+    )
+    return capture
+  }
+
+  private async readThreadHistory(
+    userId: string,
+    requestedThreadId: string,
+    throughId: number,
+    rejectGaps: boolean,
+  ) {
     const stored = this.events.get(userId) ?? []
-    const memory = stored.filter((event) => threadId(event.message) === requestedThreadId)
+    const memory = stored.filter(
+      (event) => event.id <= throughId && threadId(event.message) === requestedThreadId,
+    )
     if (!this.store?.loadThread) return memory.map(cloneEvent)
-    const persisted = await this.store.loadThread(userId, requestedThreadId)
+    const persisted = await this.store.loadThread(userId, requestedThreadId, throughId, rejectGaps)
     const byId = new Map<number, StoredEvent>()
     for (const event of [...persisted, ...memory]) {
       const normalized = normalizeStoredEvent(event)
-      if (normalized) byId.set(event.id, normalized)
+      if (normalized && event.id <= throughId) byId.set(event.id, normalized)
     }
     return [...byId.values()].sort((left, right) => left.id - right.id).map(cloneEvent)
   }
@@ -116,44 +154,80 @@ export class EventHub {
     this.events.clear()
     for (const [userId, values] of events) this.events.set(userId, values)
     this.nextId = Math.max(snapshot.nextId, maxId + 1)
-  }
-
-  /** Raw Codex input is adapted at this ingress edge before entering the hub. */
-  publish(userId: string, value: unknown): Promise<void> {
-    return this.publishDomain(userId, toDomainEvent(value))
+    this.settledThrough = this.nextId - 1
   }
 
   publishDomain(userId: string, input: DomainEventInput): Promise<void> {
-    const id = this.nextId++
-    const event = { id, message: projectDomainEvent({ ...input, eventId: id }) }
-    if (!this.store || !threadId(event.message)) {
+    const id = this.nextId
+    const change =
+      input.type === 'conversation.change'
+        ? (input.payload.change as ConversationChange)
+        : undefined
+    const payload = change
+      ? { change: { ...change, identity: { ...change.identity, applicationSequence: id } } }
+      : input.payload
+    const event = { id, message: { ...input, payload, eventId: id } }
+    if (!parseDomainEventEnvelope(event.message).ok) {
+      this.nextId++
+      const error = new Error('Invalid or oversized Owner event')
+      this.recordGap(userId, event, error)
+      return Promise.reject(error)
+    }
+    this.nextId++
+    const store = this.store
+    if (!store) {
       this.commit(userId, event)
       return Promise.resolve()
     }
-    const write = this.pendingWrite.then(() => this.store!.append(userId, event))
-    this.pendingWrite = write
-      .then(() => undefined)
-      .catch((error: unknown) => {
-        this.writeError = error instanceof Error ? error : new Error(String(error))
-      })
-    return write.then(
-      () => {
+    const delivery = this.pendingWrite.then(async () => {
+      if (event.message.type === 'conversation.change') {
+        try {
+          await store.append(userId, event)
+        } catch (error) {
+          this.recordGap(userId, event, error instanceof Error ? error : new Error(String(error)))
+          return undefined
+        }
         this.writeError = undefined
-        this.commit(userId, event)
-        return undefined
-      },
-      () => undefined,
-    )
+      }
+      this.commit(userId, event)
+      return undefined
+    })
+    this.pendingWrite = delivery.catch(() => {
+      log.warn('codex.event.delivery-failed')
+    })
+    return this.pendingWrite
   }
 
-  publishWithId(userId: string, id: number, value: unknown): Promise<void> {
-    const input = toDomainEvent(value)
-    this.nextId = Math.max(this.nextId, id + 1)
-    this.commit(userId, { id, message: projectDomainEvent({ ...input, eventId: id }) })
-    return Promise.resolve()
+  publishConversationChange(userId: string, conversationId: string, change: ConversationChange) {
+    return this.publishDomain(userId, {
+      type: 'conversation.change',
+      runtime: 'codex',
+      threadId: conversationId,
+      ...(change.type === 'turn.upserted'
+        ? { turnId: change.turn.id }
+        : 'turnId' in change
+          ? { turnId: change.turnId }
+          : {}),
+      ...(change.type === 'activity.upserted'
+        ? { itemId: change.activity.id }
+        : change.type === 'message.upserted'
+          ? { itemId: change.message.id }
+          : {}),
+      createdAt: change.identity.receivedAt,
+      payload: { change },
+    })
+  }
+
+  private recordGap(userId: string, event: StoredEvent, error: Error) {
+    this.writeError = error
+    this.settledThrough = Math.max(this.settledThrough, event.id)
+    this.failedThrough.set(eventScopeKey(userId, undefined), event.id)
+    this.failedThrough.set(eventScopeKey(userId, threadId(event.message)), event.id)
+    for (const listener of this.gapListeners.get(userId) ?? []) listener(event)
   }
 
   private commit(userId: string, event: StoredEvent) {
+    this.settledThrough = Math.max(this.settledThrough, event.id)
     const stored = this.events.get(userId) ?? []
     stored.push(event)
     if (stored.length > 500) {
@@ -179,6 +253,10 @@ export class EventHub {
     )
   }
 
+  isCursorAhead(userId: string, filterThreadId: string | undefined, sequence: number) {
+    return sequence > (filterThreadId ? this.settledThrough : this.latestEventId(userId))
+  }
+
   earliestEventId(userId: string, filterThreadId?: string) {
     let earliest = 0
     for (const event of this.events.get(userId) ?? []) {
@@ -194,9 +272,14 @@ export class EventHub {
 
   async isCursorExpired(userId: string, filterThreadId: string | undefined, afterId: number) {
     await this.pendingWrite
+    if (this.hasWriteGap(userId, filterThreadId, afterId)) return true
     if (filterThreadId && this.store?.cursorExpired)
       return this.store.cursorExpired(userId, filterThreadId, afterId)
     return this.cursorExpired(userId, filterThreadId, afterId)
+  }
+
+  private hasWriteGap(userId: string, filterThreadId: string | undefined, afterId: number) {
+    return afterId < (this.failedThrough.get(eventScopeKey(userId, filterThreadId)) ?? 0)
   }
 
   async subscribeFrom(
@@ -204,11 +287,16 @@ export class EventHub {
     filterThreadId: string | undefined,
     afterId: number,
     listener: (event: StoredEvent) => void,
+    onGap?: () => void,
   ) {
     await this.pendingWrite
+    if (this.hasWriteGap(userId, filterThreadId, afterId)) {
+      onGap?.()
+      return () => {}
+    }
     const matchesThread = (event: StoredEvent) =>
       !filterThreadId || threadId(event.message) === filterThreadId
-    const replayThrough = this.latestEventId(userId, filterThreadId)
+    const replayThrough = this.settledThrough
     const matchesReplay = (event: StoredEvent) =>
       matchesThread(event) && event.id > afterId && event.id <= replayThrough
     let replaying = true
@@ -217,20 +305,33 @@ export class EventHub {
     let lastDeliveredId = afterId
     const pendingLive: StoredEvent[] = []
     const wrapped = (event: StoredEvent) => {
-      if (!matchesThread(event) || event.id <= replayThrough) return
+      if (!matchesThread(event) || event.id <= Math.max(replayThrough, lastDeliveredId)) return
       if (replaying || flushing) {
-        if (pendingLive.length >= 1000) throw new Error('Event subscriber replay backlog exceeded')
+        if (pendingLive.length >= 1000) {
+          reset()
+          return
+        }
         pendingLive.push(cloneEvent(event))
-      } else listener(cloneEvent(event))
+      } else deliver([event], false)
     }
     const listeners = this.listeners.get(userId) ?? new Set()
-    listeners.add(wrapped)
-    this.listeners.set(userId, listeners)
+    const gapListeners = this.gapListeners.get(userId) ?? new Set()
+    const onWriteFailure = (event: StoredEvent) => {
+      if (matchesThread(event)) reset()
+    }
     const unsubscribe = () => {
       if (stopped) return
       stopped = true
       listeners.delete(wrapped)
       if (listeners.size === 0) this.listeners.delete(userId)
+      gapListeners.delete(onWriteFailure)
+      if (gapListeners.size === 0) this.gapListeners.delete(userId)
+      pendingLive.length = 0
+    }
+    const reset = () => {
+      if (stopped) return
+      unsubscribe()
+      onGap?.()
     }
     const deliver = (events: StoredEvent[], replay: boolean) => {
       for (const event of events.sort((left, right) => left.id - right.id)) {
@@ -245,22 +346,40 @@ export class EventHub {
       }
     }
 
+    listeners.add(wrapped)
+    this.listeners.set(userId, listeners)
+    gapListeners.add(onWriteFailure)
+    this.gapListeners.set(userId, gapListeners)
+    const memory = (this.events.get(userId) ?? []).filter(matchesReplay)
     try {
-      if (filterThreadId && this.store?.loadAfter) {
+      if (this.store?.loadAfter) {
         let cursor = afterId
-        for (;;) {
-          const page = await this.store.loadAfter(userId, cursor, filterThreadId)
-          const events = page.events.flatMap((event) => normalizeStoredEvent(event) ?? [])
+        while (cursor < replayThrough) {
+          if (stopped) break
+          const page = await this.store.loadAfter(userId, cursor, filterThreadId, replayThrough)
+          if (stopped) break
+          let gapAt = page.gapAt ?? Infinity
+          const events = page.events.flatMap((event) => {
+            if (!matchesReplay(event)) return []
+            const normalized = normalizeStoredEvent(event)
+            if (!normalized) gapAt = Math.min(gapAt, event.id)
+            return normalized ? [normalized] : []
+          })
+          const through = page.hasMore ? page.scannedThrough : replayThrough
           deliver(
-            events.filter((event) => event.id <= replayThrough),
+            [...events, ...memory.filter((event) => event.id <= through)].filter(
+              (event) => event.id < gapAt,
+            ),
             true,
           )
-          if (!page.hasMore || page.scannedThrough <= cursor) break
-          cursor = page.scannedThrough
-          if (cursor >= replayThrough) break
+          if (gapAt <= replayThrough || (page.hasMore && through <= cursor)) {
+            reset()
+            break
+          }
+          cursor = through
         }
       } else {
-        deliver((this.events.get(userId) ?? []).filter(matchesReplay).map(cloneEvent), true)
+        deliver(memory, true)
       }
       replaying = false
       flushing = true
@@ -274,41 +393,6 @@ export class EventHub {
       unsubscribe()
       throw error
     }
-  }
-
-  threadRuntimeStatus(userId: string, requestedThreadId: string): ThreadRuntimeStatus {
-    let status: ThreadRuntimeStatus = { status: 'idle', activeTurnId: null }
-    for (const event of this.events.get(userId) ?? []) {
-      if (threadId(event.message) !== requestedThreadId) continue
-      const method = event.message.type.startsWith('codex.')
-        ? event.message.type.slice('codex.'.length)
-        : event.message.type
-      const payload = event.message.payload
-      const turn = payload.turn
-      const turnId =
-        event.message.turnId ??
-        (typeof payload.turnId === 'string' ? payload.turnId : undefined) ??
-        (turn && typeof turn === 'object' && !Array.isArray(turn)
-          ? typeof (turn as Record<string, unknown>).id === 'string'
-            ? ((turn as Record<string, unknown>).id as string)
-            : null
-          : null)
-      if (method === 'turn/started') status = { status: 'inProgress', activeTurnId: turnId ?? null }
-      else if (method === 'turn/completed') status = { status: 'completed', activeTurnId: null }
-      else if (method === 'turn/failed' || method === 'error')
-        status = { status: 'failed', activeTurnId: null }
-      else if (method === 'thread/status/changed') {
-        const value =
-          payload.status && typeof payload.status === 'object' && !Array.isArray(payload.status)
-            ? (payload.status as Record<string, unknown>).type
-            : undefined
-        if (value === 'active') status = { status: 'inProgress', activeTurnId: turnId ?? null }
-        else if (value === 'systemError') status = { status: 'failed', activeTurnId: null }
-        else if (value === 'idle' || value === 'notLoaded')
-          status = { status: 'idle', activeTurnId: null }
-      }
-    }
-    return status
   }
 
   subscribe(
@@ -342,16 +426,6 @@ export class EventHub {
   }
 }
 
-function toDomainEvent(value: unknown): DomainEventInput {
-  const adapted = adaptCodexMessage(value)
-  if (adapted.kind === 'event' || adapted.kind === 'extension') return adapted.event
-  return createDomainEvent('runtime.diagnostic', {
-    code: adapted.diagnostic.code,
-    method: adapted.diagnostic.method,
-    detail: adapted.diagnostic.detail,
-  })
-}
-
 function cloneEvent(event: StoredEvent): StoredEvent {
   return { id: event.id, message: structuredClone(event.message) }
 }
@@ -363,7 +437,7 @@ function normalizeStoredEvent(value: { id: number; message: unknown }): StoredEv
     log.warn('codex.event.rejected', { reason })
     return null
   }
-  return { id: value.id, message: projectDomainEvent(parsed.event) }
+  return { id: value.id, message: parsed.event }
 }
 
 function eventScopeKey(userId: string, filterThreadId: string | undefined) {

@@ -1,7 +1,7 @@
 import {
   createProjectPathIndex,
   projectIdForThread,
-  sanitizeThreadSummary,
+  toThreadSummary,
   type ProjectLocation,
   type ThreadSummary,
 } from '../thread-contract.js'
@@ -48,7 +48,7 @@ export type ThreadDomain = {
 }
 
 /**
- * The single seam for thread ownership, collection, and browser-safe projections.
+ * The single seam for thread ownership, collection, and summaries.
  * Routes should not need to coordinate these lower-level modules independently.
  */
 export function createThreadDomain(dependencies: ThreadDomainDependencies): ThreadDomain {
@@ -60,7 +60,7 @@ export function createThreadDomain(dependencies: ThreadDomainDependencies): Thre
     list: collection.list,
     createProjectPathIndex,
     projectIdFor: projectIdForThread,
-    summarize: sanitizeThreadSummary,
+    summarize: toThreadSummary,
     pathIsWithin,
     appearsInCwd: threadAppearsInCwd,
   }

@@ -3,9 +3,5 @@ export type {
   StartedTurn,
   StartThreadInput,
   ThreadClient,
-  ThreadEvent,
-  ThreadHistoryEvent,
-  ThreadRuntimeStatus,
-  ThreadSnapshot,
   ThreadSummary,
 } from './thread'

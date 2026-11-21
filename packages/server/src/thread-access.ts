@@ -12,6 +12,7 @@ export type ThreadAccessRequest = {
   projectId?: string
   archived?: boolean
   includeTurns?: boolean
+  onReadResponse?: () => void
   mode: 'read' | 'mutation'
 }
 
@@ -71,10 +72,12 @@ export function createThreadAccess(dependencies: ThreadAccessDependencies) {
         const shouldRead = request.mode === 'read' || request.projectId === undefined
         const rawThread = shouldRead
           ? (
-              (await client.request('thread/read', {
-                threadId: request.threadId,
-                includeTurns: request.includeTurns ?? false,
-              })) as { thread?: unknown }
+              (await client.request(
+                'thread/read',
+                { threadId: request.threadId, includeTurns: request.includeTurns ?? false },
+                undefined,
+                request.onReadResponse,
+              )) as { thread?: unknown }
             ).thread
           : undefined
         const actualProjectId = shouldRead

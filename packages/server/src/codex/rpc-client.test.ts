@@ -150,3 +150,24 @@ test('performs the initialize handshake', async () => {
   assert.equal(transport.sent[0]?.method, 'initialize')
   assert.deepEqual(transport.sent[1], { method: 'initialized', params: {} })
 })
+
+test('retains RPC error message and explicit details without serializing error objects', async () => {
+  const transport = new FakeTransport()
+  const client = new CodexRpcClient(transport)
+  const response = client.request('config/read')
+  transport.receive({
+    id: 1,
+    error: {
+      code: -32603,
+      message: 'failed C:/synthetic/path',
+      data: { details: 'token=synthetic', privateObject: { secret: 'not-forwarded' } },
+    },
+  })
+  await assert.rejects(response, (error: unknown) => {
+    assert.ok(error instanceof Error)
+    assert.equal(error.message, 'failed C:/synthetic/path')
+    assert.equal('details' in error ? error.details : undefined, 'token=synthetic')
+    assert.equal(JSON.stringify(error).includes('not-forwarded'), false)
+    return true
+  })
+})

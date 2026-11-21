@@ -24,6 +24,7 @@ export type ComposerSelectionStore = {
 export type ComposerRuntimeAdapter = {
   capabilities: ComposerCapabilities
   threads: ThreadClient
+  waitForThread?(projectId: string | null, threadId: string, signal: AbortSignal): Promise<void>
   selection?: ComposerSelectionStore
   listSkills(projectId: string | null, signal?: AbortSignal): Promise<readonly ComposerSkill[]>
   /**

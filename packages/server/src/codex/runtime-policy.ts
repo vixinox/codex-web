@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve } from 'node:path'
 
-import { record } from './native-protocol.js'
+import { record } from './record.js'
 
 const MANIFEST_SCHEMA_VERSION = 2
 

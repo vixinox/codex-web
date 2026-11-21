@@ -103,14 +103,14 @@ export function clearComposerDraft(scope: ComposerScope) {
 
 export function toggleComposerSkill(scope: ComposerScope, skill: ComposerSkill) {
   const state = ensureComposerScope(scope)
-  state.skills = state.skills.some((selected) => selected.handle === skill.handle)
-    ? state.skills.filter((selected) => selected.handle !== skill.handle)
+  state.skills = state.skills.some((selected) => selected.path === skill.path)
+    ? state.skills.filter((selected) => selected.path !== skill.path)
     : [...state.skills, skill]
 }
 
-export function removeComposerSkill(scope: ComposerScope, handle: string) {
+export function removeComposerSkill(scope: ComposerScope, path: string) {
   const state = ensureComposerScope(scope)
-  state.skills = state.skills.filter((skill) => skill.handle !== handle)
+  state.skills = state.skills.filter((skill) => skill.path !== path)
 }
 
 export function clearComposerSkills(scope: ComposerScope) {

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import test from 'node:test'
+import test, { after } from 'node:test'
 
 import type { ServerConfig } from '../config.js'
 import type { WorkspaceService } from '../workspace.js'
@@ -11,6 +11,7 @@ import { CodexManager } from './manager.js'
 import type { RpcTransport } from './rpc-client.js'
 import type { JsonRpcMessage } from './stdio-transport.js'
 import { log } from '../logger.js'
+import { isConversationChange } from '@codex-web/protocol/owner'
 
 class AutoTransport implements RpcTransport {
   sent: JsonRpcMessage[] = []
@@ -50,9 +51,9 @@ class AutoTransport implements RpcTransport {
   }
 }
 
-const config = {
-  dataRoot: './.data/test',
-} as ServerConfig
+const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'codex-web-manager-suite-'))
+after(() => rm(dataRoot, { recursive: true, force: true }))
+const config = { dataRoot } as ServerConfig
 
 const workspace = {
   getProject: async () => ({ id: 'project', name: 'project', path: 'C:/workspace/project' }),
@@ -171,24 +172,50 @@ test('provider endpoint logging excludes URL credentials, paths, and query value
   await manager.shutdown()
 })
 
-test('routes server requests by user and thread and responds with the original JSON-RPC id', async () => {
+test('routes server requests by user and thread and responds with the original JSON-RPC id', async (context) => {
   const transport = new AutoTransport()
-  const manager = new CodexManager(config, workspace, () => transport)
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'codex-web-manager-'))
+  const manager = new CodexManager({ ...config, dataRoot }, workspace, () => transport)
+  context.after(async () => {
+    await manager.shutdown()
+    await rm(dataRoot, { recursive: true, force: true })
+  })
   await manager.get('user-a', 'project', 'credential')
-  const received: JsonRpcMessage[] = []
-  manager.events.subscribe('user-a', 'thread-a', 0, (event) => received.push(event.message))
-  transport.receive({
+  const changes = observeInteractionChanges(manager, 'thread-a')
+  const approval = {
     id: 42,
     method: 'item/commandExecution/requestApproval',
     params: { threadId: 'thread-a', turnId: 'turn-a' },
-  })
-  assert.equal(received.length, 1)
+  }
+  transport.receive(approval)
+  transport.receive(approval)
+  assert.equal(changes.length, 1)
+  const opened = changes[0]
+  assert.ok(opened?.type === 'interaction.opened')
+  const interactionId = opened.interaction.id
   assert.throws(
-    () => manager.respondToServerRequest('user-a', 'thread-b', 42, 'accept'),
+    () => manager.respondToServerRequest('user-a', 'thread-b', interactionId, 'accept'),
     /not found/,
   )
-  manager.respondToServerRequest('user-a', 'thread-a', 42, 'accept')
+  assert.throws(
+    () => manager.respondToServerRequest('user-b', 'thread-a', interactionId, 'accept'),
+    /not found/,
+  )
+  manager.respondToServerRequest('user-a', 'thread-a', interactionId, 'accept')
   assert.deepEqual(transport.sent.at(-1), { id: 42, result: 'accept' })
+  transport.receive({
+    method: 'serverRequest/resolved',
+    params: { threadId: 'thread-a', requestId: 42 },
+  })
+  assert.equal(changes.length, 2)
+  const resolved = changes[1]
+  assert.ok(resolved?.type === 'interaction.resolved')
+  assert.equal(resolved.interactionId, opened.interaction.id)
+  assert.deepEqual(resolved.outcome, { kind: 'approved' })
+  assert.throws(
+    () => manager.respondToServerRequest('user-a', 'thread-a', interactionId, 'accept'),
+    /not found/,
+  )
 
   transport.receive({
     id: 'request-43',
@@ -198,21 +225,184 @@ test('routes server requests by user and thread and responds with the original J
       turnId: 'turn-a',
       itemId: 'item-a',
       isBlocking: true,
-      questions: [],
+      questions: [{ id: 'secret', question: 'Token?', isSecret: true }],
     },
   })
-  manager.respondToServerRequest('user-a', 'thread-a', 'request-43', { answers: {} })
-  assert.deepEqual(transport.sent.at(-1), { id: 'request-43', result: { answers: {} } })
+  const input = changes[2]
+  assert.ok(input?.type === 'interaction.opened')
+  assert.equal(input.interaction.activityId, 'item-a')
+  const result = { answers: { secret: { answers: ['private-answer-fixture'] } } }
+  manager.respondToServerRequest('user-a', 'thread-a', input.interaction.id, result)
+  assert.deepEqual(transport.sent.at(-1), { id: 'request-43', result })
+  const submitted = changes[3]
+  assert.ok(submitted?.type === 'interaction.resolved')
+  assert.equal(submitted.interactionId, input.interaction.id)
+  assert.deepEqual(submitted.outcome, {
+    kind: 'answers',
+    answers: { secret: ['private-answer-fixture'] },
+  })
+  assert.match(JSON.stringify(changes), /private-answer-fixture/u)
+})
+
+test('terminates pending interactions on turn interruption and runtime disconnect without reusing public ids', async (context) => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'codex-web-manager-'))
+  let transport = new AutoTransport()
+  const manager = new CodexManager({ ...config, dataRoot }, workspace, () => transport)
+  context.after(async () => {
+    await manager.shutdown()
+    await rm(dataRoot, { recursive: true, force: true })
+  })
+  await manager.get('user-a', 'project', 'credential')
+  const changes = observeInteractionChanges(manager, 'thread-a')
+  const request = (id: string | number, turnId: string) => ({
+    id,
+    method: 'item/commandExecution/requestApproval',
+    params: { threadId: 'thread-a', turnId },
+  })
+  transport.receive(request(44, 'cancelled-turn'))
+  transport.receive(request('44', 'surviving-turn'))
+  const cancelled = changes[0]
+  const disconnected = changes[1]
+  assert.ok(cancelled?.type === 'interaction.opened')
+  assert.ok(disconnected?.type === 'interaction.opened')
+  transport.receive({
+    method: 'turn/completed',
+    params: { threadId: 'thread-a', turn: { id: 'cancelled-turn', status: 'interrupted' } },
+  })
+  assert.equal(changes.length, 3)
+  const turnTerminal = changes[2]
+  assert.ok(turnTerminal?.type === 'interaction.cancelled')
+  assert.equal(turnTerminal.interactionId, cancelled.interaction.id)
+  assert.equal(turnTerminal.status, 'cancelled')
+  transport.crash()
+  const runtimeTerminal = changes[3]
+  assert.ok(runtimeTerminal?.type === 'interaction.cancelled')
+  assert.equal(runtimeTerminal.interactionId, disconnected.interaction.id)
+  assert.equal(runtimeTerminal.status, 'expired')
+  transport = new AutoTransport()
+  await manager.get('user-a', 'project', 'credential')
+  transport.receive(request('44', 'new-turn'))
+  const reopened = changes[4]
+  assert.ok(reopened?.type === 'interaction.opened')
+  assert.notEqual(reopened.interaction.id, disconnected.interaction.id)
+  const stale = disconnected.interaction.id
+  assert.throws(
+    () => manager.respondToServerRequest('user-a', 'thread-a', stale, 'accept'),
+    /not found/,
+  )
+  transport.receive({
+    method: 'serverRequest/resolved',
+    params: { threadId: 'thread-b', requestId: '44' },
+  })
+  assert.equal(changes.length, 5)
+  transport.receive({
+    method: 'serverRequest/resolved',
+    params: { threadId: 'thread-a', requestId: '44' },
+  })
+  const externallyResolved = changes[5]
+  assert.ok(externallyResolved?.type === 'interaction.resolved')
+  assert.equal(externallyResolved.interactionId, reopened.interaction.id)
+  assert.deepEqual(externallyResolved.outcome, { kind: 'dismissed' })
+})
+
+test('routes plain file approvals and rejects unsupported Codex 0.167.0 requests', async (context) => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'codex-web-manager-'))
+  const transport = new AutoTransport()
+  const manager = new CodexManager({ ...config, dataRoot }, workspace, () => transport)
+  context.after(async () => {
+    await manager.shutdown()
+    await rm(dataRoot, { recursive: true, force: true })
+  })
+  await manager.get('user-a', 'project', 'credential')
+  const changes = observeInteractionChanges(manager, 'thread-a')
+  const params = {
+    threadId: 'thread-a',
+    turnId: 'turn-a',
+    itemId: 'file-change-a',
+    startedAtMs: 1_767_225_600_000,
+    reason: 'private-path-fixture',
+    grantRoot: null,
+  }
+  const method = 'item/fileChange/requestApproval'
+  transport.receive({ id: 'file-approval', method, params })
+  const opened = changes[0]
+  assert.ok(opened?.type === 'interaction.opened')
+  assert.equal(opened.interaction.activityId, 'file-change-a')
+  assert.equal(
+    opened.interaction.details?.kind === 'approval' ? opened.interaction.details.reason : undefined,
+    'private-path-fixture',
+  )
+  const interactionId = opened.interaction.id
+  const beforeInvalid = transport.sent.length
+  assert.throws(
+    () =>
+      manager.respondToServerRequest('user-a', 'thread-a', interactionId, { decision: 'accept' }),
+    /Invalid file change approval decision/,
+  )
+  assert.equal(transport.sent.length, beforeInvalid)
+  manager.respondToServerRequest('user-a', 'thread-a', interactionId, 'decline')
+  assert.deepEqual(transport.sent.at(-1), { id: 'file-approval', result: { decision: 'decline' } })
+  assert.throws(
+    () => manager.respondToServerRequest('user-a', 'thread-a', interactionId, 'decline'),
+    /not found/,
+  )
+  const resolved = changes[1]
+  assert.ok(resolved?.type === 'interaction.resolved')
+  assert.equal(resolved.interactionId, opened.interaction.id)
+  assert.deepEqual(resolved.outcome, { kind: 'rejected' })
 
   transport.receive({
-    id: '44',
-    method: 'item/tool/requestUserInput',
-    params: { threadId: 'thread-a', turnId: 'turn-a', questions: [] },
+    id: 'grant-root',
+    method,
+    params: { ...params, grantRoot: 'C:/private-path-fixture' },
   })
-  assert.equal(manager.respondToServerRequest('user-a', 'thread-a', 44, { answers: {} }), '44')
-  assert.deepEqual(transport.sent.at(-1), { id: '44', result: { answers: {} } })
-  await manager.shutdown()
+  assert.deepEqual(transport.sent.at(-1), {
+    id: 'grant-root',
+    error: { code: -32602, message: 'Invalid interaction request' },
+  })
+  const unsupported = [
+    ['mcpServer/elicitation/request', { threadId: 'thread-a', turnId: null }],
+    ['item/permissions/requestApproval', params],
+    ['item/tool/call', params],
+    ['account/chatgptAuthTokens/refresh', { reason: 'unauthorized' }],
+    ['attestation/generate', {}],
+    ['applyPatchApproval', { conversationId: 'thread-a' }],
+    ['execCommandApproval', { conversationId: 'thread-a' }],
+  ] as const
+  for (const [unsupportedMethod, unsupportedParams] of unsupported) {
+    transport.receive({
+      id: unsupportedMethod,
+      method: unsupportedMethod,
+      params: unsupportedParams,
+    })
+    assert.deepEqual(transport.sent.at(-1), {
+      id: unsupportedMethod,
+      error: { code: -32601, message: 'Unsupported interaction request' },
+    })
+  }
+  assert.equal(changes.length, 2)
+  assert.match(JSON.stringify(changes), /private-path-fixture/u)
 })
+
+function observeInteractionChanges(manager: CodexManager, threadId: string) {
+  const changes: Extract<
+    import('@codex-web/conversation').ConversationChange,
+    { type: `interaction.${string}` }
+  >[] = []
+  manager.events.subscribe('user-a', threadId, 0, ({ message }) => {
+    assert.equal(message.type, 'conversation.change')
+    assert.doesNotMatch(JSON.stringify(message), /"rpcId":|"correlationId":/u)
+    const change = message.payload.change
+    assert.ok(isConversationChange(change))
+    if (
+      change.type === 'interaction.opened' ||
+      change.type === 'interaction.resolved' ||
+      change.type === 'interaction.cancelled'
+    )
+      changes.push(change)
+  })
+  return changes
+}
 
 test('logs server requests before rejecting requests without a thread id', async (context) => {
   const lines: string[] = []

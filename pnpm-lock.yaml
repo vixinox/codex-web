@@ -23,6 +23,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.8.0
         version: 1.8.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@codex-web/conversation':
+        specifier: workspace:*
+        version: link:../conversation
       '@codex-web/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -145,8 +148,23 @@ importers:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@24.13.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
+  packages/conversation:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.4
+        version: 24.13.4
+      tsx:
+        specifier: ^4.23.13
+        version: 4.23.13
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/protocol:
     dependencies:
+      '@codex-web/conversation':
+        specifier: workspace:*
+        version: link:../conversation
       '@codex-web/telemetry':
         specifier: workspace:*
         version: link:../telemetry
@@ -188,6 +206,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.8.1
         version: 1.8.1
+      '@codex-web/conversation':
+        specifier: workspace:*
+        version: link:../conversation
       '@codex-web/protocol':
         specifier: workspace:*
         version: link:../protocol

@@ -5,10 +5,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 
-test('exits after a database readiness failure', async () => {
+test('logs the database failure reason before exiting', async () => {
   const dataRoot = mkdtempSync(join(tmpdir(), 'codex-web-db-start-'))
-  const blockedRoot = join(dataRoot, 'not-a-directory')
-  writeFileSync(blockedRoot, 'file')
+  writeFileSync(join(dataRoot, 'owner.sqlite'), '')
   const tsxCli = resolve('node_modules/tsx/dist/cli.mjs')
   const withPort = resolve('../../scripts/with-port.mjs')
   const stderr: Buffer[] = []
@@ -29,7 +28,7 @@ test('exits after a database readiness failure', async () => {
               CODEX_APP_ORIGIN: 'https://app.codex.test',
               CODEX_APP_RP_ID: 'app.codex.test',
               CODEX_CREDENTIAL_ENCRYPTION_KEY: 'test-key',
-              CODEX_DATA_ROOT: blockedRoot,
+              CODEX_DATA_ROOT: dataRoot,
               CODEX_EXIT_ON_SERVER_STARTUP_FAILURE: 'true',
             },
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -57,6 +56,8 @@ test('exits after a database readiness failure', async () => {
     assert.equal(result.code, 1)
     assert.equal(result.signal, null)
     assert.match(output, /owner\.server\.startup-failed/u)
+    assert.match(output, /Owner database schema is missing current tables/u)
+    assert.doesNotMatch(output, /codex-web-db-start-/u)
     assert.doesNotMatch(output, /Fastify listening at/u)
   } finally {
     rmSync(dataRoot, { recursive: true, force: true })

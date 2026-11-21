@@ -91,7 +91,7 @@ export function CommandPanel({
           ) : null}
           {matchingSkills.map((item) => (
             <SkillItem
-              key={item.handle}
+              key={item.path}
               skill={item}
               selected={selectedSkills.some(
                 (selected) => selected.name === item.name && selected.scope === item.scope,

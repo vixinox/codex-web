@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "dependencies": {
+    "@codex-web/conversation": "workspace:*",
     "@codex-web/telemetry": "workspace:*"
   },
   "scripts": {

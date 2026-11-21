@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createConversationSnapshot, type ConversationId } from '@codex-web/conversation'
 
 const bridge = vi.hoisted(() => ({
   fetchSkills: vi.fn(),
@@ -28,12 +29,17 @@ import { composerStore } from '@/app/chat/composer/state/composer-store'
 import { useThreadComposerController } from './controllers/use-thread-composer-controller'
 
 const skill = {
-  handle: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+  path: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
   name: 'pdf',
   displayName: 'PDF',
   description: 'Create PDFs',
   scope: 'system' as const,
 }
+
+const openedConversation = () => ({
+  snapshot: createConversationSnapshot('thread-1' as ConversationId),
+  watermark: { epoch: 'e1', sequence: 0 },
+})
 
 describe('thread composer skills controller', () => {
   beforeEach(() => {
@@ -46,28 +52,39 @@ describe('thread composer skills controller', () => {
       threadId: 'thread-1',
       turnId: 'turn-1',
     })
-    bridge.fetchThread.mockResolvedValue({
-      thread: { id: 'thread-1', turns: [] },
-      eventCursor: { epoch: 'e1', sequence: 0 },
-    })
+    bridge.fetchThread.mockResolvedValue(openedConversation())
     ownerBridge.request.mockImplementation((method, params, options) => {
       switch (method) {
         case 'skills.list':
           return bridge.fetchSkills(params?.projectId, options?.signal)
         case 'threads.create':
           return bridge.startThread(params, options?.signal)
-        case 'threads.send': {
-          const { threadId, ...input } = params
-          return bridge.startTurn(threadId, input, options?.signal)
+        case 'conversation.command': {
+          switch (params.type) {
+            case 'turn.start': {
+              const { type, conversationId, input, ...settings } = params
+              return bridge.startTurn(
+                conversationId,
+                { ...settings, text: input[0].text },
+                options?.signal,
+              )
+            }
+            case 'turn.cancel':
+              return bridge.cancelTurn(params.conversationId, params.turnId)
+            case 'conversation.compact':
+              return bridge.compactThread(params.conversationId)
+            case 'interaction.respond':
+              return bridge.answerUserInput(
+                params.conversationId,
+                params.interactionId,
+                params.outcome.answers,
+              )
+            default:
+              throw new Error(`Unexpected Conversation command: ${params.type}`)
+          }
         }
         case 'threads.read':
           return bridge.fetchThread(params?.projectId, params?.threadId, options?.signal)
-        case 'threads.cancel':
-          return bridge.cancelTurn(params?.threadId, params?.turnId)
-        case 'threads.compact':
-          return bridge.compactThread(params?.threadId)
-        case 'userInput.respond':
-          return bridge.answerUserInput(params?.threadId, params?.requestId, params?.answers)
         default:
           throw new Error(`Unexpected Owner method: ${method}`)
       }
@@ -111,7 +128,7 @@ describe('thread composer skills controller', () => {
 
     await act(async () => result.current.actions.submit('Create a report.'))
     expect(bridge.startThread).toHaveBeenCalledWith(
-      expect.objectContaining({ skillHandles: [skill.handle] }),
+      expect.objectContaining({ skills: [{ name: skill.name, path: skill.path }] }),
       expect.any(AbortSignal),
     )
     await waitFor(() => expect(result.current.viewModel.selectedSkills).toEqual([]))
@@ -167,7 +184,7 @@ describe('thread composer skills controller', () => {
   it('waits for a newly created thread before navigating to it', async () => {
     bridge.fetchThread
       .mockRejectedValueOnce({ status: 404 })
-      .mockResolvedValueOnce({ thread: { id: 'thread-1', turns: [] }, eventCursor: 0 })
+      .mockResolvedValueOnce(openedConversation())
     const host = {
       target: { projectId: null, threadId: null },
       followTurn: vi.fn(),

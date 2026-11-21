@@ -1,4 +1,5 @@
 import type { Snapshot } from 'valtio'
+import type { ConversationChange, ConversationSnapshot } from '@codex-web/conversation'
 
 import type { ComposerHost, ComposerRuntimeAdapter } from './adapters/composer-adapter'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
@@ -14,13 +15,11 @@ import type {
   ChatTokenUsage,
   ChatTurnPresentation,
 } from '@/app/chat/model/types'
-import type { CodexHistoryEvent, CodexNotification } from '@/app/chat/native/codex-thread'
-import type { CodexThread } from '@/lib/protocol/protocol'
 
 export type ThreadLifecycleMethod = 'thread/archived' | 'thread/deleted' | 'thread/closed'
 export type ThreadLifecycleHandler = (method: ThreadLifecycleMethod) => void
 
-/** Mutable presentation state owned by the native-reducer-backed session store. */
+/** Mutable presentation state owned by the Conversation session store. */
 export type ThreadSessionPresentation = Omit<ChatThreadPresentation, 'turns'> & {
   status: 'idle' | 'ready' | 'error'
   error?: string
@@ -37,14 +36,9 @@ export type ThreadSessionSnapshot = Snapshot<ThreadSessionPresentation>
 export type ThreadSession = {
   readonly key: string
   readonly state: ThreadSessionPresentation
-  hydrate(
-    thread: CodexThread,
-    eventCursor: number,
-    historyEvents?: readonly CodexHistoryEvent[],
-  ): { replayAfterId: number; sparseTurnIds: Set<string> }
-  interruptUserInput(): void
-  applyEvent(notification: CodexNotification, eventId?: string | number): void
-  hasActiveFollowedTurn(turnId: string | null): boolean
+  replaceConversation(snapshot: ConversationSnapshot): void
+  applyConversationChange(change: ConversationChange): void
+  beginLoad(): void
   setError(message: string): void
   dispose(): void
 }

@@ -5,11 +5,15 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { createDomainEvent } from '../codex/domain-events.js'
+import { EventHub } from '../codex/event-hub.js'
+import type { ConversationId, EventIdentity, InteractionId, TurnId } from '@codex-web/conversation'
+import { applyChange, createConversationState } from '@codex-web/conversation'
 import { createDatabase, prepareOwnerDatabase } from '../database.js'
 import type { ServerConfig } from '../config.js'
 import { owner } from '../db/schema.js'
-import { parseOwnerStreamEvent } from '@codex-web/protocol/owner'
+import { isConversationChange, parseOwnerStreamEvent } from '@codex-web/protocol/owner'
 import { createOwnerApplicationServices } from './application-services.js'
+import { createOwnerMethodRegistry } from './methods.js'
 import {
   OwnerMethodError,
   type OwnerMethodContext,
@@ -130,6 +134,244 @@ test('streams a domain event envelope through Owner WS events.subscribe', async 
   assert.deepEqual(resumedEvents, streamed)
 })
 
+test('reconciles materialized messages, buffered deltas, and interactions at the read cut', async () => {
+  const { adaptCodexNotification } = await import('../codex/conversation-adapter.js')
+  const ownerId = 'owner-conversation-cut'
+  const threadId = 'thread-cut' as ConversationId
+  const turnId = 'turn-cut' as TurnId
+  const interactionId = 'interaction-cut' as InteractionId
+  const projectId = 'project-cut'
+  const userRoot = path.join(tmpdir(), 'codex-owner-conversation-cut')
+  const cwd = path.join(userRoot, 'project')
+  const events = new EventHub()
+  const identity = (eventId: string): EventIdentity => ({
+    sourceId: 'test-adapter' as EventIdentity['sourceId'],
+    sourceEventId: eventId as EventIdentity['sourceEventId'],
+    receivedAt: '2026-01-01T00:00:00.000Z',
+  })
+  let requested = false
+  const publishDelta = async (itemId: string, delta: string, eventId: string) => {
+    const changes = adaptCodexNotification(
+      'item/agentMessage/delta',
+      { threadId, turnId, itemId, delta },
+      identity(eventId),
+    )
+    for (const [index, change] of changes.entries()) {
+      await events.publishConversationChange(ownerId, threadId, {
+        ...change,
+        identity: identity(`${eventId}:${index}`),
+      })
+    }
+  }
+  const services = createOwnerApplicationServices(
+    {
+      workspace: {
+        getOnlyOwnerId: async () => ownerId,
+        getUserRoot: () => userRoot,
+        getProject: async () => ({ id: projectId, path: cwd }),
+        listProjectLocations: async () => [{ id: projectId, path: cwd }],
+      } as never,
+      codex: {
+        events,
+        getReady: async () => ({
+          request: async (
+            method: string,
+            _params?: Record<string, unknown>,
+            _signal?: AbortSignal,
+            onResponse?: () => void,
+          ) => {
+            assert.equal(method, 'thread/read')
+            if (!requested) {
+              requested = true
+              await events.publishConversationChange(ownerId, threadId, {
+                type: 'interaction.opened',
+                identity: identity('opening'),
+                interaction: { id: interactionId, turnId, kind: 'approval', status: 'pending' },
+              })
+              await publishDelta('unfinished', 'before ', 'before-cut')
+              await publishDelta('materialized', 'already saved', 'already-saved')
+              await publishDelta('active-materialized', 'token=synthetic', 'active-saved')
+              await publishDelta('empty-materialized', 'fallback', 'empty-saved')
+            }
+            assert.ok(onResponse)
+            onResponse()
+            await publishDelta('unfinished', 'after ', 'after-cut')
+            await events.publishConversationChange(ownerId, threadId, {
+              type: 'interaction.resolved',
+              identity: identity('resolution'),
+              interactionId,
+              outcome: { kind: 'approved' },
+            })
+            return {
+              thread: {
+                id: threadId,
+                cwd,
+                turns: [
+                  {
+                    id: turnId,
+                    status: 'inProgress',
+                    items: [
+                      { id: 'materialized', type: 'agentMessage', text: 'already saved' },
+                      {
+                        id: 'active-materialized',
+                        type: 'agentMessage',
+                        status: 'inProgress',
+                        text: 'token=synthetic',
+                      },
+                      {
+                        id: 'empty-materialized',
+                        type: 'agentMessage',
+                        status: 'inProgress',
+                        text: '',
+                      },
+                    ],
+                  },
+                ],
+              },
+            }
+          },
+        }),
+      } as never,
+    },
+    { trustedOrigins: [] },
+  )
+  const context = { owner: { ownerId } } as OwnerMethodContext
+  const { snapshot, watermark } = await services.threadsRead(context, { threadId, projectId })
+  assert.equal(snapshot.watermark, watermark.sequence)
+  assert.equal(snapshot.interactions[interactionId]?.status, 'pending')
+  assert.deepEqual(
+    Object.values(snapshot.messages).map(({ id, parts }) => [id, parts[0]]),
+    [
+      ['materialized', { id: 'materialized:text:0', type: 'text', text: 'already saved' }],
+      [
+        'active-materialized',
+        { id: 'active-materialized:text:0', type: 'text', text: 'token=synthetic' },
+      ],
+      ['empty-materialized', { id: 'empty-materialized:text:0', type: 'text', text: 'fallback' }],
+      ['unfinished', { id: 'unfinished:text:0', type: 'text', text: 'before ' }],
+    ],
+  )
+
+  let resumed = createConversationState(snapshot)
+  const unsubscribe = await events.subscribeFrom(ownerId, threadId, watermark.sequence, (event) => {
+    const change = event.message.payload.change
+    assert.ok(isConversationChange(change))
+    resumed = applyChange(resumed, change)
+  })
+  unsubscribe()
+  assert.equal(resumed.interactions[interactionId]?.status, 'resolved')
+  assert.deepEqual(
+    Object.values(resumed.messages).map(({ parts }) => parts[0]),
+    [
+      { id: 'materialized:text:0', type: 'text', text: 'already saved' },
+      { id: 'active-materialized:text:0', type: 'text', text: 'token=synthetic' },
+      { id: 'empty-materialized:text:0', type: 'text', text: 'fallback' },
+      { id: 'unfinished:text:0', type: 'text', text: 'before after ' },
+    ],
+  )
+})
+
+test('typed Conversation commands require Owner and thread authorization before mutation', async () => {
+  const root = path.join(tmpdir(), 'codex-command-owner')
+  const mutations: unknown[] = []
+  const services = createOwnerApplicationServices(
+    {
+      workspace: {
+        getOnlyOwnerId: async () => 'owner-commands',
+        getUserRoot: () => root,
+        listProjectLocations: async () => [],
+        getProject: async () => null,
+      } as never,
+      codex: {
+        getReady: async () => ({
+          request: async (method: string, params: Record<string, unknown>) => {
+            if (method === 'thread/read') return { thread: { id: params.threadId, cwd: root } }
+            if (method === 'thread/list') return { data: [{ id: 'owned', cwd: root }] }
+            mutations.push([method, params])
+            return { turn: { id: 'turn-1' } }
+          },
+        }),
+        cancelQueuedTurn: (...args: unknown[]) => {
+          mutations.push(args)
+          return false
+        },
+        respondToServerRequest: (...args: unknown[]) => {
+          mutations.push(args)
+        },
+        events: {},
+      } as never,
+    },
+    { trustedOrigins: [] },
+  )
+  const method = createOwnerMethodRegistry(services).get('conversation.command')
+  assert.equal(method?.access, 'authenticated')
+  assert.ok(method)
+  const context = { owner: { ownerId: 'owner-commands' } } as OwnerMethodContext
+  const send = async (params: unknown, requestContext = context) =>
+    method.handle(params, requestContext)
+  const start = {
+    type: 'turn.start',
+    conversationId: 'owned',
+    input: [{ type: 'text', id: 'part-1', text: '  Synthetic prompt  ' }],
+    projectId: null,
+    model: 'test-model',
+    reasoningEffort: 'medium',
+    collaborationMode: 'default',
+    skills: [],
+  }
+  await assert.rejects(send(start, { ...context, owner: null }), {
+    code: 'owner.auth.unauthorized',
+  })
+  await assert.rejects(send({ ...start, projectId: 'missing' }), {
+    code: new OwnerMethodError('PROJECT_NOT_FOUND').code,
+  })
+  const forbidden = { conversationId: 'outside' }
+  const notFound = { code: new OwnerMethodError('THREAD_NOT_FOUND').code }
+  await assert.rejects(send({ ...start, ...forbidden }), notFound)
+  await assert.rejects(send({ ...forbidden, type: 'turn.cancel', turnId: 'turn-1' }), {
+    ...notFound,
+  })
+  await assert.rejects(send({ ...forbidden, type: 'conversation.archive' }), {
+    ...notFound,
+  })
+  await assert.rejects(send({ ...forbidden, type: 'conversation.compact' }), notFound)
+  await assert.rejects(
+    send({ conversationId: 'owned', type: 'conversation.compact' }, { ...context, owner: null }),
+    { code: 'owner.auth.unauthorized' },
+  )
+  await assert.rejects(
+    send({
+      ...forbidden,
+      type: 'interaction.respond',
+      interactionId: 'request:1',
+      outcome: { kind: 'approved' },
+    }),
+    notFound,
+  )
+  assert.deepEqual(mutations, [])
+
+  assert.deepEqual(await send(start), { turnId: 'turn-1' })
+  assert.deepEqual(mutations, [
+    [
+      'turn/start',
+      {
+        threadId: 'owned',
+        input: [{ type: 'text', text: 'Synthetic prompt' }],
+        model: 'test-model',
+        effort: 'medium',
+        collaborationMode: {
+          mode: 'default',
+          settings: { model: 'test-model', reasoning_effort: 'medium' },
+        },
+      },
+    ],
+  ])
+  assert.deepEqual(await send({ type: 'conversation.compact', conversationId: 'owned' }), {
+    accepted: true,
+  })
+  assert.deepEqual(mutations.at(-1), ['thread/compact/start', { threadId: 'owned' }])
+})
+
 test('lists root threads when the caller sends an explicit null project scope', async () => {
   const userRoot = path.join(tmpdir(), 'codex-owner-root-threads')
   const services = createOwnerApplicationServices(
@@ -214,4 +456,42 @@ test('reports PASSKEY_REQUIRED when no local credential is registered', async ()
     database?.driver.close()
     rmSync(dataRoot, { recursive: true, force: true })
   }
+})
+
+test('lists stable skill paths for a root selection without handle state', async () => {
+  const root = path.resolve('synthetic-owner-skills')
+  const skill = {
+    name: 'review',
+    path: path.join(root, 'review', 'SKILL.md'),
+    scope: 'repo',
+    enabled: true,
+    description: 'token=synthetic',
+  }
+  const services = createOwnerApplicationServices(
+    {
+      workspace: { getOnlyOwnerId: async () => 'owner', getUserRoot: () => root } as never,
+      codex: {
+        getReady: async () => ({
+          request: async (method: string, params: unknown) => {
+            assert.equal(method, 'skills/list')
+            assert.deepEqual(params, { cwds: [root] })
+            return { data: [{ cwd: root, skills: [skill] }] }
+          },
+        }),
+      } as never,
+    },
+    { trustedOrigins: [] },
+  )
+  const context = { owner: { ownerId: 'owner' } } as OwnerMethodContext
+  const expected = [
+    {
+      name: skill.name,
+      path: skill.path,
+      scope: 'repo',
+      displayName: 'review',
+      description: 'token=synthetic',
+    },
+  ]
+  assert.deepEqual(await services.skillsList(context, { projectId: null }), expected)
+  assert.deepEqual(await services.skillsList(context, {}), expected)
 })

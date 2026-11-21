@@ -1,10 +1,10 @@
 import {
-  encodeOwnerFrame,
+  OWNER_MAX_FRAME_BYTES,
   parseOwnerEventStreamMessage,
   parseOwnerFrame,
   type OwnerFrame,
 } from '@codex-web/protocol/owner'
-import type { PublicErrorDto } from '@codex-web/telemetry/errors'
+import type { OwnerErrorDto } from '@codex-web/telemetry/errors'
 import { log } from '../logger.js'
 import { OwnerMethodError, projectOwnerError } from './errors.js'
 export { OwnerMethodError } from './errors.js'
@@ -156,7 +156,7 @@ const DEFAULT_MAX_IN_FLIGHT_REQUESTS = 32
 const DEFAULT_MAX_QUEUED_BYTES = 2 * 1024 * 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_RETAINED_REQUEST_IDS = 4096
-const AUTH_FAILURE: PublicErrorDto = {
+const AUTH_FAILURE: OwnerErrorDto = {
   code: 'owner.auth.unauthorized',
   message: 'Authentication is required.',
   retryable: false,
@@ -343,6 +343,7 @@ export class OwnerSessionRuntime {
     const state: RequestState = { controller, timeout }
     this.activeRequests.set(requestId, state)
 
+    const authenticatedAtStart = method.access === 'authenticated' && this.session !== null
     try {
       const context = this.createMethodContext(controller.signal, requestId, params)
       const output = await raceAbort(
@@ -369,7 +370,7 @@ export class OwnerSessionRuntime {
           this.shutdown(1000, this.transport.promoted ? 'paired' : 'session closed')
       }
     } catch (error) {
-      const projectedError = projectError(error, state.abortCode)
+      const projectedError = projectError(error, state.abortCode, authenticatedAtStart)
       if (methodName.startsWith('owner.passkey.')) {
         log.warn('owner.passkey.method-failed', {
           method: methodName.slice(0, 80),
@@ -486,7 +487,7 @@ export class OwnerSessionRuntime {
     }
   }
 
-  private async respondError(requestId: string, error: PublicErrorDto): Promise<void> {
+  private async respondError(requestId: string, error: OwnerErrorDto): Promise<void> {
     await this.send({ type: 'response', requestId, error })
   }
 
@@ -500,8 +501,32 @@ export class OwnerSessionRuntime {
 
   private async send(frame: OwnerFrame): Promise<void> {
     if (this.closed) return
-    const encoded = encodeOwnerFrame(frame)
+    const encoded = JSON.stringify(frame)
     const bytes = new TextEncoder().encode(encoded).byteLength
+    if (bytes > OWNER_MAX_FRAME_BYTES) {
+      if (frame.type === 'response') {
+        await this.send({
+          type: 'response',
+          requestId: frame.requestId,
+          error: {
+            code: 'owner.protocol.frame-too-large',
+            retryable: false,
+            message: 'Owner response exceeds the frame size limit.',
+          },
+        })
+      } else if (frame.type === 'stream.event') {
+        this.activeStreams.get(frame.streamId)?.controller.abort()
+        this.activeStreams.delete(frame.streamId)
+        await this.send({
+          type: 'stream.close',
+          streamId: frame.streamId,
+          reason: 'FRAME_TOO_LARGE',
+        })
+      } else this.shutdown(1009, 'FRAME_TOO_LARGE')
+      return
+    }
+    const parsed = parseOwnerFrame(encoded)
+    if (!parsed.ok) throw new TypeError(parsed.error.message)
     if (this.queuedBytes + bytes > (this.options.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES)) {
       this.shutdown(1013, 'BACKPRESSURE_LIMIT_EXCEEDED')
       return
@@ -556,11 +581,12 @@ function isStreamResult(value: unknown): value is OwnerStreamResult {
 
 function projectError(
   error: unknown,
-  abortCode?: 'REQUEST_TIMEOUT' | 'REQUEST_CANCELLED',
-): PublicErrorDto {
+  abortCode: 'REQUEST_TIMEOUT' | 'REQUEST_CANCELLED' | undefined,
+  detailed: boolean,
+): OwnerErrorDto {
   if (abortCode)
     return projectOwnerError(new OwnerMethodError(abortCode, abortCode === 'REQUEST_TIMEOUT'))
-  return projectOwnerError(error)
+  return projectOwnerError(error, detailed)
 }
 
 function abortError(code?: RequestState['abortCode']): Error {

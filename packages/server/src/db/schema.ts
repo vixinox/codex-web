@@ -1,3 +1,4 @@
+import type { ConversationChange } from '@codex-web/conversation'
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 const timestamp = (name: string) => integer(name, { mode: 'timestamp' })
@@ -130,24 +131,23 @@ export const credential = sqliteTable(
   (table) => [index('credential_owner_idx').on(table.ownerId)],
 )
 
-export const domainEvent = sqliteTable(
-  'domain_events',
+export const conversationEvent = sqliteTable(
+  'conversation_events',
   {
     id: integer('id').primaryKey(),
     ownerId: text('owner_id')
       .notNull()
       .references(() => owner.id, { onDelete: 'cascade' }),
-    threadId: text('thread_id'),
-    type: text('type').notNull(),
-    payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
+    conversationId: text('conversation_id').notNull(),
+    change: text('change', { mode: 'json' }).$type<ConversationChange>().notNull(),
+    createdAt: text('created_at').notNull(),
   },
   (table) => [
-    index('domain_events_owner_idx').on(table.ownerId),
-    index('domain_events_owner_id_idx').on(table.ownerId, table.id),
-    index('domain_events_owner_thread_id_idx').on(table.ownerId, table.threadId, table.id),
+    index('conversation_events_owner_conversation_id_idx').on(
+      table.ownerId,
+      table.conversationId,
+      table.id,
+    ),
   ],
 )
 
@@ -159,5 +159,5 @@ export const schema = {
   ownerSession,
   project,
   credential,
-  domainEvent,
+  conversationEvent,
 }

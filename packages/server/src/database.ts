@@ -71,7 +71,7 @@ function assertCurrentSchema(driver: DatabaseDriver.Database) {
     'owner_session',
     'project',
     'credential',
-    'domain_events',
+    'conversation_events',
   ].filter((table) => !tables.has(table))
   const legacyTables = [
     'user',
@@ -80,11 +80,12 @@ function assertCurrentSchema(driver: DatabaseDriver.Database) {
     'verification',
     'twoFactor',
     'owner_security_state',
+    'domain_events',
   ].filter((table) => tables.has(table))
   const hasLegacyMigrationTable = tables.has('schema_migrations')
   if (missingTables.length > 0 || legacyTables.length > 0 || hasLegacyMigrationTable) {
     throw new Error(
-      'Owner database schema is missing the current Owner tables or still contains legacy authentication data. Run `pnpm db:reset` to explicitly recreate it.',
+      'Owner database schema is missing current tables or still contains legacy tables. Run `pnpm db:reset` to explicitly recreate it.',
     )
   }
 }

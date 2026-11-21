@@ -2,7 +2,7 @@ import type { ChatPlanPresentation, ChatTokenUsage, ChatUserInputRequest } from 
 import type { CodeSnippetAttachment } from '../composer/model/draft-model'
 
 export type ComposerSkill = {
-  handle: string
+  path: string
   name: string
   displayName: string
   description: string
