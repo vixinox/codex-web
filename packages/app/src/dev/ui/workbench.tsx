@@ -210,10 +210,27 @@ function Scene({
 
     retrySkills: () => {},
     stop,
+    deleteQueued: () => setComposer((value) => ({ ...value, queue: undefined })),
+    editQueued: () =>
+      setComposer((value) =>
+        value.draft.trim() ? value : { ...value, draft: value.queue?.text ?? '', queue: undefined },
+      ),
+    steerQueued: async () => {
+      setComposer((value) => ({ ...value, queue: undefined }))
+      setNotice('Local Steer accepted; no runtime command sent.')
+    },
 
     submit: async (text: string) => {
       if (!text.trim()) return
 
+      if (visible.isBusy) {
+        setComposer((value) =>
+          value.queue
+            ? value
+            : { ...value, draft: '', queue: { text, status: 'queued', canSteer: true } },
+        )
+        return
+      }
       setComposer((value) => ({ ...value, draft: '' }))
 
       setPending({
@@ -318,6 +335,62 @@ function Scene({
             {panel === 'scenarios' ? (
               <>
                 <ControlSection title="场景目录">{catalog}</ControlSection>
+                <ControlSection title="Queue panel">
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setComposer((value) => ({
+                          ...value,
+                          queue: {
+                            text: 'Queued message with original content and code snippets. '.repeat(
+                              8,
+                            ),
+                            status: 'queued',
+                            canSteer: true,
+                          },
+                        }))
+                      }
+                    >
+                      Queued
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setComposer((value) => ({
+                          ...value,
+                          queue: {
+                            text: 'Sending queued message',
+                            status: 'sending',
+                            canSteer: false,
+                          },
+                        }))
+                      }
+                    >
+                      Sending
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setComposer((value) => ({
+                          ...value,
+                          queue: {
+                            text: 'Message with uncertain delivery',
+                            status: 'paused',
+                            canSteer: false,
+                            error:
+                              'Queue paused. Check the conversation before editing and resending.',
+                          },
+                        }))
+                      }
+                    >
+                      Error
+                    </Button>
+                  </div>
+                </ControlSection>
                 <ControlSection title="回放控制">
                   <p className="text-sm font-medium">{scenario.name}</p>
                   <p className="text-xs text-muted-foreground">{scenario.description}</p>
@@ -548,7 +621,7 @@ function ThemeControls() {
           <SelectContent>
             <SelectGroup>
               {themes
-                .filter((theme) => theme.source.variant === resolvedVariant)
+                .filter((theme) => theme.variant === resolvedVariant)
                 .map((theme) => (
                   <SelectItem key={theme.id} value={theme.id}>
                     {theme.name}

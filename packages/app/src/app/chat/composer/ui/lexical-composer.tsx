@@ -76,7 +76,8 @@ class SkillNode extends TextNode {
   }
   createDOM(config: EditorConfig) {
     const el = super.createDOM(config)
-    el.className = 'mx-0.5 inline-block rounded-sm bg-primary/10 px-1 font-semibold text-primary'
+    el.className =
+      'mx-0.5 inline-block rounded-sm bg-interaction-selected px-1 font-semibold text-action-text'
     return el
   }
   getSkill() {

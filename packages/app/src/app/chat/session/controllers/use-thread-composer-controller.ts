@@ -30,6 +30,7 @@ export function useThreadComposerController({
     () => ({
       target: host.target,
       activeTurnId: host.activeTurnId,
+      queueContext: host.queueContext,
       onTurnAccepted: (turn) => host.onTurnAccepted(turn),
       onTurnFollowed: (turn) => host.followTurn(turn.turnId),
       onThreadCreated: (turn) => host.navigateToThread(turn),

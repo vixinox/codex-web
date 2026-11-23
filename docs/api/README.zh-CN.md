@@ -61,3 +61,7 @@ Owner 应用协议与 domain event 不维护版本号，前后端共同调整。
 发送、取消、compact 和 Interaction reply 经 `conversation.command` 的 `turn.start`、`turn.cancel`、`conversation.compact`、`interaction.respond` 执行。旧 `threads.send`、`threads.cancel`、`threads.compact`、`threads.status`、`userInput.respond`、`approvals.resolve` 已移除，不提供别名；调用返回 `owner.request.method-not-found`。Workspace 通知仍使用现有 envelope，供 sidebar 和 skills 刷新。
 
 事件 payload 继续受 128,000 UTF-8 字节限制，Owner frame 上限为 1 MiB。超限事件被明确拒绝并记录交付缺口，使订阅 reset；超限响应返回 `owner.protocol.frame-too-large`，不发送截断结果。
+
+## Steer 与本地 Queue
+
+`conversation.command` 新增 `turn.steer`：`conversationId`、`expectedTurnId`、单条 text `input` 及可选 `skills`。Owner 校验线程归属和 skills 后直接调用 App Server `turn/steer`，不进入任务调度队列；返回 `{ turnId }`，必须匹配预期 Turn。请求拒绝为不可自动重试的 Turn 错误，传输失败或无效响应不能推断未执行。没有 Queue RPC。

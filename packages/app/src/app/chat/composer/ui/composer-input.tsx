@@ -69,6 +69,13 @@ export function ComposerInput({
   React.useEffect(() => {
     setDraft(parseDraft(viewModel.draft, skills))
   }, [skills, viewModel.draft])
+  const previousQueue = React.useRef(Boolean(viewModel.queue))
+  React.useEffect(() => {
+    if (previousQueue.current && !viewModel.queue && viewModel.draft) {
+      composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus()
+    }
+    previousQueue.current = Boolean(viewModel.queue)
+  }, [viewModel.queue, viewModel.draft])
   const submit = () => {
     const text = serializeDraftSubmission(draft).trim()
     if (text && !disabled && !viewModel.submitting)

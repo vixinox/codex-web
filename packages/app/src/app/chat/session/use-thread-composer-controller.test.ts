@@ -1,3 +1,4 @@
+import { ownerComposerAdapter } from './adapters/owner-composer-adapter'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createConversationSnapshot, type ConversationId } from '@codex-web/conversation'
@@ -231,5 +232,131 @@ describe('thread composer skills controller', () => {
     rerender({ runtimeReady: true })
     await waitFor(() => expect(bridge.fetchSkills).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(result.current.viewModel.skills.status).toBe('ready'))
+  })
+  it('queues one message while busy, preserves a second draft, and restores skills on edit', async () => {
+    const host = {
+      target: { projectId: null, threadId: 'thread-1' },
+      activeTurnId: 'turn-1',
+      followTurn: vi.fn(),
+      retry: vi.fn(),
+      navigateToThread: vi.fn(),
+      onTurnAccepted: vi.fn(),
+    }
+    const { result } = renderHook(() =>
+      useThreadComposerController({ userId: 'user-1', host, runtimeReady: true, working: true }),
+    )
+    act(() => result.current.actions.setDraft('Queued report', [skill]))
+    await act(async () => result.current.actions.submit('Queued report', [skill]))
+    expect(result.current.viewModel.queue?.text).toBe('Queued report')
+    expect(result.current.viewModel.draft).toBe('')
+    expect(bridge.startTurn).not.toHaveBeenCalled()
+    act(() => result.current.actions.setDraft('Another draft'))
+    await act(async () => result.current.actions.submit('Another draft'))
+    act(() => result.current.actions.editQueued?.())
+    expect(result.current.viewModel.draft).toBe('Another draft')
+    expect(result.current.viewModel.queue?.text).toBe('Queued report')
+    act(() => result.current.actions.setDraft(''))
+    await act(async () => result.current.actions.editQueued?.())
+    expect(result.current.viewModel.draft).toBe('Queued report')
+    expect(result.current.viewModel.selectedSkills).toEqual([skill])
+    expect(result.current.viewModel.queue).toBeUndefined()
+  })
+
+  it('auto-dispatches once after completion and pauses uncertain failures without retry', async () => {
+    bridge.startTurn.mockRejectedValue(new TypeError('Network lost'))
+    const host = {
+      target: { projectId: null, threadId: 'thread-1' },
+      activeTurnId: 'turn-1',
+      queueContext: {
+        healthy: true,
+        blocked: false,
+        nonSteerable: false,
+        turns: [{ id: 'turn-1', status: 'inProgress' }],
+      },
+      followTurn: vi.fn(),
+      retry: vi.fn(),
+      navigateToThread: vi.fn(),
+      onTurnAccepted: vi.fn(),
+    }
+    const { result, rerender } = renderHook(
+      ({ working }) =>
+        useThreadComposerController({
+          userId: 'user-1',
+          host: { ...host },
+          runtimeReady: true,
+          working,
+        }),
+      { initialProps: { working: true } },
+    )
+    act(() => result.current.actions.setDraft('next'))
+    await act(async () => result.current.actions.submit('next'))
+    host.queueContext = { ...host.queueContext, turns: [{ id: 'turn-1', status: 'completed' }] }
+    rerender({ working: false })
+    await waitFor(() => expect(result.current.viewModel.queue?.status).toBe('paused'))
+    expect(bridge.startTurn).toHaveBeenCalledTimes(1)
+    expect(result.current.viewModel.queue?.text).toBe('next')
+    expect(result.current.viewModel.queue?.error).toContain('may have been sent')
+    rerender({ working: false })
+    expect(bridge.startTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it('steers once with the bound turn and keeps drafts written after queueing', async () => {
+    let finish!: (value: { turnId: string }) => void
+    const steerTurn = vi.fn(
+      () =>
+        new Promise<{ turnId: string }>((resolve) => {
+          finish = resolve
+        }),
+    )
+    const adapter = {
+      ...ownerComposerAdapter,
+      threads: { ...ownerComposerAdapter.threads, steerTurn },
+    }
+    const host = {
+      target: { projectId: null, threadId: 'thread-1' },
+      activeTurnId: 'turn-1',
+      queueContext: {
+        healthy: true,
+        blocked: false,
+        nonSteerable: false,
+        turns: [{ id: 'turn-1', status: 'inProgress' }],
+      },
+      followTurn: vi.fn(),
+      retry: vi.fn(),
+      navigateToThread: vi.fn(),
+      onTurnAccepted: vi.fn(),
+    }
+    const { result } = renderHook(() =>
+      useThreadComposerController({
+        userId: 'user-1',
+        host,
+        adapter,
+        runtimeReady: true,
+        working: true,
+      }),
+    )
+    act(() => result.current.actions.setDraft('adjust', [skill]))
+    await act(async () => result.current.actions.submit('adjust', [skill]))
+    let request!: Promise<void>
+    act(() => {
+      request = result.current.actions.steerQueued!()
+    })
+    await act(async () => result.current.actions.steerQueued!())
+    act(() => result.current.actions.setDraft('new draft'))
+    act(() => result.current.actions.deleteQueued?.())
+    expect(result.current.viewModel.queue?.status).toBe('sending')
+    await act(async () => {
+      finish({ turnId: 'turn-1' })
+      await request
+    })
+    expect(steerTurn).toHaveBeenCalledTimes(1)
+    expect(steerTurn).toHaveBeenCalledWith(
+      'thread-1',
+      'turn-1',
+      expect.objectContaining({ text: 'adjust', skills: [{ name: skill.name, path: skill.path }] }),
+    )
+    expect(result.current.viewModel.draft).toBe('new draft')
+    expect(result.current.viewModel.queue).toBeUndefined()
+    expect(host.onTurnAccepted).not.toHaveBeenCalled()
   })
 })

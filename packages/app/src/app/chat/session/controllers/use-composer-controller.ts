@@ -1,6 +1,8 @@
+import { queueTransition, claimQueuedMessage } from '@/app/chat/composer/state/queued-message'
 import * as React from 'react'
 
 import {
+  composerStore,
   clearComposerDraft,
   clearComposerSkills,
   DEFAULT_COMPOSER_PREFERENCES,
@@ -284,8 +286,39 @@ export function useComposerController({
         'text' | 'title' | 'lineCount' | 'characterCount'
       >[] = [],
     ) => {
-      if (!text.trim() || operation.current) return
+      if (
+        !text.trim() ||
+        operation.current ||
+        composerStore.scopes[scope]?.queued?.status === 'sending'
+      )
+        return
+      const currentScope = ensureComposerScope(scope)
+      if (currentScope.queued) {
+        setError('A message is already queued. Edit or delete it first.')
+        return
+      }
       const target = hostRef.current.target
+      if (target.threadId && working) {
+        const turnId = hostRef.current.activeTurnId
+        if (!turnId) {
+          setError('Wait for the current turn to finish starting.')
+          return
+        }
+        currentScope.queued = {
+          id: crypto.randomUUID(),
+          turnId,
+          draft: currentScope.draft,
+          text,
+          skills: submittedSkills.map((skill) => ({ ...skill })),
+          preferences: { ...currentScope.preferences, collaborationMode: mode },
+          status: 'queued',
+        }
+        clearComposerDraft(scope)
+        clearComposerSkills(scope)
+        setError(null)
+        return
+      }
+      const submittedDraft = currentScope.draft
       const generation = targetGeneration.current
       const controller = new AbortController()
       operation.current = controller
@@ -373,8 +406,10 @@ export function useComposerController({
             threadId: acceptedTurn.threadId,
           }),
         )
-        clearComposerDraft(scope)
-        clearComposerSkills(scope)
+        if (ensureComposerScope(scope).draft === submittedDraft) {
+          clearComposerDraft(scope)
+          clearComposerSkills(scope)
+        }
         updateComposerPreferences(scope, (current) => ({ ...current, collaborationMode: mode }))
         const submitted: ComposerPreferences = {
           ...snapshot.preferences,
@@ -429,12 +464,116 @@ export function useComposerController({
       scope,
       snapshot.preferences,
       snapshot.skills,
+      working,
       userId,
     ],
   )
 
+  const sendQueued = React.useCallback(
+    async (steer: boolean) => {
+      const state = composerStore.scopes[scope]
+      const queued = state?.queued
+      const current = hostRef.current
+      const context = current.queueContext
+      const threadId = current.target.threadId
+      if (
+        !queued ||
+        queued.status === 'sending' ||
+        !threadId ||
+        !context?.healthy ||
+        context.blocked ||
+        operation.current
+      )
+        return
+      if (
+        steer &&
+        (queued.status === 'paused' ||
+          current.activeTurnId !== queued.turnId ||
+          context.nonSteerable ||
+          !adapter.threads.steerTurn)
+      )
+        return
+      if (
+        !steer &&
+        (queued.status !== 'queued' ||
+          working ||
+          context.turns.find((turn) => turn.id === queued.turnId)?.status !== 'completed')
+      )
+        return
+      const generation = targetGeneration.current
+      // Claim synchronously before awaiting: effects and button actions share this lock.
+      if (!claimQueuedMessage(queued)) return
+      const controller = new AbortController()
+      operation.current = controller
+      const input = {
+        projectId: current.target.projectId,
+        text: queued.text,
+        model: queued.preferences.model,
+        reasoningEffort: queued.preferences.effort,
+        collaborationMode: queued.preferences.collaborationMode,
+        skills: queued.skills.map(({ name, path }) => ({ name, path })),
+      }
+      try {
+        const result = steer
+          ? await adapter.threads.steerTurn!(threadId, queued.turnId, input)
+          : await adapter.threads.startTurn(threadId, input, controller.signal)
+        if (!result?.turnId || (steer && result.turnId !== queued.turnId))
+          throw new Error('Codex returned an invalid turn response.')
+        if (state.queued?.id === queued.id) delete state.queued
+        if (generation !== targetGeneration.current) return
+        if (!steer)
+          current.onTurnAccepted({
+            projectId: current.target.projectId,
+            threadId,
+            turnId: result.turnId,
+          })
+        current.onTurnFollowed?.({
+          projectId: current.target.projectId,
+          threadId,
+          turnId: result.turnId,
+        })
+      } catch (nextError) {
+        if (state.queued?.id !== queued.id) return
+        queued.status = 'paused'
+        const code = (nextError as { code?: unknown } | null)?.code
+        const rejected =
+          code === 'owner.turn.invalid-request' ||
+          code === 'owner.auth.unauthorized' ||
+          code === 'owner.thread.not-found'
+        queued.error =
+          presentAppError(nextError, 'Could not send the queued message.') +
+          (rejected
+            ? ' Queue paused. Edit to resend.'
+            : ' It may have been sent. Check the conversation before editing and resending.')
+      } finally {
+        if (operation.current === controller) operation.current = null
+      }
+    },
+    [adapter, scope, working],
+  )
+
+  React.useEffect(() => {
+    const state = composerStore.scopes[scope]
+    const queued = state?.queued
+    if (!queued || queued.status !== 'queued') return
+    const context = host.queueContext
+    if (!context?.healthy) return
+    const transition = queueTransition(queued, context, working)
+    if (transition === 'pause') {
+      queued.status = 'paused'
+      queued.error = 'Queue paused because the turn failed or stopped. Edit to resend.'
+    } else if (transition === 'send') {
+      void sendQueued(false)
+    }
+  }, [host.queueContext, scope, snapshot.queued, working, sendQueued])
+
   const stop = React.useCallback(async () => {
     const current = hostRef.current
+    const queued = composerStore.scopes[scope]?.queued
+    if (queued?.status === 'queued') {
+      queued.status = 'paused'
+      queued.error = 'Queue paused because Stop was requested. Edit to resend.'
+    }
     // Composition-owned cancel clears its own active Turn
     // even when cancel fails; a route-owned cancel only refreshes on success.
     if (current.cancelActiveTurn) {
@@ -448,7 +587,7 @@ export function useComposerController({
     if (!current.target.threadId || !working || !current.activeTurnId) return
     await adapter.threads.cancelTurn(current.target.threadId, current.activeTurnId)
     current.onTurnCancelled?.()
-  }, [adapter, working])
+  }, [adapter, working, scope])
 
   const compact = React.useCallback(async () => {
     const current = hostRef.current
@@ -469,6 +608,20 @@ export function useComposerController({
   }, [adapter, compacting, working])
 
   const actions: ComposerActions = {
+    steerQueued: () => sendQueued(true),
+    deleteQueued: () => {
+      const state = ensureComposerScope(scope)
+      if (state.queued?.status !== 'sending') delete state.queued
+    },
+    editQueued: () => {
+      const state = ensureComposerScope(scope)
+      if (!state.queued || state.queued.status === 'sending' || state.draft.trim()) return
+      const queued = state.queued
+      delete state.queued
+      setComposerDraft(scope, queued.draft, queued.skills)
+      updateComposerPreferences(scope, () => ({ ...queued.preferences }))
+      setError(null)
+    },
     setDraft,
     setModel,
     setEffort,
@@ -481,7 +634,13 @@ export function useComposerController({
       if (command === 'compact') void compact()
       else setCollaborationMode('plan')
     },
-    stop,
+    stop: async () => {
+      try {
+        await stop()
+      } catch (nextError) {
+        setError(presentAppError(nextError, 'Could not stop this turn.'))
+      }
+    },
   }
   const skillRequestKey = `${targetProjectId ?? '<root>'}\0${skillRetryKey}`
   const viewSkills: SkillPickerViewModel = !runtimeReady
@@ -495,6 +654,22 @@ export function useComposerController({
     runtimeReady,
   })
   const viewModel: ComposerViewModel = {
+    queue: snapshot.queued
+      ? {
+          text: snapshot.queued.text,
+          status: snapshot.queued.status,
+          error: snapshot.queued.error,
+          canSteer:
+            snapshot.queued.status === 'queued' &&
+            Boolean(
+              host.queueContext?.healthy &&
+              !host.queueContext.blocked &&
+              !host.queueContext.nonSteerable &&
+              host.activeTurnId === snapshot.queued.turnId &&
+              adapter.threads.steerTurn,
+            ),
+        }
+      : undefined,
     draft: snapshot.draft,
     model: snapshot.preferences.model,
     effort: snapshot.preferences.effort,

@@ -3,6 +3,9 @@ import type { JsonRpcMessage } from './stdio-transport.js'
 import { log } from '../logger.js'
 import { formatRpcMessageId, summarizeRpcShape } from './rpc-message-summary.js'
 
+/** A definitive JSON-RPC rejection, distinct from transport failure. */
+export class CodexRpcRequestError extends Error {}
+
 export type RpcTransport = {
   send(message: JsonRpcMessage): void
   stop(): void
@@ -154,7 +157,7 @@ export class CodexRpcClient {
       this.pending.delete(message.id)
       if ('error' in message) {
         const value = record(message.error) ? message.error : undefined
-        const error = new Error(
+        const error = new CodexRpcRequestError(
           typeof value?.message === 'string' ? value.message : 'Codex RPC request failed',
         )
         const data = record(value?.data) ? value.data : undefined

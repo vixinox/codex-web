@@ -14,7 +14,19 @@ export type ComposerPreferences = {
   collaborationMode: CollaborationMode
 }
 
+export type QueuedMessage = {
+  id: string
+  turnId: string
+  draft: string
+  text: string
+  skills: ComposerSkill[]
+  preferences: ComposerPreferences
+  status: 'queued' | 'sending' | 'paused'
+  error?: string
+}
+
 export type ComposerDraftState = {
+  queued?: QueuedMessage
   draft: string
   preferences: ComposerPreferences
   skills: ComposerSkill[]

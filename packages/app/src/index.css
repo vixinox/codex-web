@@ -20,6 +20,13 @@
   --color-app-border: var(--app-border);
   --color-app-border-strong: var(--app-border-strong);
   --color-app-action: var(--app-action);
+  --color-action-text: var(--app-action-text);
+  --color-interaction-hover: var(--app-hover);
+  --color-interaction-pressed: var(--app-pressed);
+  --color-interaction-selected: var(--app-selected);
+  --color-destructive-subtle: var(--app-destructive-subtle);
+  --color-destructive-solid: var(--app-destructive-solid);
+  --color-destructive-foreground: var(--app-destructive-foreground);
   --color-success: var(--app-success);
   --color-warning: var(--app-warning);
   --color-diff-added: var(--app-diff-added);
@@ -61,7 +68,6 @@
 }
 
 :root {
-  --app-text-muted: oklch(0.556 0 0);
   --background: var(--app-surface);
   --foreground: var(--app-text);
   --card: var(--app-surface);
@@ -96,7 +102,7 @@
     background-color: var(--app-canvas, #ffffff);
   }
   html.dark {
-    background-color: #111111;
+    background-color: var(--app-canvas);
   }
   * {
     @apply border-border outline-ring/50;
@@ -117,6 +123,19 @@
 }
 
 @layer components {
+  .app-solid-action:not(:disabled):hover {
+    background-color: var(--app-action-hover);
+  }
+  .app-solid-action:not(:disabled):active {
+    background-color: var(--app-action-pressed);
+  }
+
+  .app-interactive:disabled,
+  .app-interactive[aria-disabled='true'],
+  .app-interactive[data-disabled] {
+    color: var(--app-text-disabled);
+  }
+
   .app-shell {
     height: 100dvh;
     min-height: 100svh;
@@ -134,6 +153,19 @@
 }
 
 @layer components {
+  .app-solid-action:not(:disabled):hover {
+    background-color: var(--app-action-hover);
+  }
+  .app-solid-action:not(:disabled):active {
+    background-color: var(--app-action-pressed);
+  }
+
+  .app-interactive:disabled,
+  .app-interactive[aria-disabled='true'],
+  .app-interactive[data-disabled] {
+    color: var(--app-text-disabled);
+  }
+
   .app-interactive,
   .app-interactive-roving,
   .app-interactive-no-press {
@@ -161,7 +193,8 @@
   .app-interactive-roving[data-checked],
   tr[data-state='selected'],
   tr:has([aria-expanded='true']) {
-    --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+    --app-state-layer: var(--app-selected);
+    color: var(--app-interaction-foreground);
     background-image: linear-gradient(var(--app-state-layer), var(--app-state-layer));
   }
 
@@ -171,18 +204,21 @@
     .app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not(
         [data-disabled]
       ):hover {
-      --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+      --app-state-layer: var(--app-hover);
+      color: var(--app-interaction-foreground);
     }
   }
 
   .app-interactive-roving:not(:disabled):not([aria-disabled='true']):not([data-disabled]):focus,
   .app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not([data-disabled]):focus {
-    --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+    --app-state-layer: var(--app-hover);
+    color: var(--app-interaction-foreground);
   }
 
   .app-interactive:not(:disabled):not([aria-disabled='true']):not([data-disabled]):active,
   .app-interactive-roving:not(:disabled):not([aria-disabled='true']):not([data-disabled]):active {
-    --app-state-layer: color-mix(in srgb, currentColor 12%, transparent);
+    --app-state-layer: var(--app-pressed);
+    color: var(--app-interaction-foreground);
   }
 
   .app-interactive.app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not(
@@ -192,7 +228,8 @@
       [data-disabled]
     ):active,
   .app-interactive-no-press:not(:disabled):not([aria-disabled='true']):not([data-disabled]):active {
-    --app-state-layer: color-mix(in srgb, currentColor 8%, transparent);
+    --app-state-layer: var(--app-hover);
+    color: var(--app-interaction-foreground);
   }
 }
 

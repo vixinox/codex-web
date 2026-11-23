@@ -158,7 +158,7 @@ describe('shared composer controller', () => {
           onTurnFollowed,
         },
         runtimeReady: true,
-        working: true,
+        working: false,
       }),
     )
 

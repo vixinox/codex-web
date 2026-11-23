@@ -22,6 +22,7 @@ export function useThreadDetailController(
   onThreadLifecycle?: ThreadLifecycleHandler,
   conversationClient: Pick<ConversationClient, 'watch'> = ownerConversationClient,
 ): ChatSession {
+  const [syncKey, setSyncKey] = React.useState<string | null>(null)
   const registry = useThreadSessionRegistry()
   const [retryKey, setRetryKey] = React.useState(0)
   const [streamFailure, setStreamFailure] = React.useState<{ key: string; message: string } | null>(
@@ -35,6 +36,7 @@ export function useThreadDetailController(
     if (projectId === undefined || !threadId || !session) return
     const controller = new AbortController()
     registry.retain(projectId, threadId)
+    setSyncKey(null)
     session.beginLoad()
     let stopped = false
     setStreamFailure(null)
@@ -50,6 +52,9 @@ export function useThreadDetailController(
       .watch(
         { projectId, conversationId: threadId as ConversationId },
         {
+          syncStatus(ready) {
+            if (!controller.signal.aborted) setSyncKey(ready ? session.key : null)
+          },
           replaceSnapshot(value) {
             if (!controller.signal.aborted) session.replaceConversation(value)
           },
@@ -112,6 +117,7 @@ export function useThreadDetailController(
   }, [client, snapshot.userInput, threadId])
   return {
     model,
+    synchronized: syncKey === session?.key,
     retry,
     followTurn: retry,
     answerUserInput,

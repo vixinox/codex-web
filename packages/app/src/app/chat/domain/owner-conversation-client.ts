@@ -29,6 +29,7 @@ export function createOwnerConversationClient(
       const threadId = target.conversationId
       try {
         while (!signal.aborted) {
+          observer.syncStatus?.(false)
           const { snapshot, cursor: rawCursor } = await port.read(target, signal)
           if (signal.aborted) return
           const initialCursor = parseOwnerEventCursor(rawCursor)
@@ -53,6 +54,7 @@ export function createOwnerConversationClient(
           while (!signal.aborted) {
             const exit = await consumeStream(port, request, signal, {
               onOpen(meta) {
+                observer.syncStatus?.(true)
                 if (isRecord(meta) && typeof meta.subscriptionId === 'string') {
                   subscriptionId = meta.subscriptionId
                 }
@@ -83,6 +85,7 @@ export function createOwnerConversationClient(
                 cursor = next
               },
             })
+            observer.syncStatus?.(false)
             if (exit === 'abort') return
             if (exit === 'reset') break
             if (!subscriptionId || lastResumeCursor === cursor) {
@@ -93,6 +96,7 @@ export function createOwnerConversationClient(
           }
         }
       } catch (error) {
+        observer.syncStatus?.(false)
         if (!signal.aborted) observer.transportError(error)
       }
     },

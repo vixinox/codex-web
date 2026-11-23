@@ -55,3 +55,13 @@ Owner 详细错误保持本地化操作提示，同时按文本显示原始 mess
 ## 开发场景工作台
 
 Vite 开发入口 `/__dev/ui` 使用合成 Conversation 数据并复用正式 reducer、展示投影和聊天 renderer。它共用 ThemeProvider、纯 WorkspaceLayout 与 Sidebar 基础组件，控制侧栏替换业务导航；不初始化 Owner 认证、runtime 或正式草稿存储。仅面向桌面，生产构建不包含入口与场景。主题选择共用正式偏好存储，回放、草稿和侧栏宽度保存在内存。
+
+## UI 主题
+
+内置主题采用开发期颜色生成，浏览器只消费静态语义色表；输入、生成策略、检查命令与验收边界见 [UI 主题生成](theme-generation.md)。
+
+## Composer Queue 与 Steer
+
+运行中发送默认进入当前线程单条内存 Queue，保存完整草稿、skills、代码卡片和发送配置；新输入不覆盖已有 Queue。队列经 `ComposerInput.leadingContent` 展示，与新对话 ProjectPicker 互斥。Edit 仅在草稿为空时恢复内容，Delete 删除，Steer 向绑定 active Turn 追加输入。
+
+仅当前线程已同步、无活动或待处理 Interaction，且绑定 Turn 正常完成后自动调用一次 `turn.start`。失败、停止和提交异常保留并暂停，Edit 取回重发；结果不确定不自动重试。切换线程保留但不后台调度；刷新、关闭或退出 Owner 清空。

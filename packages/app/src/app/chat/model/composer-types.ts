@@ -35,6 +35,12 @@ export type ComposerConfig = {
 }
 
 export type ComposerRuntime = {
+  queue?: {
+    text: string
+    status: 'queued' | 'sending' | 'paused'
+    error?: string
+    canSteer: boolean
+  }
   submitting: boolean
   working: boolean
   error: string | null
@@ -63,6 +69,9 @@ export type DraftEditorActions = {
 }
 
 export type ComposerActions = DraftEditorActions & {
+  steerQueued?: () => Promise<void>
+  deleteQueued?: () => void
+  editQueued?: () => void
   setModel: (value: ChatModel) => void
   setEffort: (value: ChatEffort) => void
   setCollaborationMode: (value: CollaborationMode) => void
@@ -73,6 +82,11 @@ export type ComposerActions = DraftEditorActions & {
 
 export type ThreadComposerSlotModel =
   | { kind: 'input'; composer: ComposerViewModel; plan?: ChatPlanPresentation }
-  | { kind: 'questionnaire'; request: ChatUserInputRequest; composer?: ComposerViewModel; pendingCount?: number }
+  | {
+      kind: 'questionnaire'
+      request: ChatUserInputRequest
+      composer?: ComposerViewModel
+      pendingCount?: number
+    }
   | { kind: 'final-plan'; plan: ChatPlanPresentation; composer: ComposerViewModel }
   | { kind: 'error'; message: string }

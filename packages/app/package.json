@@ -8,7 +8,9 @@
     "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "themes:generate": "node scripts/generate-themes.mjs",
+    "themes:check": "node scripts/generate-themes.mjs --check"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -41,6 +43,7 @@
     "valtio": "^2.3.2"
   },
   "devDependencies": {
+    "@adobe/leonardo-contrast-colors": "1.1.0",
     "@shikijs/core": "4.4.3",
     "@shikijs/engine-javascript": "4.4.3",
     "@shikijs/langs": "4.4.3",
@@ -49,6 +52,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "colorjs.io": "0.7.1",
     "jsdom": "^30.0.1",
     "shadcn": "4.21.0",
     "typescript": "7.0.2",

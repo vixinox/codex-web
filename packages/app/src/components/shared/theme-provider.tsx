@@ -14,7 +14,6 @@ import {
   THEME_VARIANTS_BY_ID,
 } from '@/lib/theme/registry'
 import {
-  LEGACY_THEME_STORAGE_KEY,
   parseStoredThemeSelection,
   serializeThemeSelection,
   THEME_STORAGE_KEY,
@@ -44,7 +43,6 @@ const COLOR_SCHEME_QUERY = '(prefers-color-scheme: dark)'
 function readSelection(): ThemeSelection {
   return parseStoredThemeSelection({
     storedValue: localStorage.getItem(THEME_STORAGE_KEY),
-    legacyStoredValue: localStorage.getItem(LEGACY_THEME_STORAGE_KEY),
     availableThemeIds: AVAILABLE_THEME_IDS,
     themeVariantsById: THEME_VARIANTS_BY_ID,
     defaultSelection: DEFAULT_THEME_SELECTION,
@@ -92,7 +90,7 @@ export function ThemeProvider({
 
   const setThemeForVariant = React.useCallback((variant: ThemeVariant, themeId: string) => {
     const nextTheme = getRegisteredTheme(themeId)
-    if (!nextTheme || nextTheme.source.variant !== variant) return
+    if (!nextTheme || nextTheme.variant !== variant) return
 
     setSelection((current) => ({
       ...current,
@@ -140,7 +138,7 @@ export function ThemeProvider({
     () => ({
       themeId: selectedTheme.id,
       mode: selection.mode,
-      resolvedVariant: selectedTheme.source.variant,
+      resolvedVariant: selectedTheme.variant,
       lightThemeId: selection.lightThemeId,
       darkThemeId: selection.darkThemeId,
       themes: THEME_REGISTRY,

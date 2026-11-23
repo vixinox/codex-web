@@ -1,4 +1,8 @@
-import type { ConversationChange, ConversationSnapshot, ConversationState } from '@codex-web/conversation'
+import type {
+  ConversationChange,
+  ConversationSnapshot,
+  ConversationState,
+} from '@codex-web/conversation'
 
 import type { ComposerHost, ComposerRuntimeAdapter } from './adapters/composer-adapter'
 import type { ComposerCapabilities } from '@/app/chat/composer/model/composer-capabilities'
@@ -58,6 +62,7 @@ export type ChatSessionModel =
 
 /** Stable controller result for loading, following, and answering a native Thread. */
 export type ChatSession = {
+  synchronized?: boolean
   model: ChatSessionModel
   eventError: string | null
   retry(): void
@@ -101,6 +106,7 @@ export type ComposerSession = {
 export type ThreadPageTarget = { projectId: string | null; threadId: string | null }
 
 export type ThreadComposerHost = {
+  queueContext?: ComposerHost['queueContext']
   target: ThreadPageTarget
   followTurn(turnId: string): void
   retry(): void

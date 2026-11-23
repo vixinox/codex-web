@@ -1,3 +1,4 @@
+import { CodexRpcRequestError } from '../codex/rpc-client.js'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -288,6 +289,13 @@ test('typed Conversation commands require Owner and thread authorization before 
             if (method === 'thread/read') return { thread: { id: params.threadId, cwd: root } }
             if (method === 'thread/list') return { data: [{ id: 'owned', cwd: root }] }
             mutations.push([method, params])
+            if (method === 'turn/steer') {
+              if (params.expectedTurnId === 'rejected')
+                throw new CodexRpcRequestError('Not steerable')
+              if (params.expectedTurnId === 'disconnected') throw new Error('Disconnected')
+              if (params.expectedTurnId === 'invalid-response') return { turnId: 'other' }
+              return { turnId: params.expectedTurnId }
+            }
             return { turn: { id: 'turn-1' } }
           },
         }),
@@ -370,6 +378,40 @@ test('typed Conversation commands require Owner and thread authorization before 
     accepted: true,
   })
   assert.deepEqual(mutations.at(-1), ['thread/compact/start', { threadId: 'owned' }])
+  const steer = {
+    type: 'turn.steer',
+    conversationId: 'owned',
+    expectedTurnId: 'turn-1',
+    input: [{ type: 'text', id: 'p', text: 'Continue differently' }],
+    skills: [],
+  }
+  await assert.rejects(send(steer, { ...context, owner: null }), {
+    code: 'owner.auth.unauthorized',
+  })
+  await assert.rejects(send({ ...steer, ...forbidden }), notFound)
+  await assert.rejects(send({ ...steer, expectedTurnId: '' }), {
+    code: 'owner.turn.invalid-request',
+  })
+  await assert.rejects(send({ ...steer, expectedTurnId: 'rejected' }), {
+    code: 'owner.turn.invalid-request',
+    retryable: false,
+  })
+  await assert.rejects(send({ ...steer, expectedTurnId: 'disconnected' }), {
+    code: 'owner.runtime.unavailable',
+    retryable: false,
+  })
+  await assert.rejects(send({ ...steer, expectedTurnId: 'invalid-response' }), {
+    code: 'owner.runtime.invalid-response',
+  })
+  assert.deepEqual(await send(steer), { turnId: 'turn-1' })
+  assert.deepEqual(mutations.at(-1), [
+    'turn/steer',
+    {
+      threadId: 'owned',
+      expectedTurnId: 'turn-1',
+      input: [{ type: 'text', text: 'Continue differently' }],
+    },
+  ])
 })
 
 test('lists root threads when the caller sends an explicit null project scope', async () => {

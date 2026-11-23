@@ -37,6 +37,11 @@ export type ThreadClient = {
     input: StartThreadInput,
     signal?: AbortSignal,
   ) => Promise<StartedTurn>
+  steerTurn?: (
+    threadId: string,
+    expectedTurnId: string,
+    input: Pick<StartThreadInput, 'text' | 'skills'>,
+  ) => Promise<StartedTurn>
   cancelTurn: (threadId: string, turnId: string) => Promise<void>
   compactThread: (threadId: string) => Promise<void>
   answerUserInput: (

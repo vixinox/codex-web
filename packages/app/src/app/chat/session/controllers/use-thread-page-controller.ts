@@ -1,3 +1,6 @@
+import * as React from 'react'
+import { composerStore } from '@/app/chat/composer/state/composer-store'
+import { composerScopeForTarget } from '@/app/chat/composer/state/composer-scope'
 import { useThreadDetailController } from './use-thread-detail-controller'
 import {
   useThreadComposerController,
@@ -57,12 +60,21 @@ export function useThreadPageController({
   capabilities,
 }: ThreadPageControllerOptions): ThreadPageSession {
   const isThread = target.threadId !== null
+  const handleLifecycle = React.useCallback(
+    (method: Parameters<ThreadLifecycleHandler>[0]) => {
+      const state = composerStore.scopes[composerScopeForTarget(userId, target)]
+      if (state && (method === 'thread/archived' || method === 'thread/deleted'))
+        delete state.queued
+      onThreadLifecycle?.(method)
+    },
+    [userId, target.projectId, target.threadId, onThreadLifecycle],
+  )
   const detail = useThreadDetailController(
     client,
     runtimeReady && isThread ? target.projectId : undefined,
     runtimeReady && isThread ? target.threadId : null,
     onUnavailable,
-    onThreadLifecycle,
+    handleLifecycle,
   )
   const detailSnapshot = useThreadSessionSnapshot(
     detail.model.status === 'ready' ? detail.model.session : null,
@@ -82,6 +94,29 @@ export function useThreadPageController({
     host: {
       target,
       activeTurnId: visiblePending?.activeNativeTurnId,
+      queueContext: {
+        healthy:
+          detail.model.status === 'ready' &&
+          Boolean(detail.synchronized) &&
+          !detail.eventError &&
+          runtimeReady,
+        blocked:
+          Boolean(mergedThread?.pendingInputCount) ||
+          Object.values(
+            detail.model.status === 'ready'
+              ? (detail.model.session.getConversation()?.interactions ?? {})
+              : {},
+          ).some((interaction) => interaction.status === 'pending'),
+        turns: mergedThread?.turns ?? [],
+        nonSteerable: Boolean(
+          detail.model.status === 'ready' &&
+          Object.values(detail.model.session.getConversation()?.activities ?? {}).some(
+            (activity) =>
+              activity.turnId === visiblePending?.activeNativeTurnId &&
+              ['contextCompaction', 'enteredReviewMode'].includes(activity.kind),
+          ),
+        ),
+      },
       followTurn: (_turnId) => detail.followTurn(),
       retry: () => detail.retry(),
       navigateToThread: onNavigateToThread,
@@ -120,7 +155,10 @@ export function useThreadPageController({
       : []
   const userInput = detail.model.status === 'ready' ? detailSnapshot.userInput : undefined
   const slot = buildThreadComposerSlot(composer.viewModel, turns, userInput)
-  const composerSlot = slot.kind === 'questionnaire' ? { ...slot, pendingCount: mergedThread?.pendingInputCount } : slot
+  const composerSlot =
+    slot.kind === 'questionnaire'
+      ? { ...slot, pendingCount: mergedThread?.pendingInputCount }
+      : slot
 
   return {
     model,

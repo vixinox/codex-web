@@ -227,15 +227,17 @@ export function ComposerControls({
         </Popover>
         <button
           type="button"
-          className="app-interactive inline-flex size-8 items-center justify-center rounded-full bg-app-send text-app-send-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          title={submitting ? 'Sending message' : working ? 'Stop' : 'Send message'}
-          aria-label={submitting ? 'Sending message' : working ? 'Stop' : 'Send message'}
-          onClick={working ? onStop : onSubmit}
+          className="app-solid-action inline-flex size-8 items-center justify-center rounded-full bg-app-send text-app-send-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          title={submitting ? 'Sending message' : working && !canSubmit ? 'Stop' : 'Send message'}
+          aria-label={
+            submitting ? 'Sending message' : working && !canSubmit ? 'Stop' : 'Send message'
+          }
+          onClick={working && !canSubmit ? onStop : onSubmit}
           disabled={disabled || submitting || (!working && !canSubmit)}
         >
           {submitting ? (
             <Spinner />
-          ) : working ? (
+          ) : working && !canSubmit ? (
             <SquareIcon className="size-3.5 fill-current" />
           ) : (
             <ArrowUpIcon strokeWidth="1.5" />

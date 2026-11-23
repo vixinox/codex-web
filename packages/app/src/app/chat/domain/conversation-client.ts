@@ -11,6 +11,7 @@ export type ConversationTarget = {
 }
 
 export type ConversationObserver = {
+  syncStatus?(ready: boolean): void
   replaceSnapshot(snapshot: ConversationSnapshot): void
   applyChange(change: ConversationChange): void
   transportError(error: unknown): void

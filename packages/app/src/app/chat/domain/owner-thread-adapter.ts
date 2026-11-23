@@ -45,6 +45,19 @@ export const ownerThreadDomainAdapter: ThreadClient = {
       mutation: true,
     })
   },
+  async steerTurn(threadId, expectedTurnId, input) {
+    return getOwnerBridge().request<StartedTurn>(
+      'conversation.command',
+      {
+        type: 'turn.steer',
+        conversationId: threadId,
+        expectedTurnId,
+        input: [{ type: 'text', id: 'user-text', text: input.text }],
+        skills: input.skills,
+      },
+      { mutation: true },
+    )
+  },
   async cancelTurn(threadId, turnId) {
     const command: ConversationCommand = {
       type: 'turn.cancel',

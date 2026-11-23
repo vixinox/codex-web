@@ -8,14 +8,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { RegisteredTheme, ThemeMode, ThemeVariant } from '@/lib/theme/theme'
+import {
+  resolveTheme,
+  type RegisteredTheme,
+  type ThemeMode,
+  type ThemeVariant,
+} from '@/lib/theme/theme'
 import { cn } from '@/lib/utils'
 import { SettingsSection, SettingsSectionContent } from './settings-page-layout'
 
 export function AppearanceSection() {
   const { darkThemeId, lightThemeId, mode, setMode, setThemeForVariant, themes } = useTheme()
-  const lightThemes = themes.filter((theme) => theme.source.variant === 'light')
-  const darkThemes = themes.filter((theme) => theme.source.variant === 'dark')
+  const lightThemes = themes.filter((theme) => theme.variant === 'light')
+  const darkThemes = themes.filter((theme) => theme.variant === 'dark')
 
   return (
     <SettingsSection title="Appearance">
@@ -228,15 +233,15 @@ function ThemePreview({ theme }: { theme: RegisteredTheme }) {
 }
 
 function ThemeSwatch({ theme }: { theme: RegisteredTheme }) {
-  const colors = theme.source.theme
+  const { cssVariables: colors } = resolveTheme(theme)
 
   return (
     <span
       className="grid size-8 shrink-0 place-items-center rounded-md border text-sm leading-none font-medium"
       style={{
-        backgroundColor: colors.surface,
-        borderColor: colors.ink,
-        color: colors.accent,
+        backgroundColor: colors['--app-surface'],
+        borderColor: colors['--app-border-strong'],
+        color: colors['--app-action-text'],
       }}
       aria-hidden="true"
     >

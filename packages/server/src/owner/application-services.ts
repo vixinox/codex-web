@@ -18,6 +18,7 @@ import type { OwnerContext, OwnerMethodContext, OwnerTransport } from './session
 import { createOwnerAuthDomain, WEBAUTHN_PROFILES, type WebAuthnProfiles } from './auth-domain.js'
 import { AuthDomainError } from './errors.js'
 import type { Database } from '../database.js'
+import { CodexRpcRequestError } from '../codex/rpc-client.js'
 import { log } from '../logger.js'
 
 const MAX_INITIAL_MESSAGE_LENGTH = 256_000
@@ -862,6 +863,8 @@ export function createOwnerApplicationServices(
             skills: input.skills,
           })
         }
+        case 'turn.steer':
+          return steerConversationTurn(context, { ...input, threadId })
         case 'turn.cancel':
           return cancelConversationTurn(context, { threadId, turnId: input.turnId })
         case 'conversation.compact':
@@ -1374,6 +1377,61 @@ export function createOwnerApplicationServices(
     } catch (error) {
       if (error instanceof OwnerMethodError) throw error
       throw new OwnerMethodError('CODEX_UNAVAILABLE', true, { cause: error })
+    }
+  }
+
+  async function steerConversationTurn(
+    context: OwnerMethodContext,
+    input: Record<string, unknown>,
+  ) {
+    const owner = requireOwner(context)
+    const part = Array.isArray(input.input) && input.input.length === 1 ? input.input[0] : undefined
+    const selection = parseSkills(input.skills)
+    if (
+      !safeId(input.threadId) ||
+      !safeId(input.expectedTurnId) ||
+      !isRecord(part) ||
+      part.type !== 'text' ||
+      !safeId(part.id) ||
+      typeof part.text !== 'string' ||
+      !part.text.trim() ||
+      part.text.length > MAX_INITIAL_MESSAGE_LENGTH ||
+      selection === null
+    )
+      throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    if (
+      options.requireDangerousAccessConfirmation &&
+      !dependencies.codex.getStatus?.(owner.ownerId)?.dangerousAccessConfirmed
+    )
+      throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    const access = await threadDomain.access({
+      userId: owner.ownerId,
+      threadId: input.threadId,
+      mode: 'mutation',
+    })
+    if (access.kind !== 'owned') throw mapThreadAccessFailure(access)
+    const skills = await resolveSelectedSkills(
+      access.client,
+      access.scope === 'project' ? access.cwd : dependencies.workspace.getUserRoot(owner.ownerId),
+      selection,
+    )
+    if (!skills) throw new OwnerMethodError('INVALID_TURN_REQUEST')
+    try {
+      const result = await access.client.request('turn/steer', {
+        threadId: input.threadId,
+        expectedTurnId: input.expectedTurnId,
+        input: turnInput(part.text, skills),
+      })
+      if (!isRecord(result) || result.turnId !== input.expectedTurnId)
+        throw new OwnerMethodError('CODEX_PROTOCOL_ERROR')
+      return { turnId: result.turnId }
+    } catch (error) {
+      if (error instanceof OwnerMethodError) throw error
+      throw new OwnerMethodError(
+        error instanceof CodexRpcRequestError ? 'INVALID_TURN_REQUEST' : 'CODEX_UNAVAILABLE',
+        false,
+        { cause: error },
+      )
     }
   }
 

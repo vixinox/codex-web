@@ -44,6 +44,12 @@ export type ComposerRuntimeAdapter = {
 
 export type ComposerHost = {
   target: ComposerSelectionTarget
+  queueContext?: {
+    healthy: boolean
+    blocked: boolean
+    turns: readonly { id: string; status: string }[]
+    nonSteerable: boolean
+  }
   activeTurnId?: string | null
   /**
    * Cancels the working Turn when the composition owns which Thread and Turn

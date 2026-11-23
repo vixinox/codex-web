@@ -49,7 +49,7 @@ export function CredentialRow({
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   return (
     <TableRow data-state={isPending ? 'pending' : undefined}>
-      <TableCell className={isPending ? 'bg-primary/5' : undefined}>
+      <TableCell className={isPending ? 'bg-interaction-selected' : undefined}>
         <label
           htmlFor={`offline-credential-${credential.id}`}
           className="flex min-w-44 cursor-pointer items-center gap-2"
@@ -58,18 +58,18 @@ export function CredentialRow({
           <span className="truncate font-medium">{credential.provider}</span>
         </label>
       </TableCell>
-      <TableCell className={isPending ? 'bg-primary/5' : undefined}>
+      <TableCell className={isPending ? 'bg-interaction-selected' : undefined}>
         <span className="block max-w-sm min-w-56 truncate text-muted-foreground">
           {credential.baseUrl}
         </span>
       </TableCell>
-      <TableCell className={isPending ? 'bg-primary/5' : undefined}>
+      <TableCell className={isPending ? 'bg-interaction-selected' : undefined}>
         <div className="flex min-w-28 flex-wrap items-center gap-1.5">
           {isCurrent ? <Badge>Current</Badge> : null}
           {isPending ? <Badge variant="outline">Pending switch</Badge> : null}
         </div>
       </TableCell>
-      <TableCell className={isPending ? 'bg-primary/5' : undefined}>
+      <TableCell className={isPending ? 'bg-interaction-selected' : undefined}>
         <div className="flex justify-end">
           <DropdownMenu>
             <DropdownMenuTrigger

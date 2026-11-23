@@ -404,7 +404,7 @@ export function ThreadItem({
                   size="sm"
                   disabled={archiving}
                   onClick={performAction}
-                  className="text-destructive-foreground bg-destructive"
+                  className="text-destructive-foreground bg-destructive-solid"
                 >
                   Archive
                 </Button>

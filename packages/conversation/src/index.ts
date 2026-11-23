@@ -284,6 +284,12 @@ export type ConversationChange =
 
 export type ConversationCommand =
   | { type: 'turn.start'; conversationId: ConversationId; input: MessagePart[] }
+  | {
+      type: 'turn.steer'
+      conversationId: ConversationId
+      expectedTurnId: TurnId
+      input: MessagePart[]
+    }
   | { type: 'turn.cancel'; conversationId: ConversationId; turnId: TurnId }
   | {
       type: 'interaction.respond'
