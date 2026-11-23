@@ -44,6 +44,20 @@ describe('streaming Markdown blocks', () => {
     })
   })
 
+  it('keeps committed block identities when a completed tail is flushed', () => {
+    const streaming = splitCompleteMarkdownBlocks(
+      'Intro\n\n```ts\nconst state = value\n```\n\nThen **finish**',
+    )
+    const completed = splitCompleteMarkdownBlocks(
+      'Intro\n\n```ts\nconst state = value\n```\n\nThen **finish**',
+      true,
+    )
+
+    expect(streaming.blocks.map(({ id }) => id)).toEqual(['markdown-0', 'markdown-1'])
+    expect(completed.blocks.map(({ id }) => id)).toEqual(['markdown-0', 'markdown-1', 'markdown-2'])
+    expect(completed.blocks.slice(0, 2)).toEqual(streaming.blocks)
+  })
+
   it('rebuilds from the latest text instead of appending stale deltas', () => {
     const first = splitCompleteMarkdownBlocks('First\n\nSecond')
     const replacement = splitCompleteMarkdownBlocks('Replacement')

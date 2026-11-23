@@ -246,6 +246,36 @@
   to { opacity: 1; }
 }
 
+@keyframes tool-call-title-enter {
+  from { mask-position: 100% 0; }
+  to { mask-position: 0% 0; }
+}
+
+.tool-call-title-pending { opacity: 0; }
+
+.tool-call-title-enter {
+  mask-image: linear-gradient(to right, #000 33.333%, transparent 66.667%);
+  mask-size: 300% 100%;
+  mask-repeat: no-repeat;
+  animation: tool-call-title-enter 240ms ease-out both;
+}
+
+.tool-call-children { position: relative; }
+.tool-call-children::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0.4375rem;
+  width: 1px;
+  background: var(--color-app-border);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-title-pending { opacity: 1; }
+  .tool-call-title-enter { animation: none; mask-image: none; }
+}
+
 .native-enter,
 .native-fade-enter,
 .native-fade-pulse,

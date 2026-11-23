@@ -53,7 +53,7 @@ export function ShikiCodeBlock({
       )}
     >
       <div className="flex min-h-8 w-full items-center justify-between bg-app-surface-raised py-1.5 pr-2 pl-4">
-        <p className="min-w-0 truncate font-mono text-sm text-app-text-muted select-none">
+        <p className="min-w-0 truncate font-mono text-xs text-app-text-muted select-none">
           {label ?? normalizedLanguage}
         </p>
         {copy ? (
@@ -61,7 +61,7 @@ export function ShikiCodeBlock({
             variant="ghost"
             size="icon"
             text={code}
-            className="h-7 w-7"
+            className="h-6 w-6"
             aria-label="Copy code"
             title="Copy code"
           />
@@ -69,15 +69,15 @@ export function ShikiCodeBlock({
       </div>
       <div
         className={cn(
-          'w-full scrollbar-thin scrollbar-thumb-app-border overflow-auto bg-app-surface-raised font-mono text-xs leading-6 text-app-text [&_pre]:bg-transparent [&_pre]:px-4 [&_pre]:pt-1 [&_pre]:whitespace-pre [&_pre]:text-inherit',
+          'w-full scrollbar-thin scrollbar-thumb-app-border overflow-auto bg-app-surface-raised font-mono text-xs leading-6 text-app-text [&_pre]:bg-transparent [&_pre]:px-4 [&_pre]:pb-2 [&_pre]:whitespace-pre [&_pre]:text-inherit',
           footer ? 'pb-8' : undefined,
           contentClassName,
         )}
         {...(highlightedCode?.key === highlightKey
           ? {
-              // Shiki generates this HTML from the code string; it is not user-authored HTML.
-              dangerouslySetInnerHTML: { __html: highlightedCode.html },
-            }
+            // Shiki generates this HTML from the code string; it is not user-authored HTML.
+            dangerouslySetInnerHTML: { __html: highlightedCode.html },
+          }
           : {})}
       >
         {highlightedCode?.key !== highlightKey ? (

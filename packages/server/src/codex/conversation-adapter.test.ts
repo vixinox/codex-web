@@ -167,6 +167,29 @@ test('maps streaming messages and pending interactions to typed changes', () => 
   }
 })
 
+test('preserves the complete upstream turn failure for the owner transcript', () => {
+  const [change] = adaptCodexNotification(
+    'turn/failed',
+    {
+      threadId: 'thread-1',
+      turn: {
+        id: 'turn-1',
+        status: 'failed',
+        error: {
+          message: 'Provider request failed',
+          codexErrorInfo: { type: 'HttpConnectionFailed', httpStatusCode: 502 },
+          additionalDetails: 'upstream body: temporary overload',
+        },
+      },
+    },
+    identity,
+  )
+  assert.ok(change?.type === 'turn.upserted')
+  assert.equal(change.turn.failure?.message, 'Provider request failed')
+  assert.match(change.turn.failure?.details ?? '', /temporary overload/u)
+  assert.match(change.turn.failure?.details ?? '', /httpStatusCode/u)
+})
+
 test('maps file approvals using only identifiers and supported decisions', () => {
   const params = {
     threadId: 'thread-1',

@@ -38,37 +38,37 @@ export function ThreadComposerSlot({
       ) : null}
       {slot.kind === 'input' && slot.plan ? <PlanPanel plan={slot.plan} /> : null}
       {slot.kind === 'questionnaire' ? (
-        <div><Questionnaire
-          key={`${String(slot.request.requestId)}:${slot.request.questions.map((question) => question.id).join('|')}`}
-          questions={slot.request.questions}
-          inputPlaceholder="Tell Codex what to do differently"
-          onSubmit={actions.answerUserInput}
-          onCancel={actions.cancelUserInput}
-          cancelLabel="Stop this turn"
-        />
-        {!slot.request.isBlocking && slot.composer ? <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} /> : null}</div>
-      ) : visibleFinalPlan && slot.kind === 'final-plan' ? (
-        <div className="px-2">
+        <div className="space-y-2">
           <Questionnaire
-            key={`final-plan:${planKey}`}
-            questions={[
-              {
-                id: 'plan-confirmation',
-                question: 'Implement this plan?',
-                options: [{ label: 'Yes, implement this plan', recommended: false }],
-              },
-            ]}
-            inputPlaceholder="No, and tell what to do differently"
-            onSubmit={async (answers: QuestionnaireAnswer) => {
-              const answer = answers['plan-confirmation']?.answers[0]?.trim()
-              if (!answer) return
-              if (actions.submitWithMode) await actions.submitWithMode(answer, 'default')
-              else await actions.submit(answer, [])
-            }}
-            onCancel={async () => setDismissedPlan(planKey)}
-            onSkip={async () => setDismissedPlan(planKey)}
+            key={`${String(slot.request.requestId)}:${slot.request.questions.map((question) => question.id).join('|')}`}
+            questions={slot.request.questions}
+            inputPlaceholder="Tell what to do differently"
+            onSubmit={actions.answerUserInput}
+            onCancel={actions.cancelUserInput}
+            cancelLabel="Stop this turn"
           />
+          {!slot.request.isBlocking && slot.composer ? <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} /> : null}
         </div>
+      ) : visibleFinalPlan && slot.kind === 'final-plan' ? (
+        <Questionnaire
+          key={`final-plan:${planKey}`}
+          questions={[
+            {
+              id: 'plan-confirmation',
+              question: 'Implement this plan?',
+              options: [{ label: 'Yes, implement this plan', recommended: false }],
+            },
+          ]}
+          inputPlaceholder="No, and tell what to do differently"
+          onSubmit={async (answers: QuestionnaireAnswer) => {
+            const answer = answers['plan-confirmation']?.answers[0]?.trim()
+            if (!answer) return
+            if (actions.submitWithMode) await actions.submitWithMode(answer, 'default')
+            else await actions.submit(answer, [])
+          }}
+          onCancel={async () => setDismissedPlan(planKey)}
+          onSkip={async () => setDismissedPlan(planKey)}
+        />
       ) : slot.kind === 'final-plan' ? (
         <ComposerInput viewModel={slot.composer} actions={actions} capabilities={capabilities} />
       ) : slot.kind === 'input' ? (

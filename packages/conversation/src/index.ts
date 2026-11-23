@@ -75,6 +75,7 @@ export type Turn = {
   startedAt?: string
   completedAt?: string
   failureCode?: string
+  failure?: { message: string; details?: string }
 }
 
 export type TurnPlan = {
@@ -227,7 +228,12 @@ export type ConversationChange =
       tokenUsage?: TokenUsage
     })
   | (ChangeBase & { type: 'turn.upserted'; turn: Turn })
-  | (ChangeBase & { type: 'turn.statusChanged'; turnId: TurnId; status: TurnStatus })
+  | (ChangeBase & {
+      type: 'turn.statusChanged'
+      turnId: TurnId
+      status: TurnStatus
+      failure?: { message: string; details?: string }
+    })
   | (ChangeBase & { type: 'turn.planUpdated'; turnId: TurnId; plan: TurnPlan })
   | (ChangeBase & { type: 'turn.diffUpdated'; turnId: TurnId; diff: string })
   | (ChangeBase & { type: 'message.upserted'; message: Message })
@@ -413,7 +419,11 @@ export function applyChange(
         (terminalTurnStatuses.has(current.status) && !terminalTurnStatuses.has(change.status))
       )
         break
-      next.turns[change.turnId] = { ...current, status: change.status }
+      next.turns[change.turnId] = {
+        ...current,
+        status: change.status,
+        ...(change.failure === undefined ? {} : { failure: change.failure }),
+      }
       break
     }
     case 'message.upserted': {

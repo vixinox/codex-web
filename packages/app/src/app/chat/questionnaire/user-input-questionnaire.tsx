@@ -15,13 +15,13 @@ export type QuestionnaireQuestion = {
   header?: string
   question: string
   options?:
-    | readonly {
-        value?: string
-        label: string
-        description?: string
-        recommended?: boolean
-      }[]
-    | null
+  | readonly {
+    value?: string
+    label: string
+    description?: string
+    recommended?: boolean
+  }[]
+  | null
   isSecret?: boolean
 }
 
@@ -230,163 +230,165 @@ export function Questionnaire({
   if (!activeQuestion || dismissed) return null
 
   return (
-    <form
-      className="flex w-full flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface-raised py-2 text-app-text shadow-[0_2px_12px_var(--app-shadow)]"
-      onSubmit={(event) => {
-        event.preventDefault()
-        submitCurrentInput()
-      }}
-    >
-      <div className="flex items-center justify-center gap-3 px-4 pt-4">
-        <h2 className="ml-4 min-w-0 flex-1 text-lg leading-snug font-semibold text-foreground">
-          {activeQuestion.question}
-        </h2>
-        <div className="flex items-center gap-1">
+    <div className="px-4 xl:px-2">
+      <form
+        className="flex w-full flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface-raised py-2 text-app-text shadow-[0_2px_12px_var(--app-shadow)]"
+        onSubmit={(event) => {
+          event.preventDefault()
+          submitCurrentInput()
+        }}
+      >
+        <div className="flex items-center justify-center gap-2 px-4 pt-2">
+          <h2 className="min-w-0 flex-1 leading-snug font-semibold text-foreground">
+            {activeQuestion.question}
+          </h2>
+          <div className="flex items-center">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Previous question"
+              className="shrink-0 rounded-full text-muted-foreground"
+              onClick={moveBackward}
+              disabled={submitting || transitioning || activeIndex === 0}
+            >
+              <ChevronLeft />
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              {activeIndex + 1} of {questions.length}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Next question"
+              className="shrink-0 rounded-full text-muted-foreground"
+              onClick={moveForward}
+              disabled={submitting || transitioning || activeIndex === questions.length - 1}
+            >
+              <ChevronRight />
+            </Button>
+          </div>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Previous question"
+            aria-label={cancelLabel}
+            title={cancelLabel}
             className="shrink-0 rounded-full text-muted-foreground"
-            onClick={moveBackward}
-            disabled={submitting || transitioning || activeIndex === 0}
+            onClick={() => void close()}
+            disabled={submitting}
           >
-            <ChevronLeft />
-          </Button>
-          <p className="text-sm text-muted-foreground">
-            {activeIndex + 1} of {questions.length}
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Next question"
-            className="shrink-0 rounded-full text-muted-foreground"
-            onClick={moveForward}
-            disabled={submitting || transitioning || activeIndex === questions.length - 1}
-          >
-            <ChevronRight />
+            <X />
           </Button>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={cancelLabel}
-          title={cancelLabel}
-          className="shrink-0 rounded-full text-muted-foreground"
-          onClick={() => void close()}
-          disabled={submitting}
-        >
-          <X />
-        </Button>
-      </div>
 
-      <div
-        className={cn(
-          'mt-4 flex flex-col gap-2 px-2 transition-opacity duration-200 ease-out motion-reduce:transition-none',
-          transitioning ? 'opacity-0' : 'opacity-100',
-        )}
-      >
-        {activeQuestion.options?.length ? (
-          <div
-            className="flex flex-col gap-2"
-            aria-label={activeQuestion.header ?? activeQuestion.question}
-          >
-            {activeQuestion.options.map((option, index) => {
-              const value = option.value ?? option.label
-              const recommended = option.recommended ?? index === 0
-              return (
+        <div
+          className={cn(
+            'flex flex-col px-2 transition-opacity duration-200 ease-out motion-reduce:transition-none',
+            transitioning ? 'opacity-0' : 'opacity-100',
+          )}
+        >
+          {activeQuestion.options?.length ? (
+            <div
+              className="mt-2 flex flex-col"
+              aria-label={activeQuestion.header ?? activeQuestion.question}
+            >
+              {activeQuestion.options.map((option, index) => {
+                const value = option.value ?? option.label
+                const recommended = option.recommended ?? index === 0
+                return (
+                  <Button
+                    key={value}
+                    type="button"
+                    variant="ghost"
+                    className="h-auto min-h-16 w-full cursor-pointer justify-start gap-4 rounded-lg px-4 py-1 text-left whitespace-normal"
+                    onClick={() => selectCurrentOption(value)}
+                    disabled={submitting || transitioning}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'flex size-8 shrink-0 items-center justify-center rounded-full border text-base',
+                        activeResponse?.selectedValue === value
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-app-border-strong text-app-text-muted',
+                      )}
+                    >
+                      {index + 1}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="leading-snug font-semibold text-foreground">
+                        {option.label}
+                        {recommended ? <span className="ml-2">(Recommended)</span> : null}
+                      </span>
+                      {option.description ? (
+                        <span className="leading-6 text-app-text-muted">
+                          {option.description}
+                        </span>
+                      ) : null}
+                    </span>
+                  </Button>
+                )
+              })}
+            </div>
+          ) : null}
+
+          <FieldGroup className="gap-0 px-2 pb-1">
+            <Field
+              orientation="horizontal"
+              className={cn(
+                'app-interactive-no-press flex cursor-pointer items-center gap-3 rounded-full border-2 px-2 py-2',
+                emptySubmitError
+                  ? 'border-destructive has-[input:focus]:border-destructive'
+                  : 'border-transparent has-[input:focus]:border-primary',
+                draft.trim() && !emptySubmitError ? 'border-primary' : null,
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className="flex size-8 shrink-0 items-center justify-center rounded-full border border-app-border-strong text-app-text-muted"
+              >
+                <Pencil className="size-4" />
+              </span>
+              <FieldLabel htmlFor={`questionnaire-${activeQuestion.id}`} className="sr-only">
+                {activeQuestion.question}
+              </FieldLabel>
+              <Input
+                id={`questionnaire-${activeQuestion.id}`}
+                type={activeQuestion.isSecret ? 'password' : 'text'}
+                value={draft}
+                onChange={(event) => {
+                  setResponses((current) => ({
+                    ...current,
+                    [activeQuestion.id]: {
+                      input: event.target.value,
+                      selectedValue: event.target.value
+                        ? undefined
+                        : current[activeQuestion.id]?.selectedValue,
+                    },
+                  }))
+                  setEmptySubmitError(false)
+                }}
+                placeholder={inputPlaceholder}
+                disabled={submitting || transitioning}
+                className="ml-1 h-8 border-0 bg-transparent! px-0 shadow-none focus-visible:border-0 focus-visible:ring-0"
+              />
+              {showSkip ? (
                 <Button
-                  key={value}
                   type="button"
-                  variant="ghost"
-                  className="h-auto min-h-16 w-full cursor-pointer justify-start gap-4 rounded-lg px-4 py-1 text-left whitespace-normal"
-                  onClick={() => selectCurrentOption(value)}
+                  variant="outline"
+                  className="rounded-full text-sm font-medium"
+                  onClick={skipCurrentQuestion}
                   disabled={submitting || transitioning}
                 >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-base',
-                      activeResponse?.selectedValue === value
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-app-border-strong text-app-text-muted',
-                    )}
-                  >
-                    {index + 1}
-                  </span>
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="text-base leading-snug font-semibold text-foreground">
-                      {option.label}
-                      {recommended ? <span className="ml-2">(Recommended)</span> : null}
-                    </span>
-                    {option.description ? (
-                      <span className="text-base leading-6 text-app-text-muted">
-                        {option.description}
-                      </span>
-                    ) : null}
-                  </span>
+                  Skip
                 </Button>
-              )
-            })}
-          </div>
-        ) : null}
-
-        <FieldGroup className="gap-0 px-2 pb-1">
-          <Field
-            orientation="horizontal"
-            className={cn(
-              'app-interactive-no-press flex cursor-pointer items-center gap-3 rounded-full border-2 px-2 py-2',
-              emptySubmitError
-                ? 'border-destructive has-[input:focus]:border-destructive'
-                : 'border-transparent has-[input:focus]:border-primary',
-              draft.trim() && !emptySubmitError ? 'border-primary' : null,
-            )}
-          >
-            <span
-              aria-hidden="true"
-              className="flex size-8 shrink-0 items-center justify-center rounded-full border border-app-border-strong text-app-text-muted"
-            >
-              <Pencil className="size-4" />
-            </span>
-            <FieldLabel htmlFor={`questionnaire-${activeQuestion.id}`} className="sr-only">
-              {activeQuestion.question}
-            </FieldLabel>
-            <Input
-              id={`questionnaire-${activeQuestion.id}`}
-              type={activeQuestion.isSecret ? 'password' : 'text'}
-              value={draft}
-              onChange={(event) => {
-                setResponses((current) => ({
-                  ...current,
-                  [activeQuestion.id]: {
-                    input: event.target.value,
-                    selectedValue: event.target.value
-                      ? undefined
-                      : current[activeQuestion.id]?.selectedValue,
-                  },
-                }))
-                setEmptySubmitError(false)
-              }}
-              placeholder={inputPlaceholder}
-              disabled={submitting || transitioning}
-              className="ml-1 h-8 border-0 bg-transparent! px-0 shadow-none focus-visible:border-0 focus-visible:ring-0"
-            />
-            {showSkip ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="rounded-full text-sm font-medium"
-                onClick={skipCurrentQuestion}
-                disabled={submitting || transitioning}
-              >
-                Skip
-              </Button>
-            ) : null}
-          </Field>
-        </FieldGroup>
-      </div>
-    </form>
+              ) : null}
+            </Field>
+          </FieldGroup>
+        </div>
+      </form>
+    </div>
   )
 }

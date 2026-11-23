@@ -17,16 +17,21 @@ import { formatDuration } from './formatting'
 import { fileName, redactAbsoluteDiffHeaderPaths, shortestUniquePathSuffixes } from './file-paths'
 import { ActivityIcon } from './activity-icon'
 import { TranscriptCollapsibleContent } from './transcript-collapsible'
+import { ToolCallAnimationContext, ToolCallTitle } from './tool-call-title'
 
 export function ThreadBlock({
   block,
   streaming = false,
   animate = false,
+  animatedMarkdownBlocks,
+  toolCallAnimation,
   onAssistantSettled,
 }: {
   block: ChatBlock
   streaming?: boolean
   animate?: boolean
+  animatedMarkdownBlocks?: Set<string>
+  toolCallAnimation?: React.ContextType<typeof ToolCallAnimationContext>
   onAssistantSettled?: () => void
 }) {
   if (block.type === 'assistant')
@@ -36,9 +41,18 @@ export function ThreadBlock({
           text={block.text}
           flush={!streaming}
           animate={animate}
+          animatedBlocks={animatedMarkdownBlocks}
           onSettled={onAssistantSettled}
         />
-        {block.parts?.filter((part) => part.type !== 'text').map((part) => <div key={part.id} className="text-xs text-app-text-muted">{part.type === 'structured' ? `Structured content (${part.mediaType})` : `${part.type}: ${part.resourceId}`}</div>)}
+        {block.parts
+          ?.filter((part) => part.type !== 'text')
+          .map((part) => (
+            <div key={part.id} className="text-xs text-app-text-muted">
+              {part.type === 'structured'
+                ? `Structured content (${part.mediaType})`
+                : `${part.type}: ${part.resourceId}`}
+            </div>
+          ))}
       </div>
     )
   if (block.type === 'article')
@@ -61,6 +75,14 @@ export function ThreadBlock({
         <UserContent content={block.content} />
       </div>
     )
+  return (
+    <ToolCallAnimationContext.Provider value={toolCallAnimation ?? null}>
+      <ActivityBlock block={block} />
+    </ToolCallAnimationContext.Provider>
+  )
+}
+
+function ActivityBlock({ block }: { block: Extract<ChatBlock, { type: 'activity' }> }) {
   if (block.kind === 'file') return <FileActivityBlock block={block} />
   if (block.activities.length > 1) return <ActivityBatch block={block} />
   return (
@@ -73,12 +95,7 @@ export function ThreadBlock({
 }
 
 function ActivityBatch({ block }: { block: Extract<ChatBlock, { type: 'activity' }> }) {
-  const hasRunningActivity = block.activities.some((item) => item.status === 'running')
   const [open, setOpen] = React.useState(false)
-  React.useEffect(() => {
-    if (!hasRunningActivity) return
-    queueMicrotask(() => setOpen(true))
-  }, [hasRunningActivity])
   const label =
     block.kind === 'command'
       ? 'Ran commands'
@@ -91,18 +108,21 @@ function ActivityBatch({ block }: { block: Extract<ChatBlock, { type: 'activity'
             : block.kind === 'tool'
               ? 'Called tools'
               : `${block.activities.length} activities`
+  const title = batchTitle(block, label)
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="min-w-0 text-xs">
         <CollapsibleTrigger className="group inline-flex min-h-6 max-w-full items-center gap-2 text-app-text-muted hover:text-foreground">
           <ActivityIcon kind={block.kind} />
-          <span className="truncate">{label}</span>
+          <ToolCallTitle key={title.id} id={title.id} running={title.running}>
+            {title.text}
+          </ToolCallTitle>
           <ChevronRightIcon
             className={`size-3.5 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           />
         </CollapsibleTrigger>
         <TranscriptCollapsibleContent>
-          <div className="min-h-0 overflow-hidden pl-5">
+          <div className="tool-call-children min-h-0 overflow-hidden pl-5">
             {block.activities.map((item) => (
               <ActivityRow key={item.id} item={item} />
             ))}
@@ -111,6 +131,23 @@ function ActivityBatch({ block }: { block: Extract<ChatBlock, { type: 'activity'
       </div>
     </Collapsible>
   )
+}
+
+function batchTitle(block: Extract<ChatBlock, { type: 'activity' }>, settledLabel: string) {
+  const latest = block.activities[block.activities.length - 1]
+  const running = block.activities.some((item) => item.status === 'running')
+  const latestFile = latest.changes?.at(-1)
+  const summary = latestFile
+    ? `${formatChangeKind(latestFile.kind)} ${fileName(latestFile.path)}`
+    : formatActivityLabel(
+        latest,
+        latest.command ? formatDisplayedCommand(latest.command) : undefined,
+      )
+  return {
+    id: `batch:${block.id}:${latest.id}:${running ? 'latest' : 'settled'}`,
+    text: running ? summary : settledLabel,
+    running,
+  }
 }
 
 export function UserContent({
@@ -127,7 +164,9 @@ export function UserContent({
           <span key={index} className="text-xs text-app-text-muted">
             {item.type === 'attachment'
               ? `${item.kind === 'image' ? 'Image' : 'Audio'}: ${item.label}`
-              : item.type === 'resource' ? item.label : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`}
+              : item.type === 'resource'
+                ? item.label
+                : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`}
           </span>
         ),
       )}
@@ -187,7 +226,9 @@ function ActivityRow({ item }: { item: ChatActivity }) {
           disabled={!details}
         >
           <ActivityIcon kind={item.kind} />
-          <span className="truncate">{label}</span>
+          <ToolCallTitle id={`activity:${item.id}`} running={item.status === 'running'}>
+            {label}
+          </ToolCallTitle>
           {details ? (
             <ChevronRightIcon
               className={`size-3.5 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
@@ -236,6 +277,7 @@ function FileActivityBlock({ block }: { block: Extract<ChatBlock, { type: 'activ
     (activity.changes ?? []).map((change, index) => ({
       id: `${activity.id}-${change.path}-${index}`,
       change,
+      running: activity.status === 'running',
     })),
   )
   const displayPaths = shortestUniquePathSuffixes(
@@ -244,9 +286,10 @@ function FileActivityBlock({ block }: { block: Extract<ChatBlock, { type: 'activ
       ...(change.movePath ? [change.movePath] : []),
     ]),
   )
-  const files = fileChanges.map(({ id, change }) => ({
+  const files = fileChanges.map(({ id, change, running }) => ({
     id,
     change,
+    running,
     displayPath: displayPaths.get(change.path) ?? fileName(change.path),
     displayMovePath: change.movePath
       ? (displayPaths.get(change.movePath) ?? fileName(change.movePath))
@@ -254,39 +297,50 @@ function FileActivityBlock({ block }: { block: Extract<ChatBlock, { type: 'activ
   }))
   const aggregatedDiffs = block.activities.flatMap((activity) =>
     activity.aggregatedDiff
-      ? [{ id: `${activity.id}-aggregated`, diff: activity.aggregatedDiff }]
+      ? [
+          {
+            id: `${activity.id}-aggregated`,
+            diff: activity.aggregatedDiff,
+            running: activity.status === 'running',
+          },
+        ]
       : [],
   )
   const childCount = files.length + aggregatedDiffs.length
   const children = childCount ? (
     <div className="flex min-w-0 flex-col">
-      {files.map(({ id, change, displayPath, displayMovePath }) => (
+      {files.map(({ id, change, running, displayPath, displayMovePath }) => (
         <FileChangeRow
           key={id}
+          id={id}
           change={change}
+          running={running}
           displayPath={displayPath}
           displayMovePath={displayMovePath}
         />
       ))}
-      {aggregatedDiffs.map(({ id, diff }) => (
-        <AggregatedDiffRow key={id} diff={diff} />
+      {aggregatedDiffs.map(({ id, diff, running }) => (
+        <AggregatedDiffRow key={id} id={id} diff={diff} running={running} />
       ))}
     </div>
   ) : null
-  const [open, setOpen] = React.useState(true)
+  const [open, setOpen] = React.useState(false)
+  const title = batchTitle(block, 'Changed files')
   return (
     <div className="min-w-0 text-xs">
       {childCount > 1 ? (
         <Collapsible open={open} onOpenChange={setOpen}>
           <CollapsibleTrigger className="group inline-flex min-h-6 max-w-full items-center gap-2 text-app-text-muted hover:text-foreground">
             <ActivityIcon kind="file" />
-            <span className="truncate">Changed files</span>
+            <ToolCallTitle key={title.id} id={title.id} running={title.running}>
+              {title.text}
+            </ToolCallTitle>
             <ChevronRightIcon
               className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`}
             />
           </CollapsibleTrigger>
           <TranscriptCollapsibleContent>
-            <div className="min-h-0 overflow-hidden pl-5">{children}</div>
+            <div className="tool-call-children min-h-0 overflow-hidden pl-5">{children}</div>
           </TranscriptCollapsibleContent>
         </Collapsible>
       ) : childCount === 1 ? (
@@ -303,11 +357,15 @@ function FileActivityBlock({ block }: { block: Extract<ChatBlock, { type: 'activ
 }
 
 function FileChangeRow({
+  id,
   change,
+  running,
   displayPath,
   displayMovePath,
 }: {
+  id: string
   change: NonNullable<ChatActivity['changes']>[number]
+  running: boolean
   displayPath: string
   displayMovePath?: string
 }) {
@@ -322,7 +380,9 @@ function FileChangeRow({
         disabled={!change.diff}
       >
         <PencilIcon className="size-3.5 shrink-0 text-app-text-muted" />
-        <span className="truncate">{label}</span>
+        <ToolCallTitle id={`file:${id}`} running={running}>
+          {label}
+        </ToolCallTitle>
         {statsLabel ? <span className="shrink-0 text-app-text-muted">{statsLabel}</span> : null}
         {change.diff ? (
           <ChevronRightIcon
@@ -346,13 +406,15 @@ function FileChangeRow({
   )
 }
 
-function AggregatedDiffRow({ diff }: { diff: string }) {
+function AggregatedDiffRow({ id, diff, running }: { id: string; diff: string; running: boolean }) {
   const [open, setOpen] = React.useState(false)
   const statsLabel = formatDiffStats(countDiffLines(diff))
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="group inline-flex min-h-6 max-w-full items-center gap-1.5 text-left text-app-text-muted hover:text-foreground">
-        <span className="truncate">Aggregated diff</span>
+        <ToolCallTitle id={`diff:${id}`} running={running}>
+          Aggregated diff
+        </ToolCallTitle>
         {statsLabel ? <span className="shrink-0 text-app-text-muted">{statsLabel}</span> : null}
         <ChevronRightIcon
           className={`size-3.5 shrink-0 transition-[opacity,transform] ${open ? 'rotate-90 opacity-100' : 'opacity-0 group-hover:opacity-100'}`}

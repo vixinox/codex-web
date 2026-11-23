@@ -111,30 +111,46 @@ function hasUnclosedFence(text: string) {
 const MarkdownBlockView = React.memo(function MarkdownBlockView({
   block,
   animate,
+  animatedBlocks,
   onComplete,
 }: {
   block: MarkdownBlock
   animate: boolean
+  animatedBlocks?: Set<string>
   onComplete?: () => void
 }) {
   const ref = React.useRef<HTMLDivElement>(null)
-  const animatedRef = React.useRef(false)
+  const animatedBlockIdRef = React.useRef<string | undefined>(undefined)
   const onCompleteRef = React.useRef(onComplete)
   onCompleteRef.current = onComplete
   React.useLayoutEffect(() => {
-    if (!animate || animatedRef.current) return undefined
+    if (!animate) return undefined
     const root = ref.current
     if (!root) return undefined
-    animatedRef.current = true
+    const alreadyStarted = animatedBlockIdRef.current === block.id
+    if (!alreadyStarted && animatedBlocks?.has(block.id)) {
+      onCompleteRef.current?.()
+      return undefined
+    }
+    if (alreadyStarted && !root.classList.contains('native-markdown-enter')) {
+      onCompleteRef.current?.()
+      return undefined
+    }
     transcriptDebug({ phase: 'animation', elementCount: 1, settled: false })
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!alreadyStarted && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      animatedBlockIdRef.current = block.id
+      animatedBlocks?.add(block.id)
       transcriptDebug({ phase: 'animation', elementCount: 1, settled: true })
       onCompleteRef.current?.()
       return undefined
     }
-    root.classList.remove('native-markdown-enter')
-    void root.offsetWidth
-    root.classList.add('native-markdown-enter')
+    if (!alreadyStarted) {
+      animatedBlockIdRef.current = block.id
+      animatedBlocks?.add(block.id)
+      root.classList.remove('native-markdown-enter')
+      void root.offsetWidth
+      root.classList.add('native-markdown-enter')
+    }
     const handleEnd = (event: AnimationEvent) => {
       if (event.animationName !== 'native-markdown-enter') return
       root.classList.remove('native-markdown-enter')
@@ -143,11 +159,9 @@ const MarkdownBlockView = React.memo(function MarkdownBlockView({
     }
     root.addEventListener('animationend', handleEnd)
     return () => {
-      animatedRef.current = false
       root.removeEventListener('animationend', handleEnd)
-      root.classList.remove('native-markdown-enter')
     }
-  }, [animate, block.id])
+  }, [animate, block.id, animatedBlocks])
 
   const content = <MessageContent text={normalizeEscapedStrongMarkers(block.text)} />
   return (
@@ -161,35 +175,43 @@ export function StreamingAssistant({
   text,
   flush = false,
   animate = true,
+  animatedBlocks,
   onSettled,
 }: {
   text: string
   flush?: boolean
   animate?: boolean
+  animatedBlocks?: Set<string>
   onSettled?: () => void
 }) {
   const split = React.useMemo(() => splitCompleteMarkdownBlocks(text, flush), [text, flush])
   const blocks = split.blocks
+  const pendingBlock =
+    split.pending.trim() && isCompleteMarkdownBlock(split.pending.trim())
+      ? { id: `markdown-${blocks.length}`, text: split.pending.trim() }
+      : undefined
+  const renderedBlocks = pendingBlock ? [...blocks, pendingBlock] : blocks
+  const renderedBlockCount = renderedBlocks.length
   const settledBlockIdsRef = React.useRef(new Set<string>())
   const settleBlock = React.useCallback(
     (blockId: string) => {
       if (settledBlockIdsRef.current.has(blockId)) return
       settledBlockIdsRef.current.add(blockId)
-      if (settledBlockIdsRef.current.size === blocks.length) onSettled?.()
+      if (settledBlockIdsRef.current.size === renderedBlockCount) onSettled?.()
     },
-    [blocks.length, onSettled],
+    [renderedBlockCount, onSettled],
   )
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      {blocks.map((block) => (
+      {renderedBlocks.map((block) => (
         <MarkdownBlockView
           key={block.id}
           block={block}
           animate={animate}
+          animatedBlocks={animatedBlocks}
           onComplete={animate ? () => settleBlock(block.id) : undefined}
         />
       ))}
-      {split.pending.trim() ? <MessageContent text={split.pending} markdown={false} /> : null}
     </div>
   )
 }

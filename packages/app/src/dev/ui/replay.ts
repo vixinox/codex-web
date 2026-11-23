@@ -2,15 +2,20 @@ import type { ConversationChange, ConversationSnapshot } from '@codex-web/conver
 import type { ChatPendingTurn } from '@/app/chat/model/types'
 import type { ThreadSession } from '@/app/chat/session/interface'
 
-export type ScenarioStep = { at: number } & (
+export type ScenarioStep = { at: number; afterAnswer?: string } & (
   | { kind: 'change'; change: ConversationChange }
   | { kind: 'snapshot'; snapshot: ConversationSnapshot }
   | { kind: 'error'; message: string }
   | { kind: 'pending'; pending: ChatPendingTurn | null }
 )
 export type Scenario = {
-  id: string; name: string; description: string; source: string
-  initial: ConversationSnapshot; steps: ScenarioStep[]; loading?: boolean
+  id: string
+  name: string
+  description: string
+  source: string
+  initial: ConversationSnapshot
+  steps: ScenarioStep[]
+  loading?: boolean
 }
 export function applyScenarioStep(session: ThreadSession, step: ScenarioStep) {
   if (step.kind === 'change') session.applyConversationChange(step.change)

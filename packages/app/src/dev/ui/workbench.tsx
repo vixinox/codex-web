@@ -120,7 +120,14 @@ function Scene({
 
   const visible = pending ? reconcilePendingThread(thread, pending) : thread
 
+  const answerToWaitFor = scenario.steps[index]?.afterAnswer
+  const waitingForAnswer = Boolean(
+    answerToWaitFor &&
+    session.getConversation()?.interactions[answerToWaitFor]?.status !== 'resolved',
+  )
+
   const next = React.useCallback(() => {
+    if (waitingForAnswer) return
     const step = scenario.steps[index]
 
     if (!step) {
@@ -135,10 +142,10 @@ function Scene({
     setIndex((value) => value + 1)
 
     if (index + 1 === scenario.steps.length) setPlaying(false)
-  }, [scenario, index, session])
+  }, [scenario, index, session, waitingForAnswer])
 
   React.useEffect(() => {
-    if (!playing) return
+    if (!playing || waitingForAnswer) return
 
     const delay = nextDelay(scenario.steps, index)
 
@@ -150,7 +157,7 @@ function Scene({
     const timer = window.setTimeout(next, delay)
 
     return () => window.clearTimeout(timer)
-  }, [playing, index, scenario, next])
+  }, [playing, index, scenario, next, waitingForAnswer])
 
   const reset = () => {
     setPlaying(false)
@@ -166,8 +173,8 @@ function Scene({
   const emit = (
     change: Parameters<typeof session.applyConversationChange>[0] extends infer C
       ? C extends { identity: unknown }
-      ? Omit<C, 'identity'>
-      : never
+        ? Omit<C, 'identity'>
+        : never
       : never,
   ) => {
     session.applyConversationChange({
@@ -201,7 +208,7 @@ function Scene({
     setCollaborationMode: (collaborationMode: 'default' | 'plan') =>
       setComposer((value) => ({ ...value, collaborationMode })),
 
-    retrySkills: () => { },
+    retrySkills: () => {},
     stop,
 
     submit: async (text: string) => {
@@ -327,7 +334,7 @@ function Scene({
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={playing || index === scenario.steps.length}
+                      disabled={playing || waitingForAnswer || index === scenario.steps.length}
                       onClick={next}
                     >
                       下一步
@@ -340,7 +347,9 @@ function Scene({
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    暂停仅停止投递，不冻结已开始的动画。
+                    {waitingForAnswer
+                      ? '等待提交当前问卷后继续投递。'
+                      : '暂停仅停止投递，不冻结已开始的动画。'}
                   </p>
                 </ControlSection>
               </>

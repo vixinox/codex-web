@@ -33,7 +33,7 @@ describe('getTurnWorkLabel', () => {
         }),
         3_500,
       ),
-    ).toBe('Compacting')
+    ).toBe('Context compacting')
   })
 
   it('uses terminal duration for completed and interrupted turns', () => {

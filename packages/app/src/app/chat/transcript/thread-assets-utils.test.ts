@@ -60,4 +60,22 @@ describe('visibleTurnContent', () => {
     expect(completed.trailingAssistantId).toBe('assistant-1')
     expect(completed.hasContent).toBe(true)
   })
+
+  it('keeps the assistant reply after resolved questionnaire summaries while streaming', () => {
+    const result = visibleTurnContent(
+      turn({
+        questionnaire: {
+          requestId: 'question-1',
+          status: 'answered',
+          questionCount: 1,
+          questions: [],
+        },
+        blocks: [{ id: 'assistant-1', type: 'assistant', text: 'The answer.' }],
+      }),
+      undefined,
+      undefined,
+    )
+
+    expect(result.trailingAssistantId).toBe('assistant-1')
+  })
 })

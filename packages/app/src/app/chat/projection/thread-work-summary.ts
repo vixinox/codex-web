@@ -12,7 +12,7 @@ export function getTurnWorkLabel(
       localCompacting ||
       turn.blocks.some((block) => block.type === 'article' && block.status === 'running')
     )
-      return 'Compacting'
+      return 'Context compacting'
     const startedAt = turn.startedAt ?? nowMs
     return `Working for ${formatDuration(Math.max(0, nowMs - startedAt))}`
   }

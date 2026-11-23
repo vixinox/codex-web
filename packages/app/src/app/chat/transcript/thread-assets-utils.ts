@@ -25,7 +25,7 @@ export function visibleTurnContent(
   const hasContent = Boolean(visibleBlocks.length || hasQuestionnaire || hasFinalPlan)
   const trailingBlock = visibleBlocks.at(-1)
   const trailingAssistantId =
-    !hasQuestionnaire && !hasFinalPlan && trailingBlock?.type === 'assistant'
+    !pendingQuestionnaire && !hasFinalPlan && trailingBlock?.type === 'assistant'
       ? trailingBlock.id
       : undefined
   const result = {
@@ -54,9 +54,7 @@ export function hasAssistantText(turn: ChatTurnPresentation) {
 
 export function withoutReasoningSummaryActivity(block: ChatBlock): ChatBlock | null {
   if (block.type !== 'activity') return block
-  const activities = block.activities.filter(
-    (activity) => activity.sourceType !== 'reasoning',
-  )
+  const activities = block.activities.filter((activity) => activity.sourceType !== 'reasoning')
   return activities.length ? { ...block, activities } : null
 }
 
@@ -85,9 +83,9 @@ export function formatUserContentForCopy(content: Extract<ChatBlock, { type: 'us
           ? `${item.kind === 'image' ? 'Image' : 'Audio'}: ${item.label}`
           : item.type === 'resource'
             ? item.label
-          : item.type === 'codeSnippet'
-            ? item.text || `${item.title} (${item.lineCount} lines)`
-            : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`,
+            : item.type === 'codeSnippet'
+              ? item.text || `${item.title} (${item.lineCount} lines)`
+              : `${item.kind === 'skill' ? 'Skill' : 'Mention'}: ${item.label}`,
     )
     .join('\n')
 }

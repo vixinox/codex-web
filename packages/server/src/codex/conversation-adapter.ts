@@ -491,12 +491,25 @@ function turnDetails(value: Record<string, unknown>) {
   const durationMs = nonnegativeInteger(value.durationMs)
   const plan = projectPlan(value.plan, value.planExplanation)
   const diff = contentText(value.diff)
+  const failure = projectTurnFailure(value.error)
   return {
     ...(startedAt ? { startedAt } : {}),
     ...(completedAt ? { completedAt } : {}),
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(plan ? { plan } : {}),
     ...(diff === undefined ? {} : { diff }),
+    ...(failure ? { failure } : {}),
+  }
+}
+
+function projectTurnFailure(value: unknown): { message: string; details?: string } | undefined {
+  if (!isRecord(value) || typeof value.message !== 'string' || !value.message) return undefined
+  const details = JSON.stringify(value, null, 2)
+  return {
+    message: value.message,
+    ...(details && details !== JSON.stringify({ message: value.message }, null, 2)
+      ? { details }
+      : {}),
   }
 }
 

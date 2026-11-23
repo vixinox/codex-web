@@ -37,7 +37,8 @@ type TurnCache = Map<string, { dependencies: unknown[]; value: ChatTurnPresentat
 
 export function createConversationProjector() {
   const cache: TurnCache = new Map()
-  return (state: ConversationSnapshot, projectId: string | null) => projectConversation(state, projectId, cache)
+  return (state: ConversationSnapshot, projectId: string | null) =>
+    projectConversation(state, projectId, cache)
 }
 
 export function projectConversation(
@@ -53,7 +54,9 @@ export function projectConversation(
   }
   const pendingInputs = Object.values(state.interactions)
     .filter((entry) => entry.status === 'pending' && entry.details?.kind === 'userInput')
-    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id))
+    .sort(
+      (a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id),
+    )
   const pending = pendingInputs[0]
   const userInput = pending && projectUserInput(pending)
   const turns = Object.values(state.turns).map((turn): ChatTurnPresentation => {
@@ -61,9 +64,24 @@ export function projectConversation(
     const activities = Object.values(state.activities).filter(
       (activity) => activity.turnId === turn.id,
     )
-    const dependencies = [turn, ...messages, ...activities, ...(interactions.get(turn.id) ?? []), ...Object.values(state.agentLinks).filter((link) => link.turnId === turn.id || activities.some((activity) => activity.id === link.activityId)), userInput?.turnId === turn.id ? pending : undefined]
+    const dependencies = [
+      turn,
+      ...messages,
+      ...activities,
+      ...(interactions.get(turn.id) ?? []),
+      ...Object.values(state.agentLinks).filter(
+        (link) =>
+          link.turnId === turn.id || activities.some((activity) => activity.id === link.activityId),
+      ),
+      userInput?.turnId === turn.id ? pending : undefined,
+    ]
     const cached = cache?.get(turn.id)
-    if (cached && dependencies.length === cached.dependencies.length && dependencies.every((value, index) => value === cached.dependencies[index])) return cached.value
+    if (
+      cached &&
+      dependencies.length === cached.dependencies.length &&
+      dependencies.every((value, index) => value === cached.dependencies[index])
+    )
+      return cached.value
     const byMessageId = new Map(messages.map((message) => [message.id, message]))
     const byActivityId = new Map(activities.map((activity) => [activity.id, activity]))
     const orderedMessages = [...new Set([...turn.messageIds, ...byMessageId.keys()])].flatMap(
@@ -99,9 +117,18 @@ export function projectConversation(
       const message = byMessageId.get(item.id)
       return message?.role === 'assistant' && message.phase === 'final_answer'
     })
-    const answer = final ?? (status !== 'inProgress'
-      ? [...order.values()].findLast((item) => item.type === 'message' && byMessageId.get(item.id)?.role === 'assistant' && byMessageId.get(item.id)?.parts.some((part) => part.type === 'text' && part.text.trim()))
-      : undefined)
+    const answer =
+      final ??
+      (status !== 'inProgress'
+        ? [...order.values()].findLast(
+            (item) =>
+              item.type === 'message' &&
+              byMessageId.get(item.id)?.role === 'assistant' &&
+              byMessageId
+                .get(item.id)
+                ?.parts.some((part) => part.type === 'text' && part.text.trim()),
+          )
+        : undefined)
     let planText: string | undefined
     for (const item of order.values()) {
       if (item.type === 'activity') {
@@ -146,7 +173,10 @@ export function projectConversation(
       .get(turn.id)
       ?.findLast((entry) => entry.status !== 'pending' && entry.details?.kind === 'userInput')
     const questionnaire = resolved && projectQuestionnaire(resolved)
-    const questionnaires = interactions.get(turn.id)?.filter((entry) => entry.status !== 'pending' && entry.details?.kind === 'userInput').flatMap((entry) => projectQuestionnaire(entry) ?? [])
+    const questionnaires = interactions
+      .get(turn.id)
+      ?.filter((entry) => entry.status !== 'pending' && entry.details?.kind === 'userInput')
+      .flatMap((entry) => projectQuestionnaire(entry) ?? [])
     const startedAt = timestamp(turn.startedAt)
     const completedAt = timestamp(turn.completedAt)
     const result: ChatTurnPresentation = {
@@ -159,7 +189,7 @@ export function projectConversation(
       ...(startedAt === undefined ? {} : { startedAt }),
       ...(completedAt === undefined ? {} : { completedAt }),
       ...(turn.durationMs === undefined ? {} : { durationMs: turn.durationMs }),
-      ...(status === 'failed' ? { error: { message: 'The turn failed.' } } : {}),
+      ...(status === 'failed' ? { error: turn.failure ?? { message: 'The turn failed.' } } : {}),
       ...(plan ? { plan } : {}),
       planPhase: derivePlanPhase({
         status,
@@ -204,9 +234,21 @@ function projectUserContent(message: Message): ChatUserContent[] {
   return message.parts.flatMap((part): ChatUserContent[] => {
     if (part.type === 'image' || part.type === 'audio')
       return [
-        { type: 'attachment', kind: part.type, label: part.type === 'image' ? 'Image' : 'Audio', part },
+        {
+          type: 'attachment',
+          kind: part.type,
+          label: part.type === 'image' ? 'Image' : 'Audio',
+          part,
+        },
       ]
-    if (part.type !== 'text') return [{ type: 'resource', label: part.type === 'file' ? (part.name ?? 'File') : 'Structured content', part }]
+    if (part.type !== 'text')
+      return [
+        {
+          type: 'resource',
+          label: part.type === 'file' ? (part.name ?? 'File') : 'Structured content',
+          part,
+        },
+      ]
     return parseMarkdownBlocks(part.text).flatMap((block): ChatUserContent[] => {
       if (block.kind === 'code' && shouldUseCard(block.text)) {
         const { text, title, lineCount, characterCount } = createAttachment(block.text)
@@ -262,7 +304,17 @@ function appendActivity(blocks: ChatBlock[], activity: Activity, state: Conversa
     ...(activity.durationMs === undefined ? {} : { durationMs: activity.durationMs }),
     ...(activity.changes?.length ? { changes: activity.changes } : {}),
     ...(activity.truncated ? { truncated: true } : {}),
-    ...(agentCount ? { agentLinks: Object.values(state.agentLinks).filter((link) => link.activityId === activity.id), meta: Object.values(state.agentLinks).filter((link) => link.activityId === activity.id).map((link) => `${link.task ?? link.childAgentId ?? link.id}: ${link.status}`).join(' · ') } : {}),
+    ...(agentCount
+      ? {
+          agentLinks: Object.values(state.agentLinks).filter(
+            (link) => link.activityId === activity.id,
+          ),
+          meta: Object.values(state.agentLinks)
+            .filter((link) => link.activityId === activity.id)
+            .map((link) => `${link.task ?? link.childAgentId ?? link.id}: ${link.status}`)
+            .join(' · '),
+        }
+      : {}),
   }
   pushActivity(blocks, projected)
 }
