@@ -8,7 +8,7 @@ Owner 控制使用经过认证的 Owner WebSocket protocol。所有 workspace、
 
 远程 admission 只有两类；Owner 本机/CLI 恢复属于本地管理入口，不是远程登录凭据：
 
-1. **设备 enrollment**：消费短期、单次 invitation，绑定当前浏览器生成的设备公钥，登记设备并创建第一个 session。
+1. **一次性链接登录（enrollment）**：消费短期、单次 invitation，验证浏览器设备公钥；首次登记设备，已登记公钥复用 deviceId，为本次登录创建 session。无需配置 Passkey。
 2. **remote Passkey**：针对已知 connection profile 建立候选连接，执行 challenge/verify，成功后签发该设备的 Owner session。
 
 在所有远程设备丢失时，Owner 本机或 CLI 生成新的 enrollment invitation；不提供远程 recovery code admission。
@@ -20,9 +20,9 @@ Owner 控制使用经过认证的 Owner WebSocket protocol。所有 workspace、
 设备邀请由 Owner 本机、CLI 或已认证的已配对设备生成。它必须具备以下行为：
 
 - 随机、短时、单次消费、可取消；
-- 消费时绑定新浏览器的设备公钥；
-- 成功消费后原子创建 remote device 和 session；
-- 替换、过期、取消、重放、Owner/Relay 重启和 trust reset 后失效；
+- 消费时绑定经过 E2EE 持有证明的浏览器设备公钥，不接受自报 deviceId；
+- 成功消费后登记或复用 remote device 并签发 session；失败清理本次授权，不撤销已有设备或其其他 session；
+- 替换、过期、取消、重放、Owner/Relay 重启和设备撤销后失效；
 - 不把 Relay URL、Owner code、fingerprint、session token、私钥或其他长期凭据放进用户可读 payload。
 
 邀请 URL/QR 是 deep link 的传输形式，不是普通登录表单字段。Relay 只根据短期 reference 路由到在线 Owner，Owner 才验证 invitation、设备公钥、trust epoch 和权限。
@@ -42,9 +42,11 @@ localhost 与远程 App origin 是独立的 WebAuthn profile：
 - Relay 只提供 transport，不改变 WebAuthn origin；
 - 本地 Passkey 只在 localhost 入口使用，remote Passkey 只在已知远程 connection profile 上使用。
 
+`owner.passkey.authentication.verify` 成功返回 `{ ownerId, token, expiresAt }`；登录入口校验 Owner 身份后保存 session，远程登录还须匹配已保存 profile 的 Owner。身份字段为必需，不以缺失身份的响应完成登录。
+
 ## 设备与恢复管理
 
-已认证管理方法覆盖设备列表、单设备撤销、撤销全部设备、撤销全部远程 session、trust reset、生成/取消 enrollment invitation 和 Passkey 配置。没有 remote Passkey 时，新增远程设备依赖当前有效的已配对设备 session 或 Owner 本机/CLI 恢复入口。
+已认证管理方法只覆盖设备列表、单设备/全部设备撤销、生成/查询/取消 enrollment invitation 和 Passkey 配置。owner.remoteSessions.revokeAll 与 remote.trust.reset 已删除，不提供别名。owner.security.status 增加 currentDeviceId: string | null；邀请状态仅表示有效/无效，有效邀请保留 reference/expiresAt。全部撤销只清理远程设备及关联 session，保留本地认证、Owner identity 与 trust epoch。没有 remote Passkey 时，新增远程设备依赖当前有效的已配对设备 session 或 Owner 本机/CLI 恢复入口。
 
 Owner code、普通 `remote.loginQr` management request 和 fingerprint 人工确认不属于新 API 契约。协议内部可以保留节点路由和 Owner public key 绑定，但不能把它们重新暴露为远程登录输入。
 
@@ -65,3 +67,9 @@ Owner 应用协议与 domain event 不维护版本号，前后端共同调整。
 ## Steer 与本地 Queue
 
 `conversation.command` 新增 `turn.steer`：`conversationId`、`expectedTurnId`、单条 text `input` 及可选 `skills`。Owner 校验线程归属和 skills 后直接调用 App Server `turn/steer`，不进入任务调度队列；返回 `{ turnId }`，必须匹配预期 Turn。请求拒绝为不可自动重试的 Turn 错误，传输失败或无效响应不能推断未执行。没有 Queue RPC。
+
+## 本机管理 CLI
+
+CLI 只通过本机 IPC 连接正在运行的 Owner。未运行时提示先执行 `pnpm server`，不会启动临时 runtime、接管数据库或连接 Relay。仅就绪探测可在五秒内重试；变更请求不自动重试。
+
+支持 `pnpm manage devices list`、`pnpm manage enrollment issue`、`pnpm manage devices revoke <device-id>`、`pnpm manage devices revoke-all`。enrollment issue 显示为“生成登录链接”；不提供 CLI/IPC enrollment cancel。撤销要求交互确认。链接由 Owner 持有，CLI 退出不取消；五分钟过期，生成新链接替换旧链接，Web 仍可取消当前链接。不再提供 auth status、auth sessions revoke-all、enrollment recover、trust reset 或对应 IPC 别名。

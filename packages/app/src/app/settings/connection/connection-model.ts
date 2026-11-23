@@ -1,13 +1,14 @@
-export type OwnerDevice = {
+export type RemoteDevice = {
   id: string
   createdAt: string
   lastSeenAt: string | null
 }
 
-export type OwnerManagementSnapshot = {
+export type ConnectionSnapshot = {
   remotePasskeyAvailable: boolean
   localPasskeyAvailable: boolean
-  devices: OwnerDevice[]
+  currentDeviceId: string | null
+  devices: RemoteDevice[]
 }
 
 export type EnrollmentInvitation = {
@@ -16,13 +17,9 @@ export type EnrollmentInvitation = {
 }
 
 export function parseEnrollmentInvitation(value: unknown): EnrollmentInvitation {
-  const source =
-    value && typeof value === 'object' && 'invitation' in value
-      ? (value as { invitation?: unknown }).invitation
-      : value
-  if (!source || typeof source !== 'object' || Array.isArray(source))
-    throw new Error('Invalid enrollment invitation response')
-  const invitation = source as Record<string, unknown>
+  const source = isRecord(value) && 'invitation' in value ? value.invitation : value
+  if (!isRecord(source)) throw new Error('Invalid enrollment invitation response')
+  const invitation = source
   if (
     Object.keys(invitation).some(
       (key) => !['reference', 'expiresAt', 'active', 'consumed', 'issuer'].includes(key),
@@ -39,24 +36,23 @@ export function parseEnrollmentInvitation(value: unknown): EnrollmentInvitation 
   }
 }
 
-export type OwnerManagementClient = {
-  getSnapshot(): Promise<OwnerManagementSnapshot>
+export type ConnectionClient = {
+  getSnapshot(): Promise<ConnectionSnapshot>
   registerPasskey(ticket?: string): Promise<void>
   issueLocalEnrollmentTicket(): Promise<{ ticket: string; origin: string; expiresAt: string }>
   revokeDevice(deviceId: string): Promise<void>
-  revokeAllSessions(): Promise<void>
   revokeAllDevices(): Promise<void>
-  resetTrust(): Promise<void>
   issueEnrollment(): Promise<EnrollmentInvitation>
   getEnrollmentStatus(): Promise<EnrollmentInvitation | null>
   cancelEnrollment(): Promise<boolean>
   close(): void
 }
 
-export function emptyOwnerManagementSnapshot(): OwnerManagementSnapshot {
+export function emptyConnectionSnapshot(): ConnectionSnapshot {
   return {
     remotePasskeyAvailable: false,
     localPasskeyAvailable: false,
+    currentDeviceId: null,
     devices: [],
   }
 }
@@ -65,4 +61,8 @@ export function formatDeviceDate(value: string | null) {
   if (!value) return 'Never'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString()
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

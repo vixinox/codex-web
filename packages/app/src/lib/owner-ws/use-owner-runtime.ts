@@ -11,12 +11,9 @@ import {
   type OwnerRuntimeController as SessionController,
 } from './runtime-controller'
 import { setOwnerBridge } from '@/lib/bridge/owner-runtime'
-import {
-  clearConnectionProfileSession,
-  loadConnectionProfile,
-  loadConnectionProfileSession,
-} from '@/lib/remote/device-key-store'
+import { loadConnectionProfile, loadConnectionProfileSession } from '@/lib/remote/device-key-store'
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
+import { AUTH_EXPIRED_EVENT } from '@/lib/auth/auth-expiry'
 import { presentAppError } from '@/lib/errors/presentation'
 
 export type OwnerRuntimeController = {
@@ -85,20 +82,27 @@ export function useOwnerRuntime(
       runtimeDisposalTimers.delete(runtime)
     }
     let active = true
+    let revocationHandled = false
     const connectionAbort = new AbortController()
     const unsubscribe = runtime.subscribe(() => {
       if (!active) return
       setSnapshot({ ...runtime.state })
+      if (runtime.state.authentication === 'revoked' && connectionProfileId && !revocationHandled) {
+        revocationHandled = true
+        window.dispatchEvent(
+          new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { profileId: connectionProfileId } }),
+        )
+        return
+      }
       if (runtime.state.transport === 'connected') setOwnerBridge(runtime)
-      if (runtime.state.transport === 'failed' && runtime.state.reconnectAttempt === 0) {
+      if (
+        runtime.state.transport === 'failed' &&
+        runtime.state.authentication !== 'revoked' &&
+        runtime.state.reconnectAttempt === 0
+      ) {
         setOwnerBridge(null)
         setConnectionRevision((revision) => revision + 1)
       }
-    })
-    const unsubscribeNotification = runtime.subscribeNotification((method) => {
-      if (!active || method !== 'remote.device.revoked') return
-      if (connectionProfileId)
-        void clearConnectionProfileSession(connectionProfileId).catch(() => undefined)
     })
     const connect = async () => {
       if (sessionToken) {
@@ -168,7 +172,6 @@ export function useOwnerRuntime(
       window.clearTimeout(connectTimer)
       connectionAbort.abort()
       unsubscribe()
-      unsubscribeNotification()
       setOwnerBridge(null)
       // StrictMode's development-only cleanup is followed immediately by another setup.
       // Defer destruction for one task so the replay can reuse the live controller.

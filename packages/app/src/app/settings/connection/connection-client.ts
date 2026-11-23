@@ -1,5 +1,5 @@
-import type { OwnerManagementClient, OwnerManagementSnapshot } from './owner-management-model'
-import { parseEnrollmentInvitation } from './owner-management-model'
+import type { ConnectionClient, ConnectionSnapshot } from './connection-model'
+import { parseEnrollmentInvitation } from './connection-model'
 import { authenticateWithPasskey } from '@/lib/remote/admission'
 
 type OwnerRpc = {
@@ -8,13 +8,13 @@ type OwnerRpc = {
   close(): void
 }
 
-function snapshot(value: unknown): OwnerManagementSnapshot {
-  if (!value || typeof value !== 'object') throw new Error('Invalid owner security response')
-  const body = value as Record<string, unknown>
+function snapshot(value: unknown): ConnectionSnapshot {
+  if (!isRecord(value)) throw new Error('Invalid owner security response')
+  const body = value
   const devices = Array.isArray(body.devices)
     ? body.devices.flatMap((deviceValue) => {
-        if (!deviceValue || typeof deviceValue !== 'object') return []
-        const device = deviceValue as Record<string, unknown>
+        if (!isRecord(deviceValue)) return []
+        const device = deviceValue
         if (typeof device.id !== 'string' || typeof device.createdAt !== 'string') return []
         if (!(device.lastSeenAt === null || typeof device.lastSeenAt === 'string')) return []
         return [{ id: device.id, createdAt: device.createdAt, lastSeenAt: device.lastSeenAt }]
@@ -23,11 +23,12 @@ function snapshot(value: unknown): OwnerManagementSnapshot {
   return {
     remotePasskeyAvailable: body.remotePasskeyAvailable === true,
     localPasskeyAvailable: body.localPasskeyAvailable === true,
+    currentDeviceId: typeof body.currentDeviceId === 'string' ? body.currentDeviceId : null,
     devices,
   }
 }
 
-export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClient {
+export function createConnectionClient(rpc: OwnerRpc): ConnectionClient {
   let remotePasskeyAvailable = false
   return {
     async getSnapshot() {
@@ -36,13 +37,10 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
       return value
     },
     async registerPasskey(ticket) {
-      const options = (await rpc.request(
-        'owner.passkey.registration.options',
-        ticket ? { ticket } : undefined,
-      )) as {
+      const options = await rpc.request<{
         challengeId?: unknown
         options?: PublicKeyCredentialCreationOptionsJSON
-      }
+      }>('owner.passkey.registration.options', ticket ? { ticket } : undefined)
       if (typeof options.challengeId !== 'string' || !options.options)
         throw new Error('Invalid Passkey registration options')
       const credential = await navigator.credentials.create({
@@ -57,8 +55,9 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
       })
     },
     async issueLocalEnrollmentTicket() {
-      const value = (await rpc.request('owner.localEnrollment.issue')) as Record<string, unknown>
+      const value = await rpc.request('owner.localEnrollment.issue')
       if (
+        !isRecord(value) ||
         typeof value.ticket !== 'string' ||
         typeof value.origin !== 'string' ||
         typeof value.expiresAt !== 'string'
@@ -69,14 +68,8 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
     async revokeDevice(deviceId) {
       await rpc.request('remote.devices.revoke', { deviceId })
     },
-    async revokeAllSessions() {
-      await rpc.request('owner.remoteSessions.revokeAll')
-    },
     async revokeAllDevices() {
       await rpc.request('remote.devices.revokeAll')
-    },
-    async resetTrust() {
-      await rpc.request('remote.trust.reset')
     },
     async issueEnrollment() {
       if (rpc.requirePasskeyStepUp && remotePasskeyAvailable) {
@@ -86,14 +79,15 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
       return parseEnrollmentInvitation(value)
     },
     async getEnrollmentStatus() {
-      const value = (await rpc.request('owner.enrollment.status')) as Record<string, unknown>
-      if (value.active === false) return null
-      if (value.active === true) return parseEnrollmentInvitation(value.invitation ?? value)
-      throw new Error('Invalid enrollment status response')
+      const status = await rpc.request('owner.enrollment.status')
+      if (!isRecord(status)) throw new Error('Invalid enrollment status')
+      if (status.active === false) return null
+      if (status.active === true) return parseEnrollmentInvitation(status)
+      throw new Error('Invalid enrollment status')
     },
     async cancelEnrollment() {
-      const value = (await rpc.request('owner.enrollment.cancel')) as Record<string, unknown>
-      if (typeof value.cancelled !== 'boolean')
+      const value = await rpc.request('owner.enrollment.cancel')
+      if (!isRecord(value) || typeof value.cancelled !== 'boolean')
         throw new Error('Invalid enrollment cancellation response')
       return value.cancelled
     },
@@ -104,7 +98,9 @@ export function createOwnerManagementClient(rpc: OwnerRpc): OwnerManagementClien
 }
 
 function registrationToJson(credential: PublicKeyCredential) {
-  const response = credential.response as AuthenticatorAttestationResponse
+  const response = credential.response
+  if (!(response instanceof AuthenticatorAttestationResponse))
+    throw new Error('Invalid Passkey registration response')
   return {
     id: credential.id,
     rawId: toBase64Url(new Uint8Array(credential.rawId)),
@@ -147,4 +143,8 @@ function toBase64Url(bytes: Uint8Array) {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

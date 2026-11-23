@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
-  emptyOwnerManagementSnapshot,
+  emptyConnectionSnapshot,
   formatDeviceDate,
   parseEnrollmentInvitation,
-} from './owner-management-model'
+} from './connection-model'
 
-describe('owner management model', () => {
+describe('connection model', () => {
   it('starts with an explicit empty safe state', () => {
-    expect(emptyOwnerManagementSnapshot()).toEqual({
+    expect(emptyConnectionSnapshot()).toEqual({
       remotePasskeyAvailable: false,
       localPasskeyAvailable: false,
+      currentDeviceId: null,
       devices: [],
     })
   })

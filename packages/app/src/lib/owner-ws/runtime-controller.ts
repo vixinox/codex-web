@@ -155,7 +155,20 @@ export function createOwnerRuntimeController(
   }
 
   const transportUnsubscribe = runtime.subscribe(() => {
+    if (runtime.authentication === 'revoked') {
+      explicitlyClosed = true
+      clearReconnect()
+      update({
+        transport: 'failed',
+        authentication: 'revoked',
+        runtime: 'blocked',
+        error: 'This device has been removed. Use a new sign-in link.',
+        reconnectAttempt: 0,
+      })
+      return
+    }
     if (runtime.state === 'connected') {
+      clearReconnect()
       reconnectAttempt = 0
       update({
         transport: 'connected',
@@ -187,6 +200,9 @@ export function createOwnerRuntimeController(
       return
     }
     if (runtime.state === 'disconnected' && !explicitlyClosed) {
+      // connect() closes its previous transport before opening the replacement.
+      // That transition belongs to the pending connect promise, not network recovery.
+      if (state.transport === 'connecting' || state.transport === 'reconnecting') return
       update({
         transport: target ? 'reconnecting' : 'disconnected',
         authentication: runtime.authentication,
@@ -236,6 +252,8 @@ export function createOwnerRuntimeController(
     },
     connect: (next) => connectTarget(next),
     retry: async () => {
+      if (state.authentication === 'revoked')
+        throw new OwnerConnectionError('This device has been removed.')
       if (disposed) throw new OwnerConnectionError('Owner runtime controller is closed.')
       if (!target) throw new OwnerConnectionError('Owner connection target is missing.')
       reconnectAttempt = 0

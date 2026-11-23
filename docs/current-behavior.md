@@ -1,24 +1,24 @@
 # Current behavior
 
-状态快照：2026-10-31。旧 Owner 远程访问验收基线来自 `1ea0e1c`；设备 enrollment 迁移已接入源码。本文描述工作区当前真实行为，不把未验证的流程写成已验收。
+状态快照：2026-11-23（Connection 管理收敛）；下方历史验收记录保留其当时范围。旧 Owner 远程访问验收基线来自 `1ea0e1c`；设备 enrollment 迁移已接入源码。本文描述工作区当前真实行为，不把未验证的流程写成已验收。
 
 ## 已实现的 Owner 和设备行为
 
 - Owner 是单一本地身份。认证代码仍通过 localhost 与 remote 两种 WebAuthn profile 管理 Passkey；本地入口只显示本地 Passkey，远程入口显示保存的 connection profile。
-- 未知浏览器使用 Owner 签发的五分钟、单次 enrollment reference。Owner 原子校验 invitation、当前 Owner/node/trust epoch 和 E2EE 浏览器公钥，再创建设备、配对凭据和首个 session。
+- 浏览器使用 Owner 签发的五分钟、单次 enrollment reference 登录。Owner 校验 invitation、当前 Owner/node/trust epoch 和 E2EE 浏览器公钥；首次创建设备，已登记公钥复用 deviceId，再签发配对凭据和新 session。Passkey 可选，同一浏览器重复链接登录不再重复登记。
 - invitation 可由 Owner 本机管理、CLI 或已认证配对设备签发。远程 Passkey 已配置时，配对设备签发前必须在当前 session 完成五分钟内的 Passkey step-up；Owner 本机和 CLI 保持全设备丢失后的恢复能力。
-- invitation 支持替换、状态查询和取消；成功消费、过期、Owner/Relay 重连失效、设备撤销和 trust reset 会清除有效 reference。Relay 只保存在线 reference 路由，不执行 Owner 授权。
+- invitation 支持替换、状态查询和取消；成功消费、过期、Owner/Relay 重连失效、设备撤销会清除有效 reference。Relay 只保存在线 reference 路由，不执行 Owner 授权。
 - Remote Relay 协议不再接受 Owner-code login candidate、first-session grant 或 bootstrap reference 旧分支。Owner code 只留作 Owner/Relay 内部在线节点冲突路由；Relay 不提供 HTTP 查询接口，Owner 管理/CLI 不提供显示或轮换操作。
 - Owner recovery-code 表、认证域、方法、CLI/IPC 命令和 UI 已删除。普通 management login QR 及其 capability store 已删除。
 - 浏览器使用独立、多条目的 IndexedDB connection profile。每个 profile 有独立的不可导出设备私钥、Owner public-key pin、node/Owner identity、配对 token、trust epoch 和 AES-GCM 加密 session。旧 `device-key` 表在 schema 升级时删除，不会自动迁移成可信 profile。
 - 远程登录支持逐 profile 连接、连接测试、logout 与移除。logout 只清当前 profile session；移除尝试通过当前 session 撤销设备，并始终清理本地 profile secrets。Passkey 只用于身份匹配的已知 profile 重新认证。
-- Profile 的 Owner key、node ID 或 trust epoch 不匹配时连接失败关闭；profile session 失效、撤销通知或本地解密失败只影响该 profile。
+- Profile 的 Owner key、node ID 或 trust epoch 不匹配时连接失败关闭；profile session 失效、可信 device_revoked 关闭或本地解密失败只影响该 profile。
 
 ## 仍需完成的验收
 
 - 自动化检查通过：服务端 118 项、协议 17 项、Relay 23 项、前端 252 项测试；全仓 TypeScript 类型检查和本任务目标 TypeScript 文件格式检查通过。
 - `pnpm lint` 未通过：本轮 lint 结果报告 warning 并返回非零；没有 error 诊断。warning 包含仓库已有代码和迁移触及代码，提交前应通过 `pnpm lint:staged` 对 staged delta 判断是否引入新 warning。
-- 尚未执行实际浏览器/Relay 手工验收：local 与 remote origin 分离、发出邀请、陌生浏览器一次兑换、paired session 恢复/Passkey step-up、profile test/logout/remove、取消/过期/replay、Owner/Relay restart、trust reset 和设备撤销。
+- 尚未执行实际浏览器/Relay 手工验收：local 与 remote origin 分离、发出邀请、陌生浏览器一次兑换、paired session 恢复/Passkey step-up、profile test/logout/remove、取消/过期/replay、Owner/Relay restart、全部/单设备撤销。
 - Enrollment UI 默认使用已配置的可信 Relay profile；本次不实现邀请自带自定义 Relay URL。
 
 ## 文档边界
@@ -40,3 +40,15 @@ Server 的 Conversation 事件链由 runtime adapter 转换为共享 Conversatio
 共享 Conversation 模型、Owner adapter/快照/事件存储与 App 状态消费已接入；前端 presentation 和 renderer 结构保留。内容安全出口、过滤专用缓冲和通用原生投影已删除，问答结果保留答案。Skills 使用稳定 name/path，执行前重新核对当前 cwd 的 enabled 技能；已认证业务错误返回原始 message 和显式字符串 details，公开方法与 Relay 错误合同保持原约束。认证、设备信任、目录归属、容量限制、持久化及 gap/reset 恢复继续保留；未操作真实数据库或 Codex Home。
 
 自动化检查通过：使用根 `pnpm test` 运行全部 workspace 测试，并通过全仓 `pnpm typecheck` 和触及 TypeScript 文件格式检查。提交前 staged lint 结果见 [05 实施记录](impl/conversation-model/05-owner-filter-removal-and-simplification.md)。浏览器只确认 localhost 登录页可达；登录后的聊天、历史、Skills、问答/审批和断线恢复仍待持有 Passkey 的用户验收，不改变设备 enrollment 的待验收状态。
+
+## Connection 管理收敛（2026-11-23）
+
+Settings → Connection 保留 Passkey 配置；设备管理只保留生成、查看、取消登录链接、移除单个/所有设备。Web/CLI 共用串行设备管理模块；邀请仅暴露有效/无效状态。移除同步清理设备/session/连接，全部移除不轮换 Owner identity、密钥或 trust epoch，不撤销本地 session。
+
+CLI 仅通过 IPC 连接运行中的 Owner，停机先执行 `pnpm server`；移除了临时 runtime、auth status、auth sessions revoke-all、enrollment recover、trust reset。保留 devices list、enrollment issue、devices revoke/revoke-all，撤销需交互确认。enrollment issue 显示“生成登录链接”；CLI/IPC 独立取消入口已删除，Web 保留取消。CLI 退出后链接仍由 Owner 持有。
+
+一次性登录复用当前 Relay 下最近使用的已配对浏览器 profile，保留密钥及 Owner identity pin；无记录才创建。既有重复记录不自动删除。链接登录失败不删除已有 profile 或撤销原设备；已移除设备须拿到新链接重新登记。没有有效 session、Passkey 或新链接时，设备密钥本身不构成登录授权。
+
+URL 登录直接复用既有登录页（保留 /app/enroll 链接地址），自动兑换并在同页显示错误/重试，已删除独立 EnrollmentRoute 页面。Relay 入站解密串行，原生 close 等待已收到消息交付，防止成功响应解密前 paired 收尾将其误判为 Owner 不可用；解密失败停止后续交付，延迟旧连接回调不影响新连接。
+
+前端目录迁到 app/settings/connection，明确撤销停止重连并清当前 profile session；普通断连不当作撤销成功。存储结构不变、未操作真实数据库。实施与实际验证结果以 [本轮规格](impl/connection-management/README.md) 为准；历史记录不构成本轮浏览器/Relay 验收。

@@ -95,10 +95,12 @@ export class OwnerConnector {
   private readonly connectedEnrollmentReferences = new Map<string, string>()
   private enrollmentReference?: { reference: string; expiresAt: number }
   private runtimeRegistry?: OwnerMethodRegistry
+  private authorizeDevice?: (deviceId: string) => Promise<boolean>
   private resumeSession?: NonNullable<
     ConstructorParameters<typeof OwnerSessionRuntime>[2]['resumeSession']
   >
   private inboundRelayMessages: Promise<void> = Promise.resolve()
+  private revocationRevision = 0
 
   private readonly config: ServerConfig
   readonly trust: RemoteTrustStore
@@ -191,14 +193,6 @@ export class OwnerConnector {
     })
   }
 
-  async resetRemoteTrust() {
-    await this.closeAllConnections('trust_reset')
-    const reset = await this.trust.reset()
-    await this.unregisterEnrollmentReference()
-    this.socket?.close?.(1000, 'trust_reset')
-    return reset
-  }
-
   async registerEnrollmentReference(reference: string, expiresAt: number) {
     this.enrollmentReference = { reference, expiresAt }
     if (this.connected)
@@ -231,7 +225,9 @@ export class OwnerConnector {
     resumeSession: NonNullable<
       ConstructorParameters<typeof OwnerSessionRuntime>[2]['resumeSession']
     >,
+    authorizeDevice?: (deviceId: string) => Promise<boolean>,
   ) {
+    this.authorizeDevice = authorizeDevice
     this.runtimeRegistry = registry
     this.resumeSession = resumeSession
   }
@@ -240,18 +236,29 @@ export class OwnerConnector {
     return this.trust.listPeers()
   }
 
-  async revokeDevice(deviceId: string) {
+  async revokeDevice(deviceId: string, reason = 'device_revoked') {
+    this.revocationRevision += 1
     const publicKey = await this.trust.revokePeer(deviceId)
-    if (!publicKey) return false
-    const revoked: string[] = []
-    for (const [connectionId, state] of this.connections) {
-      if (state.phase !== 'open' || state.session.publicKey !== publicKey) continue
-      revoked.push(connectionId)
-    }
-    await Promise.all(
-      revoked.map((connectionId) => this.closeConnection(connectionId, 'device_revoked')),
+    await this.disconnectDevice(deviceId, reason, publicKey ?? undefined)
+    return Boolean(publicKey)
+  }
+
+  async revokeAllDevices(reason = 'device_revoked') {
+    this.revocationRevision += 1
+    await this.trust.clearPeers()
+    await this.disconnectDevice(undefined, reason)
+  }
+
+  async disconnectDevice(deviceId?: string, reason = 'access_unavailable', publicKey?: string) {
+    const ids = [...this.connections].flatMap(([id, state]) =>
+      state.phase === 'open' &&
+      (!deviceId ||
+        state.session.deviceId === deviceId ||
+        (publicKey && state.session.publicKey === publicKey))
+        ? [id]
+        : [],
     )
-    return true
+    await Promise.all(ids.map((id) => this.closeConnection(id, reason)))
   }
 
   sendFrame(frame: string) {
@@ -466,6 +473,7 @@ export class OwnerConnector {
     connectionId: string,
     frame: Extract<ReturnType<typeof parseFrame>, { type: 'handshake' }>,
   ) {
+    const revocationRevision = this.revocationRevision
     const identity = await this.trust.identity()
     const attachedDeviceId = this.connectedClientIds.get(connectionId)
     const deviceId = await this.trust.deviceId(frame.clientPublicKey)
@@ -497,6 +505,18 @@ export class OwnerConnector {
       )
     } catch {
       this.teardownConnection(connectionId, 'handshake_failed')
+      return
+    }
+    if (
+      !enrollmentCandidate &&
+      ((await this.trust.deviceId(frame.clientPublicKey)) !== deviceId ||
+        (this.authorizeDevice && !(await this.authorizeDevice(deviceId!))))
+    ) {
+      this.teardownConnection(connectionId, 'unauthorized_client')
+      return
+    }
+    if (revocationRevision !== this.revocationRevision) {
+      this.teardownConnection(connectionId, 'unauthorized_client')
       return
     }
     if (this.connections.get(connectionId)?.phase !== 'handshaking') return
@@ -562,6 +582,15 @@ export class OwnerConnector {
       return
     }
     if (this.connections.get(connectionId)?.phase !== 'open') return
+    if (
+      !client.transport.enrollmentCandidate &&
+      this.authorizeDevice &&
+      !(await this.authorizeDevice(client.deviceId))
+    ) {
+      await this.closeConnection(connectionId, 'device_revoked')
+      return
+    }
+    if (this.connections.get(connectionId)?.phase !== 'open') return
     client.lastReceiveSequence = frame.sequence
     client.transport.receive(plaintext)
   }
@@ -598,16 +627,18 @@ export class OwnerConnector {
     if (state?.phase === 'open') state.session.closing = true
     // Notify the peer first so it can report a real reason, then drop the relay slot. The relay
     // close is what actually terminates the client socket.
-    await this.sendEncrypted(
-      connectionId,
-      encodeFrame({
-        type: 'connection.close',
-        version: RELAY_PROTOCOL_VERSION,
-        code,
-      } satisfies ConnectionCloseFrame),
-    )
-    this.sendClose(connectionId, code)
-    this.teardownConnection(connectionId, code, closeCode)
+    try {
+      await this.sendEncrypted(
+        connectionId,
+        encodeFrame({
+          type: 'connection.close',
+          version: RELAY_PROTOCOL_VERSION,
+          code,
+        } satisfies ConnectionCloseFrame),
+      )
+    } finally {
+      this.teardownConnection(connectionId, code, closeCode)
+    }
   }
 
   private teardownConnection(connectionId: string, reason?: string, closeCode = 1008) {

@@ -5,7 +5,7 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, isNotNull } from 'drizzle-orm'
 import type {
   AuthenticationResponseJSON,
   RegistrationResponseJSON,
@@ -101,7 +101,7 @@ export function createOwnerAuthDomain(
           userID: Buffer.from(ownerId),
           userName: 'Owner',
           userDisplayName: 'Owner',
-          challenge,
+          challenge: Buffer.from(challenge, 'base64url'),
           timeout: CHALLENGE_TTL_MS,
           authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
           excludeCredentials: credentials.map((credential) => ({
@@ -133,7 +133,7 @@ export function createOwnerAuthDomain(
               })),
             }
           : {}),
-        challenge,
+        challenge: Buffer.from(challenge, 'base64url'),
         timeout: CHALLENGE_TTL_MS,
         userVerification: 'required',
       }),
@@ -211,16 +211,18 @@ export function createOwnerAuthDomain(
         })
       const { credential } = result.registrationInfo
       db.transaction((tx) => {
-        tx.insert(passkeyCredential).values({
-          id: randomUUID(),
-          ownerId,
-          credentialId: credential.id,
-          publicKey: Buffer.from(credential.publicKey).toString('base64url'),
-          counter: credential.counter,
-          transports: response.response.transports ?? [],
-          origin: profile.origin,
-          rpId: profile.rpId,
-        })
+        tx.insert(passkeyCredential)
+          .values({
+            id: randomUUID(),
+            ownerId,
+            credentialId: credential.id,
+            publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+            counter: credential.counter,
+            transports: response.response.transports ?? [],
+            origin: profile.origin,
+            rpId: profile.rpId,
+          })
+          .run()
         tx.update(owner)
           .set({
             ...(challenge.profile === 'remote'
@@ -228,6 +230,7 @@ export function createOwnerAuthDomain(
               : { localPasskeyConfiguredAt: new Date(now()) }),
           })
           .where(eq(owner.id, ownerId))
+          .run()
       })
       return { registered: true }
     } catch (error) {
@@ -350,13 +353,6 @@ export function createOwnerAuthDomain(
         ),
       )
     if (!session) throw new AuthDomainError('SESSION_REVOKED')
-    if (!session.deviceId) {
-      await db
-        .update(ownerSession)
-        .set({ revokedAt: new Date(now()) })
-        .where(eq(ownerSession.id, session.id))
-      throw new AuthDomainError('SESSION_REVOKED')
-    }
     if (session.deviceId) {
       const [device] = await db
         .select({ id: remoteDevice.id })
@@ -418,7 +414,13 @@ export function createOwnerAuthDomain(
     const result = await db
       .update(ownerSession)
       .set({ revokedAt: new Date(now()) })
-      .where(and(eq(ownerSession.ownerId, ownerId), isNull(ownerSession.revokedAt)))
+      .where(
+        and(
+          eq(ownerSession.ownerId, ownerId),
+          isNotNull(ownerSession.deviceId),
+          isNull(ownerSession.revokedAt),
+        ),
+      )
       .returning({ id: ownerSession.id })
     return { revoked: result.length }
   }
@@ -561,9 +563,30 @@ export function createOwnerAuthDomain(
     authenticate,
     createSession,
     registerDevice,
+    async isDeviceAuthorized(deviceId: string) {
+      const [device] = await db
+        .select({ id: remoteDevice.id })
+        .from(remoteDevice)
+        .where(
+          and(
+            eq(remoteDevice.ownerId, ownerId),
+            eq(remoteDevice.id, deviceId),
+            isNull(remoteDevice.revokedAt),
+          ),
+        )
+        .limit(1)
+      return Boolean(device)
+    },
+    async listActiveDeviceIds() {
+      return (
+        await db
+          .select({ id: remoteDevice.id })
+          .from(remoteDevice)
+          .where(and(eq(remoteDevice.ownerId, ownerId), isNull(remoteDevice.revokedAt)))
+      ).map((device) => device.id)
+    },
     resume,
     logout,
-    revokeAllRemoteSessions,
     revokeDeviceSessions,
     markDeviceRevoked,
     revokeAllDevices,

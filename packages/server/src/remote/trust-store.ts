@@ -10,7 +10,6 @@ import {
 import { importPublicKey } from '@codex-web/protocol/relay/crypto'
 
 const STORE_NAME = 'remote-trust.json'
-const TRUST_CHALLENGE_TTL_MS = 60_000
 
 type RemotePeer = {
   id: string
@@ -31,7 +30,6 @@ export class RemoteTrustStore {
   private state?: TrustState
   private writeChain = Promise.resolve()
   private readonly dataRoot: string
-  private readonly trustChallenges = new Map<string, { publicKey: string; expiresAt: number }>()
 
   constructor(dataRoot: string) {
     this.dataRoot = dataRoot
@@ -75,23 +73,13 @@ export class RemoteTrustStore {
       createdAt: new Date().toISOString(),
       lastSeenAt: new Date().toISOString(),
     })
-    await this.persist()
+    try {
+      await this.persist()
+    } catch (error) {
+      state.peers = state.peers.filter((peer) => peer.id !== deviceId)
+      throw error
+    }
     return { deviceId, created: true }
-  }
-
-  issueTrustChallenge(_sessionId: string, publicKey: string) {
-    const challenge = randomToken(24)
-    this.trustChallenges.set(challenge, {
-      publicKey,
-      expiresAt: Date.now() + TRUST_CHALLENGE_TTL_MS,
-    })
-    return { challenge, expiresAt: new Date(Date.now() + TRUST_CHALLENGE_TTL_MS).toISOString() }
-  }
-
-  consumeTrustChallenge(challenge: string, _sessionId: string, publicKey: string) {
-    const entry = this.trustChallenges.get(challenge)
-    this.trustChallenges.delete(challenge)
-    return Boolean(entry && entry.publicKey === publicKey && entry.expiresAt > Date.now())
   }
 
   async isAuthorized(clientPublicKey: string) {
@@ -107,10 +95,20 @@ export class RemoteTrustStore {
   async revokePeer(id: string) {
     const state = await this.load()
     const peer = state.peers.find((candidate) => candidate.id === id)
-    if (!peer) return null
+    if (!peer) {
+      // Retry a previous failed removal write even if it already changed in-memory state.
+      await this.persist()
+      return null
+    }
     state.peers = state.peers.filter((candidate) => candidate.id !== id)
     await this.persist()
     return peer.publicKey
+  }
+
+  async clearPeers() {
+    const state = await this.load()
+    state.peers = []
+    await this.persist()
   }
 
   async deviceId(clientPublicKey: string) {
@@ -125,19 +123,6 @@ export class RemoteTrustStore {
     peer.lastSeenAt = new Date().toISOString()
     await this.persist()
     return true
-  }
-
-  async reset() {
-    const state = await this.load()
-    state.trustEpoch += 1
-    state.keyPair = await serializeKeyPair(await generateKeyPair())
-    state.peers = []
-    await this.persist()
-    return {
-      nodeId: state.nodeId,
-      trustEpoch: state.trustEpoch,
-      ownerPublicKey: state.keyPair.publicKey,
-    }
   }
 
   async identity() {
@@ -168,16 +153,18 @@ export class RemoteTrustStore {
   private async persist() {
     const state = this.state
     if (!state) throw new Error('Remote trust state is not loaded')
-    this.writeChain = this.writeChain.then(async () => {
-      await mkdir(this.dataRoot, { recursive: true })
-      const temporaryPath = `${this.path()}.tmp`
-      await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600,
+    this.writeChain = this.writeChain
+      .catch(() => undefined)
+      .then(async () => {
+        await mkdir(this.dataRoot, { recursive: true })
+        const temporaryPath = `${this.path()}.tmp`
+        await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, {
+          encoding: 'utf8',
+          mode: 0o600,
+        })
+        await rename(temporaryPath, this.path())
+        return undefined
       })
-      await rename(temporaryPath, this.path())
-      return undefined
-    })
     await this.writeChain
   }
 }

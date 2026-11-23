@@ -1,10 +1,10 @@
 import * as React from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { KeyRound, Loader2, LogOut, Plus, Radio, Trash2, Wifi } from 'lucide-react'
+import { KeyRound, Loader2, LogOut, Radio, Trash2, Wifi } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
-import { authenticateWithPasskey } from '@/lib/remote/admission'
+import { authenticateWithPasskey, redeemEnrollmentOnce } from '@/lib/remote/admission'
 import {
   clearConnectionProfileSession,
   listConnectionProfiles,
@@ -26,23 +26,69 @@ export function LoginScreen() {
   const [busy, setBusy] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [statuses, setStatuses] = React.useState<Record<string, string>>({})
-  const enrollmentReference = new URLSearchParams(location.search).get('ref')
+  const hasLoginLink =
+    location.pathname === '/app/enroll' || new URLSearchParams(location.search).has('ref')
+  const [loginAttempt, setLoginAttempt] = React.useState(0)
 
   const refreshProfiles = React.useCallback(async () => {
     setProfiles(await listConnectionProfiles())
   }, [])
 
   React.useEffect(() => {
-    if (isLocal) return
+    if (isLocal || hasLoginLink) return
     void refreshProfiles().catch((cause) =>
       setError(presentAppError(cause, 'Unable to read saved connections')),
     )
-  }, [isLocal, refreshProfiles])
+  }, [isLocal, hasLoginLink, refreshProfiles])
+
+  React.useEffect(() => {
+    if (!hasLoginLink) {
+      setError(null)
+      setBusy(null)
+      return undefined
+    }
+    let active = true
+    const params = new URLSearchParams(location.search)
+    const reference = params.get('ref')
+    setError(null)
+    if (
+      !reference ||
+      !/^[A-Za-z0-9_-]{16,256}$/u.test(reference) ||
+      [...params.keys()].some((key) => key !== 'ref')
+    ) {
+      setError('This login link is invalid. Generate a new link from the Owner.')
+      setBusy(null)
+      return undefined
+    }
+    setBusy('link')
+    void redeemEnrollmentOnce(reference)
+      .then(async (result) => {
+        if (!active) return undefined
+        sessionStorage.setItem('codex-web:active-connection-profile', result.profileId)
+        await navigate(`/app?connection=${encodeURIComponent(result.profileId)}`, {
+          replace: true,
+          state: { remoteOwnerId: result.ownerId, connectionProfileId: result.profileId },
+        })
+        return undefined
+      })
+      .catch((cause) => {
+        if (active)
+          setError(
+            presentAppError(cause, 'One-time login failed. Generate a new link or try again.'),
+          )
+      })
+      .finally(() => {
+        if (active) setBusy(null)
+      })
+    return () => {
+      active = false
+    }
+  }, [hasLoginLink, location.search, loginAttempt, navigate])
 
   const connectProfile = async (id: string, testOnly: boolean) => {
     const profile = await loadConnectionProfile(id)
     if (!profile?.deviceId || !profile.pairedClientToken || profile.trustEpoch === null)
-      throw new Error('This connection needs a new enrollment invitation.')
+      throw new Error('This connection needs a new Owner-issued login link.')
     const savedSession = await loadConnectionProfileSession(id)
     const socketTarget = {
       nodeId: profile.nodeId,
@@ -88,7 +134,7 @@ export function LoginScreen() {
         return
       }
       const session = await loadConnectionProfileSession(id)
-      if (!session) throw new Error('The saved session expired. Use a new enrollment invitation.')
+      if (!session) throw new Error('The saved session expired. Use a new Owner-issued login link.')
       await updateConnectionProfileLastConnected(id)
       sessionStorage.setItem('codex-web:active-connection-profile', id)
       await navigate(`/app?connection=${encodeURIComponent(id)}`, {
@@ -186,7 +232,22 @@ export function LoginScreen() {
             {error}
           </p>
         ) : null}
-        {isLocal ? (
+        {hasLoginLink ? (
+          <div className="flex flex-col gap-3">
+            {busy === 'link' || !error ? (
+              <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> Signing in…
+              </p>
+            ) : (
+              <div className="flex gap-2">
+                <Button onClick={() => setLoginAttempt((attempt) => attempt + 1)}>Try again</Button>
+                <Button variant="ghost" onClick={() => void navigate('/login', { replace: true })}>
+                  Back to login
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : isLocal ? (
           <Card>
             <CardContent className="space-y-4 p-5">
               <p className="text-sm text-muted-foreground">
@@ -203,24 +264,6 @@ export function LoginScreen() {
                   <KeyRound className="size-4" />
                 )}
                 Use local Passkey
-              </Button>
-            </CardContent>
-          </Card>
-        ) : enrollmentReference ? (
-          <Card>
-            <CardContent className="space-y-3 p-5">
-              <h2 className="font-medium">Adding this browser</h2>
-              <p className="text-sm text-muted-foreground">
-                The Owner-issued invitation will register this browser and save a remote connection.
-              </p>
-              <Button
-                onClick={() =>
-                  void navigate(`/app/enroll?ref=${encodeURIComponent(enrollmentReference)}`, {
-                    replace: true,
-                  })
-                }
-              >
-                <Plus className="size-4" /> Continue enrollment
               </Button>
             </CardContent>
           </Card>
@@ -304,7 +347,7 @@ export function LoginScreen() {
                     </div>
                     {!profile.hasSession ? (
                       <p className="w-full text-xs text-muted-foreground">
-                        Session unavailable. Use a new enrollment invitation.
+                        Use a Passkey or a new Owner-issued login link to sign in again.
                       </p>
                     ) : null}
                   </CardContent>
@@ -314,7 +357,7 @@ export function LoginScreen() {
               <div className="border-y py-8 text-center">
                 <p className="font-medium">No saved connections</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Open an enrollment link issued by the Owner.
+                  Open a one-time login link issued by the Owner.
                 </p>
               </div>
             )}

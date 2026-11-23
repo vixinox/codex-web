@@ -12,6 +12,8 @@ test('exposes Owner security status to authenticated remote sessions', () => {
   assert.equal(registry.get('owner.enrollment.cancel')?.access, 'authenticated')
   assert.equal(registry.get('owner.enrollment.redeem')?.access, 'public')
   for (const retired of [
+    'owner.remoteSessions.revokeAll',
+    'remote.trust.reset',
     'threads.send',
     'threads.cancel',
     'threads.compact',

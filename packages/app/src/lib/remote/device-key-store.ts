@@ -87,7 +87,7 @@ function openDatabase(): Promise<KeyDatabase> {
 export async function createConnectionProfileDraft(input: {
   label: string
   relayUrl: string
-}): Promise<{ id: string; publicKey: string; privateKey: CryptoKey }> {
+}): Promise<ConnectionProfileRecord> {
   const pair = await generatePersistentDeviceKeyPair()
   const id = crypto.randomUUID()
   const record: ConnectionProfileRecord = {
@@ -108,7 +108,18 @@ export async function createConnectionProfileDraft(input: {
     lastConnectedAt: null,
   }
   await putConnectionProfile(record)
-  return { id, publicKey: record.publicKey, privateKey: record.privateKey }
+  return record
+}
+
+/** A login grant renews the most recent connection to this single Owner. */
+export async function prepareConnectionProfileEnrollment(relayUrl: string) {
+  const profiles = (await getAllConnectionProfiles())
+    .filter(isConnectionProfileRecord)
+    .filter((profile) => profile.relayUrl === relayUrl && isProfilePaired(profile))
+    .sort((a, b) =>
+      (b.lastConnectedAt ?? b.createdAt).localeCompare(a.lastConnectedAt ?? a.createdAt),
+    )
+  return profiles[0] ?? createConnectionProfileDraft({ label: 'Owner connection', relayUrl })
 }
 
 export async function completeConnectionProfile(input: {
@@ -125,6 +136,14 @@ export async function completeConnectionProfile(input: {
 }): Promise<ConnectionProfileSummary> {
   const profile = await loadConnectionProfile(input.id)
   if (!profile) throw new Error('Connection profile is missing')
+  if (
+    isProfilePaired(profile) &&
+    (profile.nodeId !== input.nodeId ||
+      profile.ownerId !== input.ownerId ||
+      profile.ownerPublicKey !== input.ownerPublicKey ||
+      profile.trustEpoch !== input.trustEpoch)
+  )
+    throw new Error('Owner identity does not match the saved connection.')
   if (
     !input.nodeId ||
     !input.ownerId ||

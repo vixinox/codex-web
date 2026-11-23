@@ -12,7 +12,7 @@ import { summarizeSkill, skillsForCwd, turnInput } from '../skills.js'
 import { parseSkills, resolveSelectedSkills } from './skill-selection.js'
 import type { WorkspaceService } from '../workspace.js'
 import type { OwnerConnector } from '../remote/connector.js'
-import { EnrollmentInvitationStore } from '../remote/enrollment-invitation-store.js'
+import { createDeviceManagement } from './device-management.js'
 import { OwnerMethodError } from './errors.js'
 import type { OwnerContext, OwnerMethodContext, OwnerTransport } from './session-runtime.js'
 import { createOwnerAuthDomain, WEBAUTHN_PROFILES, type WebAuthnProfiles } from './auth-domain.js'
@@ -110,49 +110,12 @@ export function createOwnerApplicationServices(
           } satisfies WebAuthnProfiles,
         )
       : undefined
-  const enrollmentInvitations = new EnrollmentInvitationStore()
-  let activeEnrollmentReference: string | undefined
-  let enrollmentTimer: ReturnType<typeof setTimeout> | undefined
-  async function issueEnrollmentInvitation(
-    issuer: 'owner-local' | 'cli' | 'paired-device',
-    issuerDeviceId?: string,
-  ) {
-    if (
-      !dependencies.remote ||
-      !options.remoteRelayUrl ||
-      !dependencies.ownerId ||
-      !dependencies.remote.isConnected()
-    )
-      throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
-    const identity = await dependencies.remote.trust.identity()
-    await dependencies.remote.unregisterEnrollmentReference(activeEnrollmentReference)
-    activeEnrollmentReference = undefined
-    if (enrollmentTimer) clearTimeout(enrollmentTimer)
-    const issued = enrollmentInvitations.issue({
-      ownerId: dependencies.ownerId,
-      nodeId: identity.nodeId,
-      trustEpoch: identity.trustEpoch,
-      issuer,
-      ...(issuerDeviceId ? { issuerDeviceId } : {}),
-    })
-    activeEnrollmentReference = issued.reference
-    await dependencies.remote.registerEnrollmentReference(issued.reference, issued.expiresAt)
-    enrollmentTimer = setTimeout(
-      () => {
-        if (activeEnrollmentReference !== issued.reference) return
-        enrollmentInvitations.invalidate()
-        activeEnrollmentReference = undefined
-        void dependencies.remote?.unregisterEnrollmentReference(issued.reference)
-      },
-      Math.max(0, issued.expiresAt - Date.now()),
-    )
-    return {
-      reference: issued.reference,
-      expiresAt: new Date(issued.expiresAt).toISOString(),
-      issuer,
-      appOrigin: options.appOrigin ?? WEBAUTHN_PROFILES.remote.origin,
-    }
-  }
+  const devices = createDeviceManagement(
+    dependencies.remote,
+    authDomain,
+    dependencies.ownerId,
+    options.appOrigin ?? WEBAUTHN_PROFILES.remote.origin,
+  )
   const threadDomain = createThreadDomain({
     workspace: dependencies.workspace,
     codex: dependencies.codex,
@@ -253,7 +216,11 @@ export function createOwnerApplicationServices(
           sessionToken: session.token,
           stepUpAt: Date.now(),
         })
-        return { token: session.token, expiresAt: session.expiresAt }
+        return {
+          ownerId: dependencies.ownerId!,
+          token: session.token,
+          expiresAt: session.expiresAt,
+        }
       } catch (error) {
         throw new OwnerMethodError(
           error instanceof Error ? error.message : 'PASSKEY_INVALID',
@@ -264,71 +231,7 @@ export function createOwnerApplicationServices(
     },
 
     async enrollmentRedeem(context: OwnerMethodContext, input: Record<string, unknown>) {
-      if (
-        context.transport.kind !== 'relay' ||
-        !context.transport.enrollmentCandidate ||
-        context.transport.e2eeVerified !== true ||
-        !context.transport.clientPublicKey
-      )
-        throw new OwnerMethodError('AUTH_FAILURE')
-      const reference = context.transport.enrollmentReference
-      if (
-        !reference ||
-        input.reference !== reference ||
-        Object.keys(input).some((key) => key !== 'reference') ||
-        !dependencies.remote ||
-        !authDomain
-      )
-        throw new OwnerMethodError('INVALID_PARAMS')
-      const identity = await dependencies.remote.trust.identity()
-      const ownerId = dependencies.ownerId
-      if (!ownerId) throw new OwnerMethodError('AUTH_UNAVAILABLE')
-      if (
-        !enrollmentInvitations.consume(reference, {
-          ownerId,
-          nodeId: identity.nodeId,
-          trustEpoch: identity.trustEpoch,
-          clientPublicKey: context.transport.clientPublicKey,
-        })
-      ) {
-        throw new OwnerMethodError('RESOURCE_NOT_FOUND')
-      }
-      await dependencies.remote.unregisterEnrollmentReference(reference)
-      activeEnrollmentReference = undefined
-      if (enrollmentTimer) clearTimeout(enrollmentTimer)
-      enrollmentTimer = undefined
-      const trusted = await dependencies.remote.trust.trustPeerWithStatus(
-        context.transport.clientPublicKey,
-      )
-      if (!trusted.created) {
-        throw new OwnerMethodError('RESOURCE_NOT_FOUND')
-      }
-      try {
-        await authDomain.registerDevice(trusted.deviceId, context.transport.clientPublicKey)
-        const session = await authDomain.createSession(trusted.deviceId)
-        const clientToken = await dependencies.remote.createPairedClientToken(trusted.deviceId)
-        const currentIdentity = await dependencies.remote.trust.identity()
-        await context.authenticate({
-          ownerId,
-          sessionId: session.sessionId,
-          sessionToken: session.token,
-        })
-        context.transport.promote?.(trusted.deviceId, clientToken)
-        return {
-          ownerId,
-          nodeId: currentIdentity.nodeId,
-          ownerPublicKey: currentIdentity.ownerPublicKey,
-          sessionToken: session.token,
-          expiresAt: session.expiresAt,
-          deviceId: trusted.deviceId,
-          clientToken,
-          trustEpoch: currentIdentity.trustEpoch,
-        }
-      } catch {
-        await dependencies.remote.revokeDevice(trusted.deviceId).catch(() => false)
-        await authDomain.markDeviceRevoked(trusted.deviceId).catch(() => undefined)
-        throw new OwnerMethodError('INTERNAL_ERROR', true)
-      }
+      return devices.redeem(context, input)
     },
 
     async localEnrollmentTicketIssue(_context: OwnerMethodContext) {
@@ -336,62 +239,23 @@ export function createOwnerApplicationServices(
       return authDomain.issueLocalEnrollmentTicket()
     },
 
-    async remoteSessionsRevokeAll(context: OwnerMethodContext) {
-      requireOwner(context)
-      if (!authDomain) throw new OwnerMethodError('AUTH_UNAVAILABLE')
-      return authDomain.revokeAllRemoteSessions()
-    },
-
     async enrollmentIssue(context: OwnerMethodContext) {
       const owner = requireOwner(context)
       const issuer = context.transport.kind === 'local' ? 'owner-local' : 'paired-device'
       if (issuer === 'paired-device' && authDomain && (await authDomain.hasPasskey('remote'))) {
-        const stepUpAt = owner.stepUpAt
-        if (!stepUpAt || Date.now() - stepUpAt > 5 * 60_000)
+        if (!owner.stepUpAt || Date.now() - owner.stepUpAt > 5 * 60_000)
           throw new OwnerMethodError('STEP_UP_REQUIRED')
       }
-      if (!owner.ownerId) throw new OwnerMethodError('UNAUTHORIZED')
-      return issueEnrollmentInvitation(issuer, owner.transport.pairedDeviceId)
+      const { reference, expiresAt } = await devices.issue(issuer, owner.transport.pairedDeviceId)
+      return { reference, expiresAt }
     },
-
     async enrollmentStatus(context: OwnerMethodContext) {
       requireOwner(context)
-      const status = enrollmentInvitations.status()
-      if (
-        !status ||
-        !activeEnrollmentReference ||
-        !dependencies.remote?.hasEnrollmentReference(activeEnrollmentReference)
-      ) {
-        enrollmentInvitations.invalidate()
-        activeEnrollmentReference = undefined
-        return { active: false }
-      }
-      return {
-        active: true,
-        reference: activeEnrollmentReference,
-        expiresAt: new Date(status.expiresAt).toISOString(),
-        consumed: status.consumed,
-        issuer: status.issuer,
-      }
+      return devices.status()
     },
-
     async enrollmentCancel(context: OwnerMethodContext) {
-      requireOwner(context)
-      const cancelled = enrollmentInvitations.cancel()
-      await dependencies.remote?.unregisterEnrollmentReference(activeEnrollmentReference)
-      activeEnrollmentReference = undefined
-      if (enrollmentTimer) clearTimeout(enrollmentTimer)
-      enrollmentTimer = undefined
-      return { cancelled }
-    },
-
-    async enrollmentInvalidate() {
-      enrollmentInvitations.invalidate()
-      await dependencies.remote?.unregisterEnrollmentReference(activeEnrollmentReference)
-      activeEnrollmentReference = undefined
-      if (enrollmentTimer) clearTimeout(enrollmentTimer)
-      enrollmentTimer = undefined
-      return { invalidated: true }
+      const owner = requireOwner(context)
+      return devices.cancel(owner.transport.pairedDeviceId)
     },
 
     async resumeSession(token: string, transport: OwnerTransport) {
@@ -1172,132 +1036,51 @@ export function createOwnerApplicationServices(
       }
     },
 
-    async remoteTrustReset(context: OwnerMethodContext) {
-      requireOwner(context)
-      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
-      try {
-        await services.enrollmentInvalidate()
-        const result = await dependencies.remote.resetRemoteTrust()
-        await authDomain?.revokeAllRemoteSessions()
-        return result
-      } catch (error) {
-        throw new OwnerMethodError('REMOTE_UNAVAILABLE', true, { cause: error })
-      }
-    },
-
     async remoteDevices(context: OwnerMethodContext) {
       requireOwner(context)
-      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
-      const devices = await dependencies.remote.listDevices()
-      return devices.map(({ id, createdAt, lastSeenAt }) => ({ id, createdAt, lastSeenAt }))
+      return devices.listDevices()
     },
-
     async remoteDeviceRevoke(context: OwnerMethodContext, input: Record<string, unknown>) {
-      requireOwner(context)
+      const owner = requireOwner(context)
       if (!safeId(input.deviceId)) throw new OwnerMethodError('INVALID_PARAMS')
-      if (!dependencies.remote) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
-      await services.enrollmentInvalidate()
-      const revoked = await dependencies.remote.revokeDevice(input.deviceId)
-      if (!revoked) throw new OwnerMethodError('DEVICE_NOT_FOUND')
-      await authDomain?.markDeviceRevoked(input.deviceId)
-      return { revoked: true }
+      return devices.revokeDevice(input.deviceId, owner.transport.pairedDeviceId)
     },
-
     async remoteDevicesRevokeAll(context: OwnerMethodContext) {
-      requireOwner(context)
-      if (!authDomain || !dependencies.remote)
-        throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
-      await services.enrollmentInvalidate()
-      const devices = await dependencies.remote.listDevices()
-      // Revoke sequentially to preserve device/session invalidation ordering.
-      // eslint-disable-next-line no-await-in-loop
-      for (const device of devices) await dependencies.remote.revokeDevice(device.id)
-      await authDomain.revokeAllDevices()
-      return { revoked: devices.length }
+      const owner = requireOwner(context)
+      return devices.revokeAllDevices(owner.transport.pairedDeviceId)
     },
 
     async ownerSecurityStatus(context: OwnerMethodContext) {
       requireOwner(context)
-      const devices = dependencies.remote
-        ? (await dependencies.remote.listDevices()).map(({ id, createdAt, lastSeenAt }) => ({
-            id,
-            createdAt,
-            lastSeenAt,
-          }))
-        : []
+      const registeredDevices = await devices.listDevices()
       const remotePasskeyAvailable = authDomain ? await authDomain.hasPasskey('remote') : false
       const localPasskeyAvailable = authDomain ? await authDomain.hasPasskey('local') : false
       return {
         remotePasskeyAvailable,
         localPasskeyAvailable,
         initialized: true,
-        devices,
+        devices: registeredDevices,
+        currentDeviceId: context.transport.pairedDeviceId ?? null,
       }
     },
   }
 
   return {
     ...services,
-    localManagement: createLocalManagementServices(dependencies),
-    async startupEnrollmentPayload() {
-      return undefined
-    },
+    localManagement: createLocalManagementServices(),
+    isDeviceAuthorized: (deviceId: string) =>
+      authDomain?.isDeviceAuthorized(deviceId) ?? Promise.resolve(false),
   }
 
-  function createLocalManagementServices(deps: OwnerApplicationServiceDependencies) {
+  function createLocalManagementServices() {
     return {
-      async authStatus() {
-        return {
-          initialized: true,
-          remotePasskeyAvailable: authDomain ? await authDomain.hasPasskey('remote') : false,
-          localPasskeyAvailable: authDomain ? await authDomain.hasPasskey('local') : false,
-        }
+      enrollmentIssue: () => devices.issue('cli'),
+      listDevices: () => devices.listDevices(),
+      revokeDevice(deviceId: string) {
+        if (!safeId(deviceId)) throw new OwnerMethodError('INVALID_PARAMS')
+        return devices.revokeDevice(deviceId)
       },
-      async enrollmentIssue() {
-        return issueEnrollmentInvitation('cli')
-      },
-      async enrollmentRecover() {
-        if (!deps.remote || !authDomain || !deps.ownerId) throw new Error('REMOTE_UNAVAILABLE')
-        await authDomain.revokeAllRemoteSessions()
-        const reset = await deps.remote.resetRemoteTrust()
-        enrollmentInvitations.invalidate()
-        activeEnrollmentReference = undefined
-        if (enrollmentTimer) clearTimeout(enrollmentTimer)
-        enrollmentTimer = undefined
-        await deps.remote.waitUntilConnected()
-        return { ...(await issueEnrollmentInvitation('cli')), reset }
-      },
-      async revokeAllSessions() {
-        if (!authDomain) return { revoked: 0 }
-        return authDomain.revokeAllRemoteSessions()
-      },
-      async listDevices() {
-        return deps.remote ? deps.remote.listDevices() : []
-      },
-      async revokeDevice(deviceId: string) {
-        if (!safeId(deviceId)) throw new Error('INVALID_DEVICE_ID')
-        if (!deps.remote || !(await deps.remote.revokeDevice(deviceId)))
-          throw new Error('DEVICE_NOT_FOUND')
-        await services.enrollmentInvalidate()
-        await authDomain?.markDeviceRevoked(deviceId)
-        return { revoked: true }
-      },
-      async revokeAllDevices() {
-        if (!deps.remote) return { revoked: 0 }
-        await services.enrollmentInvalidate()
-        const devices = await deps.remote.listDevices()
-        // Revoke sequentially to preserve device/session invalidation ordering.
-        // eslint-disable-next-line no-await-in-loop
-        for (const device of devices) await deps.remote.revokeDevice(device.id)
-        return authDomain ? authDomain.revokeAllDevices() : { revoked: devices.length }
-      },
-      async trustReset() {
-        if (!deps.remote) throw new Error('REMOTE_UNAVAILABLE')
-        await services.enrollmentInvalidate()
-        const reset = await deps.remote.resetRemoteTrust()
-        await authDomain?.revokeAllDevices()
-        return reset
-      },
+      revokeAllDevices: () => devices.revokeAllDevices(),
     }
   }
 

@@ -2,7 +2,7 @@ import 'dotenv/config'
 
 import process from 'node:process'
 import { log } from '@clack/prompts'
-import { createAdaptiveOwnerCliRuntime } from '../src/owner/cli-runtime.js'
+import { connectOwnerCli } from '../src/owner/cli-client.js'
 import {
   parseOwnerCliInvocation,
   runOwnerCliCommand,
@@ -25,17 +25,13 @@ async function main() {
     return
   }
 
-  const createRuntime = async (command: Parameters<typeof runOwnerCliCommand>[0]) =>
-    createAdaptiveOwnerCliRuntime(loadServerConfig(), command)
+  const connectClient = () => connectOwnerCli(loadServerConfig())
 
   if (invocation.mode === 'menu') {
     await runOwnerCliMenu({
-      createRuntime,
+      connectClient,
       selectAction: () => selectOwnerCliMenuAction(),
       selectDevice: (devices) => selectOwnerCliDevice(devices),
-      async listDevices(services) {
-        return services.localManagement.listDevices()
-      },
       runCommand: runOwnerCliCommand,
       reportInfo(message) {
         log.info(message, { output: process.stdout })
@@ -51,12 +47,8 @@ async function main() {
 
   const command = invocation.command
   try {
-    const runtime = await createRuntime(command)
-    try {
-      await runOwnerCliCommand(command, runtime.services)
-    } finally {
-      await runtime.close()
-    }
+    const client = await connectClient()
+    await runOwnerCliCommand(command, client)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Owner management command failed'
     process.stderr.write(`${message}\n`)

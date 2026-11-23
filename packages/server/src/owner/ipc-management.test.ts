@@ -13,14 +13,10 @@ test('Owner IPC management allowlist matches the fixed local command surface', a
   }
   const services = {
     localManagement: {
-      authStatus: invoke('auth.status'),
       enrollmentIssue: invoke('enrollment.issue'),
-      enrollmentRecover: invoke('enrollment.recover'),
-      revokeAllSessions: invoke('sessions.revoke-all'),
       listDevices: invoke('devices.list'),
       revokeDevice: invoke('devices.revoke'),
       revokeAllDevices: invoke('devices.revoke-all'),
-      trustReset: invoke('trust.reset'),
     },
   }
   const dispatch = createOwnerIpcManagementDispatcher(services)
@@ -32,6 +28,17 @@ test('Owner IPC management allowlist matches the fixed local command surface', a
   })
   assert.deepEqual(calls, [['devices.revoke', 'device-1']])
   assert.equal(OWNER_IPC_MANAGEMENT_COMMANDS.has('owner.session.open'), false)
+  for (const retired of [
+    'auth.status',
+    'sessions.revoke-all',
+    'devices.revoke-all-sessions',
+    'trust.reset',
+    'enrollment.recover',
+    'enrollment.cancel',
+  ]) {
+    assert.equal(OWNER_IPC_MANAGEMENT_COMMANDS.has(retired), false)
+    await assert.rejects(dispatch(retired, undefined), /COMMAND_NOT_ALLOWED/)
+  }
   await assert.rejects(dispatch('owner.session.open', undefined), /COMMAND_NOT_ALLOWED/u)
   await assert.rejects(dispatch('devices.revoke', { deviceId: '../other' }), /INVALID_DEVICE_ID/u)
   await assert.rejects(

@@ -687,57 +687,57 @@ test('rejects a handshake from a rotated trust epoch as an unauthorized client',
   })
 })
 
-test('resetRemoteTrust closes live connections and rotates the trust epoch', async () => {
+test('a handshake paused during authorization cannot reopen a device removed in the meantime', async () => {
   await withHarness(async (harness) => {
-    const { socket, connector, clientKey } = harness
-    await sendClientFrame(harness, helloFrame(), 1)
-    await waitFor(
-      () => encryptedSequences(socket, 'client-connection').length === 2,
-      'the client to be admitted before the reset',
+    const { connector, socket, clientKeys } = harness
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const authorizing = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    connector.configureRemoteSessions(
+      methodRegistry(connector, []),
+      async () => null,
+      async () => {
+        entered()
+        await waiting
+        return true
+      },
     )
-    const before = await connector.trust.identity()
-    const reset = await connector.resetRemoteTrust()
-    assert.equal(reset.trustEpoch, before.trustEpoch + 1)
-    assert.equal(reset.nodeId, before.nodeId)
-    assert.notEqual(reset.ownerPublicKey, before.ownerPublicKey)
-    const rotated = await connector.trust.identity()
-    assert.equal(rotated.trustEpoch, before.trustEpoch + 1)
-    assert.equal(rotated.ownerPublicKey, reset.ownerPublicKey)
-    assert.deepEqual(await connector.listDevices(), [])
-
-    const closeFrame = (
-      await decryptOwnerFrames(clientKey, sentPayloads(socket, 'client-connection'))
-    ).at(-1)?.relay
-    if (closeFrame?.type !== 'connection.close')
-      throw new Error('Expected an encrypted connection.close from the reset.')
-    assert.equal(closeFrame.code, 'trust_reset')
-
-    // Live connections are gone: a request under the old session key is never executed again.
-    const afterReset = socket.sent.length
-    await sendClientFrame(
-      harness,
-      { type: 'request', requestId: 'post-reset', method: 'owner.status' },
-      2,
+    socket.deliver(
+      encodeRelayFrame({
+        type: 'relay.client.connected',
+        version: RELAY_PROTOCOL_VERSION,
+        nodeId: harness.nodeId,
+        connectionId: 'racing-handshake',
+        deviceId: harness.deviceId,
+      }),
     )
+    socket.deliver(
+      forward(
+        'racing-handshake',
+        encodeRelayFrame({
+          type: 'handshake',
+          version: RELAY_PROTOCOL_VERSION,
+          nodeId: harness.nodeId,
+          clientPublicKey: clientKeys.publicKey,
+          trustEpoch: harness.trustEpoch,
+        }),
+      ),
+    )
+    await authorizing
+    await connector.revokeDevice(harness.deviceId)
+    release()
     await flushInbound()
     await flushInbound()
-    assert.equal(socket.sent.length, afterReset)
-    // The relay link is recycled and re-attached under the rotated epoch, so the owner becomes
-    // reachable again without a restart.
-    await waitFor(() => socket.closed, 'the relay link to be closed by the reset')
-    assert.equal(socket.closeCode, 1000)
-    assert.equal(socket.closeReason, 'trust_reset')
-    await waitFor(
-      () => harness.sockets.length > 1,
-      'the connector to dial the relay again after the reset',
+    assert.equal(
+      sentPayloads(socket, 'racing-handshake').some((frame) => frame.type === 'encrypted'),
+      false,
     )
-    const redial = harness.sockets.at(-1)!
-    redial.onopen?.()
-    await waitFor(() => redial.sent.length === 1, 'the re-attach frame on the new dial')
-    const reattach = parseRelayFrame(redial.sent[0]!)
-    if (reattach?.type !== 'relay.attach') throw new Error('Expected a relay attach frame.')
-    assert.equal(reattach.trustEpoch, before.trustEpoch + 1)
-    assert.equal(reattach.nodeId, harness.nodeId)
+    assert.equal(await connector.trust.isAuthorized(clientKeys.publicKey), false)
   })
 })
 

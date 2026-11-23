@@ -66,12 +66,15 @@ export class OwnerRequestError extends Error {
 }
 
 export class OwnerConnectionError extends AppLocalError {
+  readonly closeReason?: string
   constructor(
     message: string,
     code: AppLocalErrorCode = AppLocalErrorCode.ownerConnectionUnavailable,
+    closeReason?: string,
   ) {
     super(code, message)
     this.name = 'OwnerConnectionError'
+    this.closeReason = closeReason
   }
 }
 
@@ -99,6 +102,8 @@ export type OwnerRuntime = {
 }
 
 type WebSocketLike = Pick<WebSocket, 'send' | 'close'> & {
+  /** Relay messages may still be decrypting when the native socket closes. */
+  drainMessages?: () => Promise<void>
   readyState: number
   onopen: ((event: Event) => void) | null
   onerror: ((event: Event) => void) | null
@@ -157,7 +162,7 @@ export function createOwnerRuntime(
     socket = null
     connectionId = null
     authenticated = false
-    authentication = 'unknown'
+    authentication = reason === 'device_revoked' ? 'revoked' : 'unknown'
     phase = 'idle'
     failAll(error)
     current?.close(1000, reason)
@@ -230,7 +235,11 @@ export function createOwnerRuntime(
       return
     }
     if (frame.type === 'close') {
-      const error = new OwnerConnectionError('Owner connection was closed by the server.')
+      const error = new OwnerConnectionError(
+        'Owner connection was closed by the server.',
+        undefined,
+        frame.code,
+      )
       if (state === 'connecting') rejectConnection?.(error)
       shutdown(frame.code, error)
     }
@@ -242,6 +251,7 @@ export function createOwnerRuntime(
     const nextSocket = webSocketFactory(next.url)
     socket = nextSocket
     nextSocket.onopen = () => {
+      if (socket !== nextSocket) return
       try {
         nextSocket.send(
           encodeOwnerFrame({
@@ -259,6 +269,7 @@ export function createOwnerRuntime(
       }
     }
     nextSocket.onmessage = (event) => {
+      if (socket !== nextSocket) return
       const parsed = parseOwnerFrame(typeof event.data === 'string' ? event.data : '')
       if (!parsed.ok) {
         const error = new OwnerConnectionError(
@@ -280,6 +291,7 @@ export function createOwnerRuntime(
       }
     }
     nextSocket.onerror = () => {
+      if (socket !== nextSocket) return
       const error = new OwnerConnectionError('Owner connection failed')
       if (state === 'connecting') reject(error)
       shutdown('CONNECTION_FAILED', error)
@@ -288,9 +300,14 @@ export function createOwnerRuntime(
       setState('failed')
     }
     nextSocket.onclose = () => {
-      const error = new OwnerConnectionError('Owner connection closed')
-      if (state === 'connecting') reject(error)
-      shutdown('CONNECTION_CLOSED', error)
+      const finishClose = () => {
+        if (socket !== nextSocket) return
+        const error = new OwnerConnectionError('Owner connection closed')
+        if (state === 'connecting') reject(error)
+        shutdown('CONNECTION_CLOSED', error)
+      }
+      if (nextSocket.drainMessages) void nextSocket.drainMessages().then(finishClose, finishClose)
+      else finishClose()
     }
     if (nextSocket.readyState === OPEN) nextSocket.onopen(new Event('open'))
   }

@@ -53,13 +53,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'owner.remoteSessions.revokeAll',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.remoteSessionsRevokeAll(context),
-      },
-    ],
-    [
       'owner.enrollment.issue',
       {
         access: 'authenticated' as const,
@@ -106,13 +99,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (_params, context) => services.remoteDevicesRevokeAll(context),
-      },
-    ],
-    [
-      'remote.trust.reset',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.remoteTrustReset(context),
       },
     ],
     [
@@ -313,27 +299,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       {
         access: 'authenticated' as const,
         handle: (_params, context) => services.remoteStatus(context),
-      },
-    ],
-    [
-      'remote.trust.reset',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.remoteTrustReset(context),
-      },
-    ],
-    [
-      'remote.devices.list',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.remoteDevices(context),
-      },
-    ],
-    [
-      'remote.devices.revoke',
-      {
-        access: 'authenticated' as const,
-        handle: (params, context) => services.remoteDeviceRevoke(context, asRecord(params)),
       },
     ],
   ])

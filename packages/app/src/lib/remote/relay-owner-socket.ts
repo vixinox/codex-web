@@ -18,8 +18,8 @@ export type RelayTarget = {
   expectedOwnerPublicKey?: string
 }
 
-export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSocket {
-  const socket = new WebSocket(url)
+export function createRelayOwnerSocket(url: string, target: RelayTarget) {
+  const socket = Object.assign(new WebSocket(url), { drainMessages: () => received })
   let connectionId: string | null = null
   let relayNodeId: string | null = null
   let relayTrustEpoch: number | null = null
@@ -27,8 +27,8 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
   let key: CryptoKey | null = null
   let sendSequence = 0
   let receiveSequence = 0
-  let pendingOpen: (() => void) | null = null
-  let pendingError: ((error: Error) => void) | null = null
+  let received = Promise.resolve()
+  let failed = false
   let handshakeStarted = false
   const queued: string[] = []
   const originalSend = socket.send.bind(socket)
@@ -65,7 +65,6 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
       }
     } else {
       if (!target.nodeId || target.trustEpoch === undefined || !target.deviceId) {
-        pendingError?.(new Error('Paired connection identity is incomplete.'))
         socket.close(1008, 'paired_identity_unavailable')
         return
       }
@@ -113,8 +112,11 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
     if (!payload) return
     if (!key || !isEncryptedFrame(payload) || payload.sequence !== receiveSequence + 1) return
     receiveSequence = payload.sequence
-    void decryptPayload(key, payload)
-      .then((value) => {
+    const sessionKey = key
+    received = received
+      .then(async () => {
+        if (failed) return undefined
+        const value = await decryptPayload(sessionKey, payload)
         const handshake = parseFrame(value)
         if (handshake?.type === 'handshake.ok') {
           if (
@@ -128,12 +130,11 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
             target.expectedOwnerPublicKey !== handshake.ownerPublicKey
           )
             throw new Error('Owner identity does not match the saved connection.')
-          pendingOpen?.()
-          pendingOpen = null
           for (const queuedValue of queued.splice(0)) socket.send(queuedValue)
           return undefined
         }
         if (handshake?.type === 'connection.close') {
+          failed = true
           socket.dispatchEvent(
             new MessageEvent('message', {
               data: JSON.stringify({
@@ -149,19 +150,12 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
         socket.dispatchEvent(new MessageEvent('message', { data: value }))
         return undefined
       })
-      .catch((error: unknown) => {
-        const failure = error instanceof Error ? error : new Error('Relay handshake failed')
-        pendingError?.(failure)
+      .catch(() => {
+        failed = true
         socket.close(1008, 'owner_handshake_failed')
         return undefined
       })
   })
-  socket.addEventListener('error', () => pendingError?.(new Error('Relay connection failed')))
-  ;(socket as WebSocket & { waitForHandshake?: () => Promise<void> }).waitForHandshake = () =>
-    new Promise((resolve, reject) => {
-      pendingOpen = resolve
-      pendingError = reject
-    })
   return socket
 
   async function startHandshake() {
@@ -171,12 +165,10 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
     const handshakeTrustEpoch = target.trustEpoch ?? relayTrustEpoch
     const ownerPublicKey = relayOwnerPublicKey
     if (!handshakeNodeId || handshakeTrustEpoch === null || handshakeTrustEpoch === undefined) {
-      pendingError?.(new Error('Relay did not provide the Owner trust identity.'))
       socket.close(1008, 'owner_identity_unavailable')
       return
     }
     if (!ownerPublicKey) {
-      pendingError?.(new Error('Relay did not provide the Owner public key.'))
       socket.close(1008, 'owner_identity_unavailable')
       return
     }
@@ -203,9 +195,7 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget): WebSoc
           }),
         }),
       )
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error('Relay handshake failed')
-      pendingError?.(failure)
+    } catch {
       socket.close(1008, 'owner_handshake_failed')
     }
   }

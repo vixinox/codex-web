@@ -33,6 +33,62 @@ function ready(socket: FakeSocket) {
 }
 
 describe('Owner runtime controller', () => {
+  it('does not reconnect a healthy connection after connect replaces the previous transport', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const factory = vi.fn(() => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    })
+    const controller = createOwnerRuntimeController(createOwnerRuntime(factory))
+    try {
+      const connected = controller.connect({ url: 'ws://owner', sessionToken: 'token' })
+      sockets[0].open()
+      ready(sockets[0])
+      await connected
+      const reattached = controller.connect({ url: 'ws://owner', sessionToken: 'token' })
+      await vi.advanceTimersByTimeAsync(600)
+      expect(factory).toHaveBeenCalledTimes(2)
+      sockets[1].open()
+      ready(sockets[1])
+      await reattached
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(factory).toHaveBeenCalledTimes(2)
+      expect(controller.state.transport).toBe('connected')
+    } finally {
+      controller.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('retains an explicit revocation reason and stops automatic and manual reconnect', async () => {
+    vi.useFakeTimers()
+    const socket = new FakeSocket()
+    const factory = vi.fn(() => socket)
+    const controller = createOwnerRuntimeController(createOwnerRuntime(factory))
+    try {
+      const connected = controller.connect({ url: 'ws://owner', sessionToken: 'token' })
+      socket.open()
+      ready(socket)
+      await connected
+      const pending = controller.request('remote.devices.revokeAll')
+      const rejected = expect(pending).rejects.toMatchObject({ closeReason: 'device_revoked' })
+      socket.receive({ type: 'close', code: 'device_revoked' })
+      await rejected
+      expect(controller.state).toMatchObject({
+        transport: 'failed',
+        authentication: 'revoked',
+        reconnectAttempt: 0,
+      })
+      await vi.runAllTimersAsync()
+      expect(factory).toHaveBeenCalledTimes(1)
+      await expect(controller.retry()).rejects.toThrow('removed')
+    } finally {
+      controller.close()
+      vi.useRealTimers()
+    }
+  })
   it('projects connected state and supports switching targets', async () => {
     const sockets: FakeSocket[] = []
     const controller = createOwnerRuntimeController(

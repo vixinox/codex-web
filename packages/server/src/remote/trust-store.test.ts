@@ -55,6 +55,11 @@ test('lists paired devices and revokes one device without disturbing another', a
     assert.equal(await store.isAuthorized(revokedKey), false)
     assert.deepEqual(await store.listPeers(), [devices[1]])
     assert.ok(remainingId)
+    const identity = await store.identity()
+    await store.clearPeers()
+    const reloaded = new RemoteTrustStore(dataRoot)
+    assert.deepEqual(await reloaded.listPeers(), [])
+    assert.deepEqual(await reloaded.identity(), identity)
   })
 })
 
@@ -178,20 +183,5 @@ test('accepts a legacy peer without id and persists the assigned id', async () =
     const reloaded = new RemoteTrustStore(dataRoot)
     assert.deepEqual(await reloaded.listPeers(), await store.listPeers())
     assert.equal(await reloaded.deviceId(clientKey), assignedId)
-  })
-})
-
-test('trust reset clears device records and rotates the E2EE trust epoch', async () => {
-  await withDataRoot(async (dataRoot) => {
-    const store = new RemoteTrustStore(dataRoot)
-    const client = await validKeyPair()
-    await store.trustPeer(client.publicKey)
-    const before = await store.identity()
-    const after = await store.reset()
-    assert.equal(after.nodeId, before.nodeId)
-    assert.equal(after.trustEpoch, before.trustEpoch + 1)
-    assert.notEqual(after.ownerPublicKey, before.ownerPublicKey)
-    assert.deepEqual(await store.listPeers(), [])
-    assert.equal(await store.isAuthorized(client.publicKey), false)
   })
 })

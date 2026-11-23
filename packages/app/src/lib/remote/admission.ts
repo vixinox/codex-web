@@ -1,3 +1,11 @@
+import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
+import {
+  completeConnectionProfile,
+  prepareConnectionProfileEnrollment,
+  removeConnectionProfile,
+} from './device-key-store'
+import { createRelayOwnerSocket } from './relay-owner-socket'
+import { remoteRelayUrl } from './relay-profile'
 import { OwnerRequestError } from '@/lib/owner-ws/owner-runtime'
 import { TelemetryErrorCode } from '@codex-web/telemetry/errors'
 import { AppLocalError, AppLocalErrorCode } from '@/lib/errors/app-local-error'
@@ -38,7 +46,7 @@ export async function authenticateWithPasskey(
       'Passkey authentication was cancelled.',
     )
   const response = credentialToJson(credential)
-  const result = await connection.request<{ token: string; expiresAt: string; ownerId?: string }>(
+  const result = await connection.request<{ token: string; expiresAt: string; ownerId: string }>(
     'owner.passkey.authentication.verify',
     { challengeId: options.challengeId, response },
   )
@@ -47,7 +55,8 @@ export async function authenticateWithPasskey(
     !result.token ||
     typeof result.expiresAt !== 'string' ||
     !Number.isFinite(Date.parse(result.expiresAt)) ||
-    (result.ownerId !== undefined && typeof result.ownerId !== 'string')
+    typeof result.ownerId !== 'string' ||
+    !result.ownerId
   )
     throw new AppLocalError(
       AppLocalErrorCode.ownerProtocolInvalidFrame,
@@ -100,4 +109,77 @@ function toBase64Url(bytes: Uint8Array) {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')
+}
+
+const enrollmentAttempts = new Map<string, Promise<{ ownerId: string; profileId: string }>>()
+
+export function redeemEnrollmentOnce(reference: string) {
+  const existing = enrollmentAttempts.get(reference)
+  if (existing) return existing
+  const attempt = redeemEnrollment(reference).finally(() => enrollmentAttempts.delete(reference))
+  enrollmentAttempts.set(reference, attempt)
+  return attempt
+}
+
+async function redeemEnrollment(
+  reference: string,
+): Promise<{ ownerId: string; profileId: string }> {
+  const relayUrl = remoteRelayUrl()
+  const profile = await prepareConnectionProfileEnrollment(relayUrl)
+  const runtime = createOwnerRuntime(() =>
+    createRelayOwnerSocket(relayUrl, {
+      clientToken: '',
+      publicKey: profile.publicKey,
+      privateKey: profile.privateKey,
+      enrollmentReference: reference,
+      ...(profile.nodeId && profile.trustEpoch !== null
+        ? {
+            nodeId: profile.nodeId,
+            trustEpoch: profile.trustEpoch,
+            expectedOwnerPublicKey: profile.ownerPublicKey,
+          }
+        : {}),
+    }),
+  )
+  try {
+    await runtime.connect({ url: relayUrl, clientId: 'owner-enrollment', capabilities: ['owner'] })
+    const result = await runtime.request<{
+      ownerId: string
+      nodeId: string
+      ownerPublicKey: string
+      deviceId: string
+      clientToken: string
+      trustEpoch: number
+      sessionToken: string
+      expiresAt: string
+    }>('owner.enrollment.redeem', { reference }, { timeoutMs: 10_000 })
+    if (
+      typeof result.ownerId !== 'string' ||
+      typeof result.nodeId !== 'string' ||
+      typeof result.ownerPublicKey !== 'string' ||
+      typeof result.deviceId !== 'string' ||
+      typeof result.clientToken !== 'string' ||
+      !Number.isSafeInteger(result.trustEpoch) ||
+      typeof result.sessionToken !== 'string' ||
+      typeof result.expiresAt !== 'string'
+    )
+      throw new Error('Owner returned an invalid enrollment result.')
+    await completeConnectionProfile({
+      id: profile.id,
+      nodeId: result.nodeId,
+      ownerId: result.ownerId,
+      ownerPublicKey: result.ownerPublicKey,
+      deviceId: result.deviceId,
+      pairedClientToken: result.clientToken,
+      trustEpoch: result.trustEpoch,
+      sessionToken: result.sessionToken,
+      sessionExpiresAt: result.expiresAt,
+    })
+    return { ownerId: result.ownerId, profileId: profile.id }
+  } catch (cause) {
+    if (!profile.deviceId) await removeConnectionProfile(profile.id).catch(() => undefined)
+    throw cause
+  } finally {
+    runtime.close('enrollment complete')
+  }
 }

@@ -38,6 +38,39 @@ function ready(socket: FakeSocket) {
 }
 
 describe('Owner runtime transport', () => {
+  it('ignores messages and delayed close from a replaced socket', async () => {
+    let release!: () => void
+    const drain = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const previous = Object.assign(new FakeSocket(), { drainMessages: () => drain })
+    const current = new FakeSocket()
+    let first = true
+    const runtime = createOwnerRuntime(() => {
+      if (first) {
+        first = false
+        return previous
+      }
+      return current
+    })
+    const initial = runtime.connect({ url: 'ws://owner.test' })
+    previous.open()
+    ready(previous)
+    await initial
+    previous.onclose?.(new CloseEvent('close'))
+    const replacement = runtime.connect({ url: 'ws://owner.test' })
+    current.open()
+    previous.receive({ type: 'close', code: 'device_revoked' })
+    ready(current)
+    await replacement
+    release()
+    await drain
+    await Promise.resolve()
+    expect(runtime.state).toBe('connected')
+    expect(runtime.authenticated).toBe(true)
+    runtime.close()
+  })
+
   it('performs hello and resolves requests', async () => {
     const socket = new FakeSocket()
     const runtime = createOwnerRuntime(() => socket)
