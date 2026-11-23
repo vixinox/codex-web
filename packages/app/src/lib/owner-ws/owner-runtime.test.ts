@@ -33,11 +33,24 @@ function ready(socket: FakeSocket) {
 
     connectionId: 'connection-1',
     authenticated: true,
+    ownerId: 'owner-1',
     capabilities: ['owner'],
   })
 }
 
 describe('Owner runtime transport', () => {
+  it('projects the authenticated Owner identity from ready and clears it on close', async () => {
+    const socket = new FakeSocket()
+    const runtime = createOwnerRuntime(() => socket)
+    const connected = runtime.connect({ url: 'ws://owner.test' })
+    socket.open()
+    ready(socket)
+    await connected
+    expect(runtime.ownerId).toBe('owner-1')
+    runtime.close()
+    expect(runtime.ownerId).toBeNull()
+  })
+
   it('ignores messages and delayed close from a replaced socket', async () => {
     let release!: () => void
     const drain = new Promise<void>((resolve) => {

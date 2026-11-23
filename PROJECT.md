@@ -8,8 +8,9 @@
 
 ## 架构基线
 
-- Codex Web 是本地单 Owner Codex 客户端：App 通过 Owner WebSocket 访问 Gateway；Gateway 管理 Passkey/session、Credential、受控 Project、Codex App Server 和安全事件。Owner 无凭据即可启动，远程首次接入使用短时、单次的设备 enrollment invitation；远程与 localhost Passkey 使用隔离的 WebAuthn origins/RP IDs。Owner 只绑定 loopback，不支持多副本或多租户部署。
+- Codex Web 是本地单 Owner Codex 客户端：App 通过 Owner WebSocket 访问 Gateway；Gateway 管理 Owner 身份、远程 Passkey/session、Credential、受控 Project、Codex App Server 和安全事件。本机浏览器授权必须同时满足 loopback socket peer、精确本地 Host 与精确本地 Origin，并使用连接作用域内存 admission；远程首次接入使用短时、单次设备 enrollment invitation，Passkey 仅用于已登记设备重新认证。Owner 只绑定 loopback，不支持多副本或多租户部署。
 - Codex runtime 由受管 manifest 管理，默认获取最新 stable release。active runtime 完整时支持离线启动；新 runtime 必须通过完整性和 JSON-RPC smoke test；没有可运行 runtime 时，Fastify 不监听端口并以脱敏错误退出。
+- Owner 不限制不同线程间的并发任务数；同一线程的任务仍串行。Credential endpoint 由 Owner 自行指定，Server 不限制 endpoint host、网络范围或 scheme；Provider key 会随请求发送到配置地址。Codex 以 `approvalPolicy: never` 和 `sandbox: danger-full-access` 启动，不要求额外确认。部署者负责控制 Owner 运行环境及 Credential endpoint 的信任范围。
 - 已认证 Owner 可接收完整业务内容与路径，不经过内容安全投影。凭据库、服务端密钥及认证内部对象不新增读取入口；日志继续遵守现有策略。Owner 详细错误不携带 stack 或任意内部对象。
 - Project 是 Owner application 层的逻辑分组。Project/Thread/文件访问和写操作必须执行当前用户及受控根目录归属校验。
 - 用户级 `currentCredentialId` 是持久化的默认 Credential；runtime 的 `activeCredentialId` 只表示当前进程实际使用项。Credential 不绑定 Thread 或 Turn。
@@ -22,6 +23,7 @@
 - `/app/*` 是唯一真实应用入口；不提供旧 `/ui/*`、`/preview/*` 或离线工作台兼容路由。
 - Owner 是唯一执行环境和用户工作区；浏览器通过 loopback Fastify Owner WebSocket 访问本地 Gateway。Guest 匿名执行、lease、quota 和管理工作流已完全移除，不作为兼容模式。
 - Owner 控制面使用 `CODEX_DATA_ROOT/owner.sqlite` 持久化 Owner、Passkey 公钥凭据、设备/session、Project、Credential 和安全事件；Thread transcript 由 Codex App Server/Codex Home 管理，remote trust 与加密密钥保持独立本地 secret 边界。CLI 管理仅通过本机 IPC 连接运行中的 Owner，不启动临时 runtime。设备管理模块统一编排邀请、登记、撤销和连接清理；移除所有远程设备保留 Owner 身份与本机认证入口。
+- Credential 加密密钥在所有运行模式下统一从 `CODEX_DATA_ROOT/.credential-encryption-key` 读取，首次使用自动生成并持久化，不支持环境变量覆盖；备份和恢复 Credential 时必须保留对应密钥。
 - 远程能力采用 Paseo 基准的 pnpm monorepo：`packages/app`、`packages/server`、`packages/relay` 和 `packages/protocol`。Owner Gateway 是身份、业务、Agent、Thread、事件和历史的唯一边界；远程端通过 Relay 的 E2EE transport 接入同一个 Owner session runtime。`@codex-web/protocol/owner` 与 `@codex-web/protocol/relay` 在同一 package 内保持显式职责隔离。Relay 只维护内存连接路由、协议版本和连接生命周期，不保存账户、设备、事件或业务正文；设备 enrollment invitation 负责远程浏览器的路由和登录；首次使用登记设备，已登记设备复用身份，Owner attach 使用 Owner 与 Relay 共享的部署 admission secret，设备身份仍由 Owner trust store 和 E2EE 握手验证。产品限定为单个 Owner 节点及其远程控制端，不建立 Relay 账户体系或多节点管理体系。
 - `@codex-web/telemetry` 提供跨运行时日志接口和错误模型；浏览器仅依赖显式 browser-safe error export，Node/Bun logger adapters 与内部诊断错误不属于 Owner/Relay wire protocol。各 transport 边界负责将内部错误显式映射为公开错误 DTO。
 

@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { toast } from '@/components/ui/toast'
-import { readLocalOwnerSession } from '@/lib/auth/auth-client'
 import { LoginScreen } from '@/app/composition/screens/login-screen'
 import { WorkspaceShell } from '@/app/composition/workspace-shell'
 import { useCodexRuntimeController } from '@/app/workspace/runtime/use-codex-runtime-controller'
@@ -9,7 +8,6 @@ import { CodexLogo } from '@/components/shared/codex-logo'
 import { ConnectionScreen } from '@/app/settings/connection/connection-screen'
 import { createConnectionClient } from '@/app/settings/connection/connection-client'
 import { useOwnerRuntime } from '@/lib/owner-ws/use-owner-runtime'
-import { loadConnectionProfileSession } from '@/lib/remote/device-key-store'
 import { isKnownAppRoute } from '@/app/composition/routes/route-model'
 import { MobileWorkspaceNavigation } from '@/app/composition/navigation/workspace-navigation'
 import { SettingsSidebar } from '@/app/composition/navigation/settings-sidebar'
@@ -22,6 +20,7 @@ import {
   readWorkspaceSidebarWidth,
   storeWorkspaceSidebarWidth,
 } from '@/app/workspace/sidebar/sidebar-storage'
+import { ownerTargetKind } from '@/lib/owner-ws/target'
 
 export const pageFallback = <div className="min-h-svh bg-background" aria-label="Loading page" />
 
@@ -45,82 +44,35 @@ export function StartupRoute() {
 }
 
 export function RootRoute() {
-  const localSession = readLocalOwnerSession()
+  if (ownerTargetKind(window.location.origin) === 'local') return <Navigate to="/app" replace />
   const connectionProfileId = sessionStorage.getItem('codex-web:active-connection-profile')
   if (connectionProfileId)
     return <Navigate to={`/app?connection=${encodeURIComponent(connectionProfileId)}`} replace />
-  return <Navigate to={localSession ? '/app' : '/login'} replace />
+  return <Navigate to="/login" replace />
 }
 
 export function CandidateRoute() {
   const location = useLocation()
-  const [remoteOwnerId, setRemoteOwnerId] = useState<string | null>(null)
-  const [remoteChecked, setRemoteChecked] = useState(false)
   const routeState = location.state as {
-    remoteOwnerId?: unknown
     connectionProfileId?: unknown
   } | null
-  const profileId =
-    typeof routeState?.connectionProfileId === 'string'
+  const local = ownerTargetKind(window.location.origin) === 'local'
+  const profileId = local
+    ? undefined
+    : typeof routeState?.connectionProfileId === 'string'
       ? routeState.connectionProfileId
       : (new URLSearchParams(location.search).get('connection') ??
         sessionStorage.getItem('codex-web:active-connection-profile') ??
         undefined)
-  const localSession = readLocalOwnerSession()
-  useEffect(() => {
-    if (localSession && !profileId) {
-      setRemoteOwnerId(localSession.ownerId)
-      setRemoteChecked(true)
-      return
-    }
-    if (profileId) {
-      void loadConnectionProfileSession(profileId)
-        .then((session) => {
-          setRemoteOwnerId(session?.ownerId ?? null)
-          if (
-            !session &&
-            sessionStorage.getItem('codex-web:active-connection-profile') === profileId
-          )
-            sessionStorage.removeItem('codex-web:active-connection-profile')
-          return undefined
-        })
-        .catch(() => {
-          setRemoteOwnerId(null)
-          return undefined
-        })
-        .finally(() => setRemoteChecked(true))
-      return
-    }
-    setRemoteOwnerId(null)
-    setRemoteChecked(true)
-    return
-  }, [localSession, profileId])
 
   if (!isKnownAppRoute(location.pathname)) return <Navigate to="/app" replace />
-  if (!remoteChecked) return pageFallback
-  const stateOwnerId = routeState?.remoteOwnerId
-  const ownerId = profileId ? remoteOwnerId : (stateOwnerId ?? localSession?.ownerId)
-  if (typeof ownerId !== 'string') return <Navigate to="/login" replace />
+  if (!local && !profileId) return <Navigate to="/login" replace />
 
-  return (
-    <AuthenticatedWorkspace
-      userId={ownerId}
-      sessionToken={profileId ? undefined : localSession?.token}
-      connectionProfileId={profileId}
-    />
-  )
+  return <AuthenticatedWorkspace connectionProfileId={profileId} />
 }
 
-export function AuthenticatedWorkspace({
-  userId,
-  sessionToken,
-  connectionProfileId,
-}: {
-  userId: string
-  sessionToken?: string
-  connectionProfileId?: string
-}) {
-  const { status, error } = useOwnerRuntime(sessionToken, connectionProfileId)
+export function AuthenticatedWorkspace({ connectionProfileId }: { connectionProfileId?: string }) {
+  const { status, error, ownerId, isRemote } = useOwnerRuntime(connectionProfileId)
   const runtime = useCodexRuntimeController(status === 'ready')
 
   useEffect(() => {
@@ -149,14 +101,20 @@ export function AuthenticatedWorkspace({
         </div>
       </main>
     )
-  return <WorkspaceShell userId={userId} runtime={runtime} />
+  if (!ownerId)
+    return (
+      <div className="min-h-svh bg-background p-8 text-destructive">
+        Owner identity is unavailable.
+      </div>
+    )
+  return <WorkspaceShell userId={ownerId} runtime={runtime} isRemote={isRemote} />
 }
 
 export function LoginRoute() {
   const location = useLocation()
+  if (ownerTargetKind(window.location.origin) === 'local') return <Navigate to="/app" replace />
   if (location.pathname === '/app/enroll' || new URLSearchParams(location.search).has('ref'))
     return <LoginScreen />
-  if (readLocalOwnerSession()) return <Navigate to="/app" replace />
   if (sessionStorage.getItem('codex-web:active-connection-profile'))
     return <Navigate to="/app" replace />
   return <LoginScreen />
@@ -182,14 +140,14 @@ function ConnectionSettingsConnection({ onRetry }: { onRetry: () => void }) {
     new URLSearchParams(window.location.search).get('connection') ??
     sessionStorage.getItem('codex-web:active-connection-profile') ??
     undefined
-  const localSession = readLocalOwnerSession()
   const {
     status: ownerStatus,
     error: ownerError,
+    isRemote,
     request: ownerRequest,
     close: closeOwnerRuntime,
-  } = useOwnerRuntime(localSession?.token, profileId)
-  const requirePasskeyStepUp = !localSession && Boolean(profileId)
+  } = useOwnerRuntime(profileId)
+  const requirePasskeyStepUp = isRemote && Boolean(profileId)
   const requestOwner = useCallback(
     <T = unknown,>(method: string, params?: Record<string, unknown>) =>
       ownerRequest<T>(method, params),

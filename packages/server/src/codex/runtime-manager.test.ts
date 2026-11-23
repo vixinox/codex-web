@@ -14,10 +14,7 @@ function config(dataRoot: string): ServerConfig {
     port: 3000,
     trustedOrigins: ['http://localhost:5173'],
     dataRoot,
-    maxActiveTasksPerUser: 2,
     credentialEncryptionKey: 'test-encryption-key',
-    allowedOutboundSchemes: ['https'],
-    allowedOutboundHosts: ['api.example.com'],
   }
 }
 

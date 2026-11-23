@@ -36,13 +36,13 @@ describe('authenticateWithPasskey', () => {
         .fn()
         .mockResolvedValueOnce({ challengeId: 'challenge', options: { challenge: 'Y2hhbGxlbmdl' } })
         .mockResolvedValueOnce(session)
-      const result = authenticateWithPasskey({ request, close: vi.fn() }, 'remote')
-      if (hasOwnerId) await expect(result).resolves.toEqual({ ...session, originProfile: 'remote' })
+      const result = authenticateWithPasskey({ request, close: vi.fn() })
+      if (hasOwnerId) await expect(result).resolves.toEqual(session)
       else await expect(result).rejects.toMatchObject({ code: 'app.owner.protocol.invalid-frame' })
     },
   )
 
-  it('directs local users to register a Passkey when none is configured', async () => {
+  it('directs users to configure a Passkey when none is registered', async () => {
     const request = vi.fn().mockRejectedValue(
       new OwnerRequestError({
         code: TelemetryErrorCode.ownerAuthPasskeyRequired,
@@ -50,8 +50,8 @@ describe('authenticateWithPasskey', () => {
       }),
     )
 
-    await expect(authenticateWithPasskey({ request, close: vi.fn() }, 'local')).rejects.toThrow(
-      'No local Passkey is registered. Use a signed-in Owner device to issue a one-time localhost enrollment ticket, then register a Passkey in this browser.',
+    await expect(authenticateWithPasskey({ request, close: vi.fn() })).rejects.toThrow(
+      'No Passkey is registered. Register one from a signed-in Owner device, then try again.',
     )
     expect(request).toHaveBeenCalledWith('owner.passkey.authentication.options')
   })
@@ -64,8 +64,8 @@ describe('authenticateWithPasskey', () => {
       }),
     )
 
-    await expect(authenticateWithPasskey({ request, close: vi.fn() }, 'remote')).rejects.toThrow(
-      'No remote Passkey is registered. Register one from a signed-in Owner device, then try again.',
+    await expect(authenticateWithPasskey({ request, close: vi.fn() })).rejects.toThrow(
+      'No Passkey is registered. Register one from a signed-in Owner device, then try again.',
     )
   })
 })

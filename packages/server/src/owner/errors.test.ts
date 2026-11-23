@@ -12,7 +12,6 @@ test('legacy Owner and auth codes map into the frozen namespaced catalog', () =>
     UNAUTHORIZED: 'owner.auth.unauthorized',
     AUTH_UNAVAILABLE: 'owner.auth.unavailable',
     PASSKEY_INVALID: 'owner.auth.passkey-invalid',
-    ENROLLMENT_TICKET_REQUIRED: 'owner.enrollment.ticket-invalid',
     SESSION_REVOKED: 'owner.auth.session-revoked',
     SESSION_EXPIRED: 'owner.auth.session-expired',
     STEP_UP_REQUIRED: 'owner.auth.step-up-required',

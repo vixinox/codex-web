@@ -16,24 +16,13 @@ test('encrypts credentials with authenticated encryption', () => {
   assert.throws(() => decryptSecret(encrypted, 'wrong-key'))
 })
 
-test('validates outbound URLs against the configured scheme policy', () => {
-  assert.equal(
-    validateOutboundUrl('https://api.example.com/', ['https'], ['api.example.com']),
-    'https://api.example.com',
-  )
-  assert.throws(() => validateOutboundUrl('http://api.example.com', ['https'], ['api.example.com']))
-  assert.throws(() =>
-    validateOutboundUrl('https://evil.example.com', ['https'], ['api.example.com']),
-  )
-  assert.equal(
-    validateOutboundUrl('https://evil.example.com', ['https'], ['*']),
-    'https://evil.example.com',
-  )
-  assert.throws(() =>
-    validateOutboundUrl('https://user:password@api.example.com', ['https'], ['api.example.com']),
-  )
-  assert.throws(() => validateOutboundUrl('https://127.0.0.1', ['https'], ['*']))
-  assert.throws(() => validateOutboundUrl('https://10.0.0.2', ['https'], ['*']))
+test('accepts outbound URLs without host or scheme allowlists', () => {
+  assert.equal(validateOutboundUrl('https://api.example.com/'), 'https://api.example.com')
+  assert.equal(validateOutboundUrl('http://evil.example.com'), 'http://evil.example.com')
+  assert.equal(validateOutboundUrl('https://127.0.0.1'), 'https://127.0.0.1')
+  assert.equal(validateOutboundUrl('https://10.0.0.2'), 'https://10.0.0.2')
+  assert.equal(validateOutboundUrl('ftp://evil.example.com'), 'ftp://evil.example.com')
+  assert.throws(() => validateOutboundUrl('https://user:password@api.example.com'))
 })
 
 test('accepts safe project directory names and rejects traversal', () => {

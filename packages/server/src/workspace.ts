@@ -3,11 +3,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 
-import {
-  credential,
-  owner,
-  project,
-} from './db/schema.js'
+import { credential, owner, project } from './db/schema.js'
 import type { ServerConfig } from './config.js'
 import type { Database } from './database.js'
 import {
@@ -182,11 +178,7 @@ export function createWorkspaceService(
       if (['openai', 'ollama', 'lmstudio'].includes(provider.toLowerCase()))
         throw new Error('provider is reserved')
       if (!input.apiKey.trim()) throw new Error('apiKey is required')
-      const baseUrl = validateOutboundUrl(
-        input.baseUrl,
-        config.allowedOutboundSchemes,
-        config.allowedOutboundHosts,
-      )
+      const baseUrl = validateOutboundUrl(input.baseUrl)
       await verifyConnection(baseUrl, input.apiKey)
       const id = randomUUID()
       const [saved] = await db

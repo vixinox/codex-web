@@ -1,5 +1,7 @@
 # Connection 管理收敛
 
+当前本机认证与 Passkey 目标由 [`../local-owner-access/README.md`](../local-owner-access/README.md) 取代：移除 local Passkey/ticket/session，本机 WebSocket 改用严格 loopback 来源检查和连接作用域内存 Owner admission。本文关于远程设备、邀请和 profile 行为仍作为现行约束；local/remote 双 Passkey 与 ticket 条款仅保留为历史基线。
+
 状态：Verified（本地 Passkey session 恢复修正开发验证完成；用户浏览器验收继续）。用户已要求实施；本文件是唯一实施规格。基线为当前工作区源码，不分析 staged/unstaged 意图，不依赖 Git 历史。
 
 ## 已确认范围

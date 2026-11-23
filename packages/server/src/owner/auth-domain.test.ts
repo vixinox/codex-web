@@ -8,7 +8,7 @@ import test from 'node:test'
 import type { ServerConfig } from '../config.js'
 import { createDatabase, prepareOwnerDatabase } from '../database.js'
 import { owner, ownerSession } from '../db/schema.js'
-import { createOwnerAuthDomain, AuthDomainError, WEBAUTHN_PROFILES } from './auth-domain.js'
+import { createOwnerAuthDomain, AuthDomainError } from './auth-domain.js'
 import { createOwnerApplicationServices } from './application-services.js'
 import type { OwnerAdmission, OwnerMethodContext } from './session-runtime.js'
 
@@ -20,17 +20,21 @@ test('browser challenges round-trip through Passkey registration and authenticat
     database = createDatabase(config(dataRoot))
     const ownerId = 'owner-passkey-test'
     database.db.insert(owner).values({ id: ownerId }).run()
-    const domain = createOwnerAuthDomain(database.db, ownerId)
+    const profile = { origin: 'https://app.example.test', rpId: 'app.example.test' }
+    const domain = createOwnerAuthDomain(database.db, ownerId, undefined, undefined, profile)
     const services = createOwnerApplicationServices(
       { database: database.db, ownerId, workspace: {} as never, codex: {} as never },
-      { trustedOrigins: [] },
+      { trustedOrigins: [], appOrigin: profile.origin, rpId: profile.rpId },
     )
-    for (const profile of ['remote', 'local'] as const) {
-      const { origin, rpId } = WEBAUTHN_PROFILES[profile]
-      const binding = { profile, connectionId: `${profile}-passkey`, clientPublicKey: 'client-key' }
-      const ticket =
-        profile === 'local' ? (await domain.issueLocalEnrollmentTicket()).ticket : undefined
-      const registration = await domain.registerOptions(profile, binding, ticket)
+    {
+      const { origin, rpId } = profile
+      const binding = {
+        origin,
+        rpId,
+        connectionId: 'remote-passkey',
+        clientPublicKey: 'client-key',
+      }
+      const registration = await domain.registerOptions(binding)
       const { publicKey, privateKey } = generateKeyPairSync('ed25519')
       const jwk = publicKey.export({ format: 'jwk' })
       assert.ok(jwk.x)
@@ -85,32 +89,23 @@ test('browser challenges round-trip through Passkey registration and authenticat
           ).toString('base64url'),
         },
       }
-      assert.deepEqual(
-        await domain.register(registration.challengeId, response, { ...binding, ticket }),
-        { registered: true },
-      )
-      assert.equal(await domain.hasPasskey(profile), true)
-      const configuredOwner = database.db.select().from(owner).get()
-      assert.ok(
-        profile === 'remote'
-          ? configuredOwner?.remotePasskeyConfiguredAt
-          : configuredOwner?.localPasskeyConfiguredAt,
-      )
-      await assert.rejects(
-        domain.register(registration.challengeId, response, { ...binding, ticket }),
-      )
+      assert.deepEqual(await domain.register(registration.challengeId, response, binding), {
+        registered: true,
+      })
+      assert.equal(await domain.hasPasskey(), true)
+      await assert.rejects(domain.register(registration.challengeId, response, binding))
 
-      if (profile === 'remote')
-        await domain.registerDevice('device-passkey', binding.clientPublicKey)
+      await domain.registerDevice('device-passkey', binding.clientPublicKey)
       let admission: OwnerAdmission | undefined
       const context: OwnerMethodContext = {
         owner: null,
         connectionId: binding.connectionId,
         transport: {
-          kind: profile === 'remote' ? 'relay' : 'local',
+          kind: 'relay',
           origin,
           clientPublicKey: binding.clientPublicKey,
-          ...(profile === 'remote' ? { e2eeVerified: true, pairedDeviceId: 'device-passkey' } : {}),
+          e2eeVerified: true,
+          pairedDeviceId: 'device-passkey',
           send() {},
           close() {},
           onMessage: () => () => {},
@@ -154,21 +149,10 @@ test('browser challenges round-trip through Passkey registration and authenticat
       const resumed = await services.resumeSession(session.token, context.transport)
       assert.equal(resumed?.ownerId, ownerId)
       assert.equal(resumed?.sessionToken, session.token)
-      if (profile === 'local') {
-        assert.equal(
-          await services.resumeSession(session.token, {
-            ...context.transport,
-            kind: 'relay',
-            pairedDeviceId: 'device-passkey',
-            e2eeVerified: true,
-          }),
-          null,
-        )
-        assert.equal(
-          (await services.resumeSession(session.token, context.transport))?.ownerId,
-          ownerId,
-        )
-      }
+      assert.equal(
+        (await services.resumeSession(session.token, context.transport))?.ownerId,
+        ownerId,
+      )
       await assert.rejects(
         services.passkeyAuthenticate(context, {
           challengeId: authentication.challengeId,
@@ -188,21 +172,21 @@ function config(dataRoot: string): ServerConfig {
     port: 3000,
     trustedOrigins: ['http://localhost:5173'],
     dataRoot,
-    maxActiveTasksPerUser: 2,
     credentialEncryptionKey: 'test-key',
-    allowedOutboundSchemes: ['https'],
-    allowedOutboundHosts: ['api.example.com'],
   }
 }
 
-test('device removal revokes remote sessions while all-device removal preserves local sessions', async () => {
+test('device removal revokes sessions bound to the remote device', async () => {
   const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-auth-session-'))
   try {
     prepareOwnerDatabase(config(dataRoot))
     const database = createDatabase(config(dataRoot))
     const ownerId = 'owner-session-test'
     database.db.insert(owner).values({ id: ownerId }).run()
-    const domain = createOwnerAuthDomain(database.db, ownerId)
+    const domain = createOwnerAuthDomain(database.db, ownerId, undefined, undefined, {
+      origin: 'https://app.example.test',
+      rpId: 'app.example.test',
+    })
     await domain.registerDevice('device-1', 'public-key-1')
     const session = await domain.createSession('device-1')
     assert.equal((await domain.resume(session.token)).sessionId, session.sessionId)
@@ -212,19 +196,7 @@ test('device removal revokes remote sessions while all-device removal preserves 
       (error: unknown) =>
         error instanceof AuthDomainError && error.code === 'owner.auth.session-revoked',
     )
-    const local = await domain.createSession()
-    await domain.registerDevice('device-2', 'public-key-2')
-    const otherRemote = await domain.createSession('device-2')
-    await domain.revokeAllDevices()
-    await assert.rejects(domain.resume(otherRemote.token))
-    await assert.rejects(domain.createSession('device-2'))
-    const storedLocal = database.db
-      .select()
-      .from(ownerSession)
-      .all()
-      .find((row) => row.id === local.sessionId)
-    assert.equal(storedLocal?.revokedAt, null)
-    assert.equal((await domain.resume(local.token)).sessionId, local.sessionId)
+    await assert.rejects(domain.createSession('device-1'))
     database.driver.close()
   } finally {
     rmSync(dataRoot, { recursive: true, force: true })
@@ -239,10 +211,15 @@ test('requires a registered credential before creating authentication options', 
     database = createDatabase(config(dataRoot))
     const ownerId = 'owner-discoverable-test'
     database.db.insert(owner).values({ id: ownerId }).run()
-    const domain = createOwnerAuthDomain(database.db, ownerId)
+    const domain = createOwnerAuthDomain(database.db, ownerId, undefined, undefined, {
+      origin: 'https://app.example.test',
+      rpId: 'app.example.test',
+    })
 
     await assert.rejects(
-      domain.authenticationOptions('local', {
+      domain.authenticationOptions({
+        origin: 'https://app.example.test',
+        rpId: 'app.example.test',
         connectionId: 'local-login',
         clientPublicKey: 'local',
       }),
@@ -263,12 +240,20 @@ test('preserves registration verification causes for server diagnostics', async 
     database = createDatabase(config(dataRoot))
     const ownerId = 'owner-registration-cause-test'
     database.db.insert(owner).values({ id: ownerId }).run()
-    const domain = createOwnerAuthDomain(database.db, ownerId)
-    const binding = { connectionId: 'remote-registration', clientPublicKey: 'client-key' }
-    const options = await domain.registerOptions('remote', binding)
+    const domain = createOwnerAuthDomain(database.db, ownerId, undefined, undefined, {
+      origin: 'https://app.example.test',
+      rpId: 'app.example.test',
+    })
+    const binding = {
+      connectionId: 'remote-registration',
+      clientPublicKey: 'client-key',
+      origin: 'https://app.example.test',
+      rpId: 'app.example.test',
+    }
+    const options = await domain.registerOptions(binding)
 
     await assert.rejects(
-      domain.register(options.challengeId, {} as never, { ...binding, profile: 'remote' }),
+      domain.register(options.challengeId, {} as never, binding),
       (error: unknown) =>
         error instanceof AuthDomainError &&
         error.code === 'owner.auth.passkey-invalid' &&

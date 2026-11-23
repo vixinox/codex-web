@@ -300,15 +300,17 @@ export function WorkspaceSidebar({
               {runtimeContent}
             </div>
           )}
-          <Button
-            type="button"
-            variant="ghost"
-            className="w-full justify-start gap-2 p-2"
-            onClick={() => void onSignOut?.()}
-          >
-            <LogOut data-icon="inline-start" />
-            Sign out
-          </Button>
+          {onSignOut ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full justify-start gap-2 p-2"
+              onClick={() => void onSignOut()}
+            >
+              <LogOut data-icon="inline-start" />
+              Sign out
+            </Button>
+          ) : null}
         </SidebarFooter>
       </Sidebar>
     </>

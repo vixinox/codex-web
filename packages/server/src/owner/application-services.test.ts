@@ -27,10 +27,7 @@ function testConfig(dataRoot: string): ServerConfig {
     port: 3000,
     trustedOrigins: ['http://localhost:5173'],
     dataRoot,
-    maxActiveTasksPerUser: 2,
     credentialEncryptionKey: 'test-key',
-    allowedOutboundSchemes: ['https'],
-    allowedOutboundHosts: ['api.example.com'],
   }
 }
 
@@ -455,7 +452,7 @@ test('lists root threads when the caller sends an explicit null project scope', 
   })
 })
 
-test('reports PASSKEY_REQUIRED when no local credential is registered', async () => {
+test('reports PASSKEY_REQUIRED when no remote credential is registered', async () => {
   const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-owner-passkey-options-'))
   let database: ReturnType<typeof createDatabase> | undefined
   try {
@@ -469,11 +466,16 @@ test('reports PASSKEY_REQUIRED when no local credential is registered', async ()
         ownerId: 'owner-passkey-options',
         database: database.db,
       },
-      { trustedOrigins: ['http://localhost:5173'] },
+      {
+        trustedOrigins: ['http://localhost:5173'],
+        appOrigin: 'https://app.example.test',
+        rpId: 'app.example.test',
+      },
     )
     const transport: OwnerTransport = {
-      kind: 'local',
-      origin: 'http://localhost:5173',
+      kind: 'relay',
+      e2eeVerified: true,
+      pairedDeviceId: 'known-device',
       send: () => undefined,
       close: () => undefined,
       onMessage: () => () => undefined,

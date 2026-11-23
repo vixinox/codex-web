@@ -21,26 +21,26 @@ function snapshot(value: unknown): ConnectionSnapshot {
       })
     : []
   return {
-    remotePasskeyAvailable: body.remotePasskeyAvailable === true,
-    localPasskeyAvailable: body.localPasskeyAvailable === true,
+    passkeyAvailable: body.passkeyAvailable === true,
+    appOrigin: typeof body.appOrigin === 'string' ? body.appOrigin : null,
     currentDeviceId: typeof body.currentDeviceId === 'string' ? body.currentDeviceId : null,
     devices,
   }
 }
 
 export function createConnectionClient(rpc: OwnerRpc): ConnectionClient {
-  let remotePasskeyAvailable = false
+  let passkeyAvailable = false
   return {
     async getSnapshot() {
       const value = snapshot(await rpc.request('owner.security.status'))
-      remotePasskeyAvailable = value.remotePasskeyAvailable
+      passkeyAvailable = value.passkeyAvailable
       return value
     },
-    async registerPasskey(ticket) {
+    async registerPasskey() {
       const options = await rpc.request<{
         challengeId?: unknown
         options?: PublicKeyCredentialCreationOptionsJSON
-      }>('owner.passkey.registration.options', ticket ? { ticket } : undefined)
+      }>('owner.passkey.registration.options')
       if (typeof options.challengeId !== 'string' || !options.options)
         throw new Error('Invalid Passkey registration options')
       const credential = await navigator.credentials.create({
@@ -51,19 +51,7 @@ export function createConnectionClient(rpc: OwnerRpc): ConnectionClient {
       await rpc.request('owner.passkey.registration.verify', {
         challengeId: options.challengeId,
         response: registrationToJson(credential),
-        ...(ticket ? { ticket } : {}),
       })
-    },
-    async issueLocalEnrollmentTicket() {
-      const value = await rpc.request('owner.localEnrollment.issue')
-      if (
-        !isRecord(value) ||
-        typeof value.ticket !== 'string' ||
-        typeof value.origin !== 'string' ||
-        typeof value.expiresAt !== 'string'
-      )
-        throw new Error('Invalid local enrollment ticket')
-      return { ticket: value.ticket, origin: value.origin, expiresAt: value.expiresAt }
     },
     async revokeDevice(deviceId) {
       await rpc.request('remote.devices.revoke', { deviceId })
@@ -72,8 +60,8 @@ export function createConnectionClient(rpc: OwnerRpc): ConnectionClient {
       await rpc.request('remote.devices.revokeAll')
     },
     async issueEnrollment() {
-      if (rpc.requirePasskeyStepUp && remotePasskeyAvailable) {
-        await authenticateWithPasskey(rpc, 'remote')
+      if (rpc.requirePasskeyStepUp && passkeyAvailable) {
+        await authenticateWithPasskey(rpc)
       }
       const value = await rpc.request('owner.enrollment.issue')
       return parseEnrollmentInvitation(value)

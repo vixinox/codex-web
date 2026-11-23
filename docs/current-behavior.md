@@ -1,12 +1,13 @@
 # Current behavior
 
-状态快照：2026-11-23（Connection 管理收敛）；下方历史验收记录保留其当时范围。旧 Owner 远程访问验收基线来自 `1ea0e1c`；设备 enrollment 迁移已接入源码。本文描述工作区当前真实行为，不把未验证的流程写成已验收。
+状态快照：2026-11-23（本机直连与统一 Passkey 实施）。下方历史验收记录保留其当时范围；本节描述最新源码与本轮验证，不把未运行的用户服务或浏览器流程写成已验收。
 
 ## 已实现的 Owner 和设备行为
 
-- Owner 是单一本地身份。认证代码仍通过 localhost 与 remote 两种 WebAuthn profile 管理 Passkey；本地入口只显示本地 Passkey，远程入口显示保存的 connection profile。
+- Owner 是单一本地身份。本机浏览器只从精确的 `http://localhost:5173` / `http://127.0.0.1:5173` 访问工作台；Owner 同时校验实际 loopback socket peer、Host 和 Origin，并为连接注入不持久化的内存 admission。本机没有 Passkey、bearer 或持久 session。
+- WebAuthn 仅使用配置的远程 App HTTPS origin 和由其 hostname 推导的 RP ID。远程 Passkey 只用于已登记设备重新认证；远程 session 必须绑定有效配对设备。未配置远程 origin 时，本机工作台和 CLI 仍可用，远程 invitation/Passkey 不可用。
 - 浏览器使用 Owner 签发的五分钟、单次 enrollment reference 登录。Owner 校验 invitation、当前 Owner/node/trust epoch 和 E2EE 浏览器公钥；首次创建设备，已登记公钥复用 deviceId，再签发配对凭据和新 session。Passkey 可选，同一浏览器重复链接登录不再重复登记。
-- invitation 可由 Owner 本机管理、CLI 或已认证配对设备签发。远程 Passkey 已配置时，配对设备签发前必须在当前 session 完成五分钟内的 Passkey step-up；Owner 本机和 CLI 保持全设备丢失后的恢复能力。
+- invitation 可由 Owner 本机管理、CLI 或已认证配对设备签发。远程 Passkey 已配置时，配对设备签发前必须在当前 session 完成五分钟内的 Passkey step-up；Owner 本机和 CLI 保持全设备丢失后的恢复能力。邀请链接使用服务端配置的 `appOrigin`。
 - invitation 支持替换、状态查询和取消；成功消费、过期、Owner/Relay 重连失效、设备撤销会清除有效 reference。Relay 只保存在线 reference 路由，不执行 Owner 授权。
 - Remote Relay 协议不再接受 Owner-code login candidate、first-session grant 或 bootstrap reference 旧分支。Owner code 只留作 Owner/Relay 内部在线节点冲突路由；Relay 不提供 HTTP 查询接口，Owner 管理/CLI 不提供显示或轮换操作。
 - Owner recovery-code 表、认证域、方法、CLI/IPC 命令和 UI 已删除。普通 management login QR 及其 capability store 已删除。
@@ -16,12 +17,14 @@
 
 ## 仍需完成的验收
 
-- 自动化检查通过：服务端 118 项、协议 17 项、Relay 23 项、前端 252 项测试；全仓 TypeScript 类型检查和本任务目标 TypeScript 文件格式检查通过。
-- `pnpm lint` 未通过：本轮 lint 结果报告 warning 并返回非零；没有 error 诊断。warning 包含仓库已有代码和迁移触及代码，提交前应通过 `pnpm lint:staged` 对 staged delta 判断是否引入新 warning。
-- 尚未执行实际浏览器/Relay 手工验收：local 与 remote origin 分离、发出邀请、陌生浏览器一次兑换、paired session 恢复/Passkey step-up、profile test/logout/remove、取消/过期/replay、Owner/Relay restart、全部/单设备撤销。
+- 已完成自动化：完整 `pnpm test`、`pnpm typecheck` 和本任务触及 TypeScript 文件 `oxfmt --check`；本机 peer/Host/Origin 拒绝、内存 admission、远程设备 session/Passkey、旧 schema 拒绝及临时 reset fixture 均有覆盖。实现最终计数以本轮运行结果为准。
+- 未执行真实 `.data/codex` 数据库重建：用户运行的 Owner 服务仍占用 3000 端口。`pnpm db:reset` 会清除 Owner SQLite 控制面数据、Passkey 和已配对设备；运行 Owner 停止后由用户执行，保留 Codex Home、工作区文件及 Owner node identity。
+- 未能完成新代码的浏览器/Relay 手工验收：现有 5173/3000/8787 用户服务已运行，其中 Fastify 进程不会热加载本次源码，页面显示 Owner connection failed。切换到新代码后需验证本机刷新/深链接/Connection、远程邀请/Passkey/session 恢复/设备撤销与 Owner/Relay 重连。真实 Bitwarden 操作仍为用户后续验收。
 - Enrollment UI 默认使用已配置的可信 Relay profile；本次不实现邀请自带自定义 Relay URL。
 
 ## 文档边界
+
+本机直连实现规格见 [`impl/local-owner-access/README.md`](impl/local-owner-access/README.md)；架构、API 和前端现行契约已同步本机免交互与远程单一 Passkey 边界。
 
 Server 的 Conversation 事件链由 runtime adapter 转换为共享 Conversation facts/state，Owner WS 和历史回放使用统一领域正文。已认证 Owner 的业务内容与路径不经过保密性过滤；不再提供递归脱敏或 `runtime.extension` 原生消息降级。未映射方法仅作诊断，不作为任意原始 RPC 透传。单事件 128,000 UTF-8 字节及 frame 1 MiB 上限保留，超限明确失败。
 

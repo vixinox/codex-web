@@ -13,10 +13,7 @@ function config(dataRoot: string): ServerConfig {
     port: 3000,
     trustedOrigins: ['http://localhost:5173'],
     dataRoot,
-    maxActiveTasksPerUser: 2,
     credentialEncryptionKey: 'test-key',
-    allowedOutboundSchemes: ['https'],
-    allowedOutboundHosts: ['api.example.com'],
   }
 }
 
@@ -33,7 +30,6 @@ test('creates the current Owner schema with the Conversation event index', () =>
     for (const name of [
       'owner',
       'passkey_credential',
-      'local_enrollment_ticket',
       'remote_device',
       'owner_session',
       'project',
@@ -41,6 +37,7 @@ test('creates the current Owner schema with the Conversation event index', () =>
       'conversation_events',
     ])
       assert.ok(names.includes(name), `missing ${name}`)
+    assert.ok(!names.includes('local_enrollment_ticket'))
     for (const name of [
       'user',
       'account',

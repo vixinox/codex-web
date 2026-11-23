@@ -24,13 +24,15 @@ import {
 export function WorkspaceShell({
   userId,
   runtime,
+  isRemote,
 }: {
   userId: string
   runtime: CodexRuntimeController
+  isRemote: boolean
 }) {
   return (
     <ThreadSessionRegistryProvider userId={userId}>
-      <WorkspaceShellContents userId={userId} runtime={runtime} />
+      <WorkspaceShellContents userId={userId} runtime={runtime} isRemote={isRemote} />
     </ThreadSessionRegistryProvider>
   )
 }
@@ -38,9 +40,11 @@ export function WorkspaceShell({
 function WorkspaceShellContents({
   userId,
   runtime,
+  isRemote,
 }: {
   userId: string
   runtime: CodexRuntimeController
+  isRemote: boolean
 }) {
   const [capabilities, setCapabilities] = React.useState<ComposerCapabilities>()
   React.useEffect(() => {
@@ -105,6 +109,7 @@ function WorkspaceShellContents({
           runtime={runtime.model}
           controller={controller}
           actions={{ ...orchestration, startCodex: runtime.start }}
+          isRemote={isRemote}
         />
       }
     >

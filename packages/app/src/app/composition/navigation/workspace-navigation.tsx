@@ -2,7 +2,6 @@ import { useLocation, useNavigate } from 'react-router'
 import * as React from 'react'
 import { PanelLeft } from 'lucide-react'
 
-import { clearLocalOwnerSession } from '@/lib/auth/auth-client'
 import { clearConnectionProfileSession } from '@/lib/remote/device-key-store'
 import type { WorkspaceRouteController } from '@/app/composition/routes/use-workspace-route-controller'
 import { WorkspaceSidebar } from '@/app/workspace/sidebar/workspace-sidebar'
@@ -91,11 +90,13 @@ export function WorkspaceNavigation({
   runtime,
   controller,
   actions,
+  isRemote,
 }: {
   route: WorkspaceRouteController
   runtime: CodexRuntimeController['model']
   controller: WorkspaceSidebarController
   actions: WorkspaceNavigationActions
+  isRemote: boolean
 }) {
   const navigate = useNavigate()
   const [sidebarWidth, setSidebarWidth] = React.useState(readWorkspaceSidebarWidth)
@@ -112,16 +113,18 @@ export function WorkspaceNavigation({
     newChatActive: route.newChatActive,
     onOpenSettings: route.openSettings,
     onOpenNewChat: () => route.openNewChat(),
-    onSignOut: async () => {
-      const profileId = sessionStorage.getItem('codex-web:active-connection-profile')
-      if (profileId) {
-        await clearConnectionProfileSession(profileId).catch(() => undefined)
-        sessionStorage.removeItem('codex-web:active-connection-profile')
-      } else {
-        clearLocalOwnerSession()
-      }
-      void navigate('/login', { replace: true })
-    },
+    ...(isRemote
+      ? {
+          onSignOut: async () => {
+            const profileId = sessionStorage.getItem('codex-web:active-connection-profile')
+            if (profileId) {
+              await clearConnectionProfileSession(profileId).catch(() => undefined)
+              sessionStorage.removeItem('codex-web:active-connection-profile')
+            }
+            void navigate('/login', { replace: true })
+          },
+        }
+      : {}),
     onSelectThread: actions.selectThread,
     onSelectRootThread: actions.selectRootThread,
     onRetryProjects: controller.retryProjects,

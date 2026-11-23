@@ -43,11 +43,11 @@ Owner code 和 fingerprint 不再是用户认证概念。Relay 可能仍需要�
 
 ### 本地环境
 
-localhost 是独立的本地入口，使用 `http://localhost:5173` / `localhost` 的 WebAuthn profile。远程登录页不再提供 `This machine` 或 local/remote 模式切换；本地浏览器访问 localhost 时使用独立的 local Passkey 登录页面。远程 App origin 只负责已保存的远程连接和 enrollment deep link。
+本机入口仅接受 `http://localhost:5173` 与 `http://127.0.0.1:5173`，并由 Owner 验证 loopback socket peer、精确 Host 与 Origin。每个 WebSocket 连接获得短期内存 Owner admission；本机访问不使用 Passkey、bearer 或持久 session。Vite dev/preview 仅绑定 loopback。远程 App origin 仍只负责已保存的远程连接和 enrollment deep link，不能借本机代理获得本机授权。
 
 ### 恢复与撤销
 
-设备管理模块统一执行邀请和设备生命周期。管理面只提供设备查询、添加/取消添加、移除单个或所有设备；移除同步废止关联远程 session、使邀请失效并关闭连接。全部移除保留 Owner node identity、公钥、trust epoch 和本地 Passkey，不提供独立的 session 批量撤销、trust reset 或特殊 recovery 命令。所有远程设备丢失时，先在本机启动 Owner，再通过 CLI 生成普通 enrollment invitation；不存在远程 recovery code 登录路径。CLI 只通过本机 IPC 操作运行中的 Owner，不拥有临时 runtime。
+设备管理模块统一执行邀请和设备生命周期。管理面只提供设备查询、添加/取消添加、移除单个或所有设备；移除同步废止关联远程 session、使邀请失效并关闭连接。全部移除保留 Owner node identity、公钥和 trust epoch，不提供独立的 session 批量撤销、trust reset 或特殊 recovery 命令。所有远程设备丢失时，先在本机启动 Owner，再通过 CLI 生成普通 enrollment invitation；不存在远程 recovery code 登录路径。CLI 只通过本机 IPC 操作运行中的 Owner，不拥有临时 runtime。
 
 ## 安全边界
 

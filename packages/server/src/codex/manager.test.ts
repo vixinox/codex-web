@@ -428,8 +428,7 @@ test('logs server requests before rejecting requests without a thread id', async
 })
 
 test('shutdown rejects queued turns and clears their timers', async () => {
-  const queueConfig = { ...config, maxActiveTasksPerUser: 1 }
-  const manager = new CodexManager(queueConfig, workspace)
+  const manager = new CodexManager(config, workspace)
   const running = manager.enqueueTurn(
     'user-a',
     (signal) =>
@@ -446,8 +445,7 @@ test('shutdown rejects queued turns and clears their timers', async () => {
 })
 
 test('cancels the requested queued task instead of the queue head', async () => {
-  const queueConfig = { ...config, maxActiveTasksPerUser: 1 }
-  const manager = new CodexManager(queueConfig, workspace)
+  const manager = new CodexManager(config, workspace)
   let release!: () => void
   const first = manager.enqueueTurn(
     'user-a',
@@ -469,9 +467,8 @@ test('cancels the requested queued task instead of the queue head', async () => 
   await manager.shutdown()
 })
 
-test('runs different thread scopes in parallel while serializing the same scope', async () => {
-  const queueConfig = { ...config, maxActiveTasksPerUser: 2 }
-  const manager = new CodexManager(queueConfig, workspace)
+test('runs all distinct thread scopes concurrently without an app-level task cap', async () => {
+  const manager = new CodexManager(config, workspace)
   let running = 0
   let peak = 0
   const hold = (scope: string) =>
@@ -488,8 +485,8 @@ test('runs different thread scopes in parallel while serializing the same scope'
       crypto.randomUUID(),
       scope,
     )
-  await Promise.all([hold('thread-a'), hold('thread-b')])
-  assert.equal(peak, 2)
+  await Promise.all(Array.from({ length: 12 }, (_, index) => hold(`thread-${index}`)))
+  assert.equal(peak, 12)
   await manager.shutdown()
 })
 

@@ -32,7 +32,7 @@
 - [Owner 远程架构](owner-remote-architecture.md)：身份、设备信任与登录链接流程的规范边界。
 - [当前行为](current-behavior.md)：已有实现与尚待验收事项的快照。
 - [前端边界](frontend/README.zh-CN.md)：数据流、主题和错误呈现约束。
-- [登录页源码](../packages/app/src/app/composition/screens/login-screen.tsx)：本地认证、远程连接及连接管理。
+- [登录页源码](../packages/app/src/app/composition/screens/login-screen.tsx)：远程连接与登录链接；本机直接进入工作台。
 - [路由源码](../packages/app/src/app/entry/route-components.tsx)：入口跳转与链接兑换。
 - [会话失效处理](../packages/app/src/app/entry/auth-expiry-handler.tsx)：清理受影响的 session 并返回登录页。
 - [连接设置源码](../packages/app/src/app/settings/connection/connection-screen.tsx)：Passkey、登录链接与设备管理入口。
@@ -43,7 +43,7 @@
 
 | 场景 | 当前实现 |
 | --- | --- |
-| 本地入口 | hostname 为 localhost 时显示本地 Passkey；本地与远程 WebAuthn origins/RP IDs 隔离 |
+| 本地入口 | `localhost` 与 `127.0.0.1` 直接连接本机 Owner；不显示登录或本地 Passkey |
 | 远程入口 | 从浏览器读取 connection profiles，展示连接名称、上次连接时间及操作 |
 | 连接已有 profile | 优先使用已保存 session；未认证时在身份绑定的已知连接上尝试远程 Passkey |
 | 测试连接 | 检查连接链路与当前授权/session 状态，不触发 Passkey 或设备登记 |
@@ -60,7 +60,8 @@
 
 - 产品是单 Owner 工作台。浏览器可以保存多个连接记录，不把列表扩展为多 Owner 节点管理产品。
 - 新浏览器需要一次性登录链接建立设备信任。跨设备同步的 Passkey 不替代首次设备加入。
-- 本地登录仍使用本地 Passkey；远程页不增加本地/远程模式开关。
+- 本机来源检测只选择直连 UI；服务端仍独立校验 loopback peer、Host 与 Origin。
+- 远程 Passkey 只用于已登记设备重新认证；首次加入仍需要一次性登录链接。
 - QR 是登录链接的载体，可由设备系统扫码后打开链接；入口不增加浏览器内摄像头、图片上传、全局拖放或粘贴解码。
 - Owner code、fingerprint、恢复码、手工 token 输入和普通登录 QR 不进入入口 UI。
 - 不根据页面可达、上次连接时间或本地 session 存在与否推断工作台实时在线。
@@ -117,8 +118,7 @@
 
 | 情境 | 页面标题 | 说明与内容 | 主操作及反馈 |
 | --- | --- | --- | --- |
-| 本地待验证 | 打开你的工作台 | 使用此本地入口的 Passkey 继续；保留按需展开的帮助 | 使用 Passkey 继续 |
-| 本地认证中 | 保持原标题 | 原位置显示“正在验证身份…” | 禁止重复操作，等候真实认证结果 |
+| 本机入口 | 直接打开工作台 | 本机 Owner 服务连接状态由工作台呈现 | 不显示登录或本地 Passkey 操作 |
 | 远程连接读取中 | 打开你的工作台 | “正在读取已保存的连接…” | 暂不显示空列表或首次接入指引 |
 | 远程读取失败 | 打开你的工作台 | 显示读取失败与重试操作；不当作没有连接 | 重试读取 |
 | 远程已有连接 | 打开你的工作台 | 说明选择已保存的连接，展示连接列表 | 每项“连接”，更多菜单承载辅助操作 |
@@ -147,7 +147,7 @@
 
 ### 4.3 错误与恢复
 
-错误就近显示：连接操作显示在对应连接项下方，读取失败显示在列表区域，本地认证和链接失败显示在各自操作区。重新执行该操作时清除对应旧反馈；不自动清除用户还未读完的错误，不将同一错误重复播报。
+错误就近显示：连接操作显示在对应连接项下方，读取失败显示在列表区域，链接失败显示在登录链接操作区。本机连接失败作为工作台连接错误处理，不跳转到不存在的本地登录流程。重新执行该操作时清除对应旧反馈；不自动清除用户还未读完的错误，不将同一错误重复播报。
 
 | 已确认的情形 | 恢复方式与表达约束 |
 | --- | --- |
@@ -157,7 +157,6 @@
 | 浏览器返回 NotAllowedError | 可能是取消、超时或环境限制；使用中性提示，不无条件吞掉错误或认定用户主动取消 |
 | 网络中断或超时 | 提供重试；未确认前不宣称运行 Codex Web 的电脑离线，不自动要求重新登录 |
 | 缺少远程 Passkey | 按现有认证错误说明，从已登录设备配置远程 Passkey，或通过新登录链接再次登录；不伪造未认证注册入口 |
-| 缺少本地 Passkey | 引导到已登录设备的连接设置，按现有本地注册票据流程配置；不把远程登录链接写成本地 Passkey 的直接替代 |
 | 已确认设备撤销、信任绑定失效或记录不可用 | 说明需要新的登录链接；不允许忽略身份不匹配继续连接 |
 | 链接已确认无效、过期、已使用或被取消 | 引导获取新的登录链接；不把重复尝试同一失效链接作为主操作 |
 | 链接错误原因不明确 | 保留现有已知错误信息，提供手动重试与返回入口；不推断设备已成功加入 |
@@ -175,7 +174,6 @@
 | 用途 | 中文 | English |
 | --- | --- | --- |
 | 常规标题 | 打开你的工作台 | Open your workspace |
-| 本地说明 | 使用此本地入口的 Passkey 继续。 | Continue with a Passkey registered for this local address. |
 | 已有连接说明 | 选择已保存的连接，继续使用你的工作台。 | Choose a saved connection to continue to your workspace. |
 | 读取中 | 正在读取已保存的连接… | Loading saved connections… |
 | 读取失败 | 暂时无法读取已保存的连接，请重试。 | Saved connections could not be loaded. Please try again. |
@@ -185,7 +183,6 @@
 | 存储说明 | 连接信息保存在此浏览器中。 | Connection details are saved in this browser. |
 | 无 session 提示 | 连接时可能需要再次验证身份。 | You may need to verify your identity when connecting. |
 | 连接中 | 正在连接… | Connecting… |
-| 本地认证中 | 正在验证身份… | Verifying your identity… |
 | 系统认证提示 | 请完成身份验证。 | Complete identity verification to continue. |
 | 明确需要再次认证 | 请再次验证身份后继续。 | Verify your identity again to continue. |
 | 测试成功 | 连接测试通过。 | Connection test passed. |
@@ -209,7 +206,6 @@
 
 | 用途 | 中文 | English |
 | --- | --- | --- |
-| 本地主操作 | 使用 Passkey 继续 | Continue with Passkey |
 | 连接 | 连接 | Connect |
 | 更多按钮可访问名称 | {name} 的更多操作 | More actions for {name} |
 | 测试 | 测试连接 | Test connection |
@@ -233,7 +229,7 @@
 
 ### 内容与流程
 
-- [ ] 本地入口、远程已有连接、远程无连接、登录页带链接及链接处理页均遵循状态表。
+- [ ] 本机入口直接进入工作台；远程已有连接、远程无连接、登录页带链接及链接处理页均遵循状态表。
 - [ ] 列表读取中不闪现首次接入指引；读取失败有重试，不误报没有连接。
 - [ ] 远程优先恢复 session，仅在需要时进行 Passkey 认证；无 session 不统一导向新登录链接。
 - [ ] 连接是显式主操作；测试、退出和移除位于可用键盘操作的更多菜单，作用范围清楚。

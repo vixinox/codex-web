@@ -19,6 +19,7 @@ export type OwnerRuntimeState = {
   runtime: OwnerRuntimePhase
   error: string | null
   reconnectAttempt: number
+  ownerId: string | null
 }
 
 export type OwnerRuntimeController = {
@@ -73,6 +74,7 @@ export function createOwnerRuntimeController(
     runtime: 'idle',
     error: null,
     reconnectAttempt: 0,
+    ownerId: null,
   }
 
   const publish = () => listeners.forEach((listener) => listener())
@@ -164,6 +166,7 @@ export function createOwnerRuntimeController(
         runtime: 'blocked',
         error: 'This device has been removed. Use a new sign-in link.',
         reconnectAttempt: 0,
+        ownerId: null,
       })
       return
     }
@@ -174,6 +177,7 @@ export function createOwnerRuntimeController(
         transport: 'connected',
         authentication: runtime.authentication,
         runtime: runtime.phase,
+        ownerId: runtime.ownerId,
         error: null,
         reconnectAttempt: 0,
       })
@@ -195,6 +199,7 @@ export function createOwnerRuntimeController(
         authentication: runtime.authentication,
         runtime: 'failed',
         error: 'Owner connection failed.',
+        ownerId: null,
       })
       scheduleReconnect()
       return
@@ -207,6 +212,7 @@ export function createOwnerRuntimeController(
         transport: target ? 'reconnecting' : 'disconnected',
         authentication: runtime.authentication,
         runtime: target ? 'resuming' : 'idle',
+        ownerId: null,
       })
       scheduleReconnect()
     }
@@ -222,6 +228,7 @@ export function createOwnerRuntimeController(
       authentication: next.sessionToken ? 'unknown' : 'unauthenticated',
       runtime: next.sessionToken ? 'resuming' : 'idle',
       error: null,
+      ownerId: null,
     })
     try {
       await runtime.connect(next)
@@ -229,6 +236,7 @@ export function createOwnerRuntimeController(
         transport: 'connected',
         authentication: runtime.authentication,
         runtime: runtime.phase,
+        ownerId: runtime.ownerId,
         error: null,
         reconnectAttempt: 0,
       })
@@ -293,6 +301,7 @@ export function createOwnerRuntimeController(
           runtime: 'idle',
           error: null,
           reconnectAttempt: 0,
+          ownerId: null,
         },
         false,
       )

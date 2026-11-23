@@ -1,12 +1,12 @@
 # 前端边界与数据流
 
-状态：本文是设备邀请和 connection profile 的前端契约；代码迁移已接入，自动化与手工验收状态见 [`../current-behavior.md`](../current-behavior.md)。
+状态：本文是本机入口、远程设备邀请和 connection profile 的前端契约；实现和验收快照见 [`../current-behavior.md`](../current-behavior.md)。
 
 ## 登录入口
 
-前端按 origin 和设备状态拆分登录，不在一个页面里混合本地和远程模式：
+前端按 origin 和设备状态选择本地直连或远程连接，不在一个页面里混合认证模式：
 
-- **localhost**：独立的 local Passkey 登录入口，只连接本机 Owner Gateway；
+- **本机 localhost / 127.0.0.1**：直接连接本机 Owner Gateway；服务端来源校验才是授权依据，浏览器检测仅用于选择入口；
 - **远程 App origin**：只展示浏览器本地保存的远程 connection profiles；
 - **一次性登录 deep link**：现有登录页自动处理短期、单次 invitation，首次登记浏览器，重复登录复用设备身份；
 - **无本地连接记录的远程环境**：不展示 Owner code、fingerprint、普通登录 QR 或手工候选登录表单，只提示打开设备邀请。
@@ -28,7 +28,7 @@ Relay URL 对标准部署来自受信任的应用 profile。自定义 Relay 只�
 
 ## 一次性登录链接
 
-一次性登录链接可由 Owner 本机、CLI 或已认证设备生成，原 /app/enroll 地址直接渲染既有 LoginScreen，不提供独立 enrollment 页面；加载、失败和重试都在登录页展示。链接在 localhost/远程 origin 和已有 session 下均优先自动兑换。单 Owner 模型下，浏览器复用当前 Relay 下最近使用的已配对 profile（含已退出或过期 session），保留密钥与 Owner identity pin；无记录才生成新密钥。Owner 根据 E2EE 公钥登记或复用设备，返回配对凭据和新 session。既有重复 profile 不自动删除。
+一次性登录链接可由 Owner 本机、CLI 或已认证设备生成，原 /app/enroll 地址直接渲染既有 LoginScreen，不提供独立 enrollment 页面；加载、失败和重试都在登录页展示。链接只在远程 App origin 消费；localhost 收到旧链接时进入本机工作台，不兑换远程 grant。单 Owner 模型下，浏览器复用当前 Relay 下最近使用的已配对 profile（含已退出或过期 session），保留密钥与 Owner identity pin；无记录才生成新密钥。Owner 根据 E2EE 公钥登记或复用设备，返回配对凭据和新 session。既有重复 profile 不自动删除。
 
 链接页面展示“正在登录”及成功/失败状态，不要求用户阅读 fingerprint、填写 Owner code 或理解 Relay 路由。已保存的 nodeId、Owner public key 或 trust epoch 不匹配时失败关闭，不静默生成新身份；失败保留旧 profile/session，只删除本次新 draft。链接过期、取消、重复使用或 Owner 离线时提示重新获取链接。已移除设备须有新的 Owner 链接才能重新登记，更新原 profile。
 
@@ -38,7 +38,7 @@ Relay adapter 串行解密已收到的加密帧。原生 socket close 到达时�
 
 ## Connection 设置页面
 
-Settings → Connection 保留 local/remote Passkey 配置，其余管理能力为生成登录链接、设备列表/当前设备标记、移除设备和危险区的移除所有远程设备。前端功能位于 app/settings/connection，页面/client/model 采用 connection-* 命名；路由仍为 /app/settings/connection。不提供独立的批量 session 撤销或 trust reset。对话事件以类型化 Conversation change 进入前端状态，未知 runtime 事件由 adapter 给出诊断，不建立任意 raw extension 外发通道。页面不展示私钥、session token、Owner public key 原文、Owner code 或 fingerprint 字符串。
+Settings → Connection 只显示一项远程 Passkey 配置，其余管理能力为生成登录链接、设备列表/当前设备标记、移除设备和危险区的移除所有远程设备。本机用户可通过生成登录链接打开远程设置完成 Passkey 配置。前端功能位于 app/settings/connection，页面/client/model 采用 connection-* 命名；路由仍为 /app/settings/connection。不提供独立的批量 session 撤销或 trust reset。对话事件以类型化 Conversation change 进入前端状态，未知 runtime 事件由 adapter 给出诊断，不建立任意 raw extension 外发通道。页面不展示私钥、session token、Owner public key 原文、Owner code 或 fingerprint 字符串。
 
 Owner event envelope 由 `@codex-web/protocol/owner` 共享 parser 校验，应用协议不维护版本号。线程详情由 `threads.read` 的 Conversation snapshot 初始化，从同一响应的 watermark 订阅类型化 `conversation.change`，用共享 reducer 更新后再投影给 renderer。无需重建 Codex 通知；游标失效时重新读取，不能在已物化内容上重复追加历史增量。
 

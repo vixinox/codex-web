@@ -15,10 +15,7 @@ export type AdmissionConnection = {
   close(reason?: string): void
 }
 
-export async function authenticateWithPasskey(
-  connection: AdmissionConnection,
-  originProfile: 'local' | 'remote',
-) {
+export async function authenticateWithPasskey(connection: AdmissionConnection) {
   let options: { challengeId: string; options: PublicKeyCredentialRequestOptionsJSON }
   try {
     options = await connection.request('owner.passkey.authentication.options')
@@ -29,9 +26,7 @@ export async function authenticateWithPasskey(
     ) {
       throw new AppLocalError(
         AppLocalErrorCode.ownerAuthPasskeyRequired,
-        originProfile === 'local'
-          ? 'No local Passkey is registered. Use a signed-in Owner device to issue a one-time localhost enrollment ticket, then register a Passkey in this browser.'
-          : 'No remote Passkey is registered. Register one from a signed-in Owner device, then try again.',
+        'No Passkey is registered. Register one from a signed-in Owner device, then try again.',
         { cause: error },
       )
     }
@@ -62,7 +57,7 @@ export async function authenticateWithPasskey(
       AppLocalErrorCode.ownerProtocolInvalidFrame,
       'Passkey authentication returned an invalid session.',
     )
-  return { ...result, originProfile }
+  return result
 }
 
 function browserRequestOptions(

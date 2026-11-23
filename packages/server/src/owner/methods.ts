@@ -46,13 +46,6 @@ export function createOwnerMethodRegistry(services: OwnerApplicationServices): O
       },
     ],
     [
-      'owner.localEnrollment.issue',
-      {
-        access: 'authenticated' as const,
-        handle: (_params, context) => services.localEnrollmentTicketIssue(context),
-      },
-    ],
-    [
       'owner.enrollment.issue',
       {
         access: 'authenticated' as const,

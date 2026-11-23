@@ -18,7 +18,6 @@ export async function buildOwnerServer(config: ServerConfig, dependencies: AppDe
   const context = { config, dependencies }
   const services = createOwnerApplicationServices(dependencies, {
     trustedOrigins: config.trustedOrigins,
-    requireDangerousAccessConfirmation: config.requireDangerousAccessConfirmation,
     remoteRelayUrl: config.remoteRelayUrl,
     appOrigin: config.appOrigin,
     rpId: config.rpId,

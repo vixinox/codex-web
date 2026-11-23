@@ -91,6 +91,7 @@ export type OwnerRuntime = {
   readonly authentication: OwnerAuthenticationState
   readonly phase: OwnerRuntimePhase
   readonly connectionId: string | null
+  readonly ownerId: string | null
   connect(target: OwnerTarget): Promise<void>
   request<T = unknown>(method: string, params?: unknown, options?: RequestOptions): Promise<T>
   openStream(request: StreamRequest, handlers: StreamHandlers): StreamHandle
@@ -122,6 +123,7 @@ export function createOwnerRuntime(
   let state: OwnerTransportState = 'disconnected'
   let socket: WebSocketLike | null = null
   let connectionId: string | null = null
+  let ownerId: string | null = null
   let authenticated = false
   let authentication: OwnerAuthenticationState = 'unknown'
   let phase: OwnerRuntimePhase = 'idle'
@@ -161,6 +163,7 @@ export function createOwnerRuntime(
     const current = socket
     socket = null
     connectionId = null
+    ownerId = null
     authenticated = false
     authentication = reason === 'device_revoked' ? 'revoked' : 'unknown'
     phase = 'idle'
@@ -173,6 +176,7 @@ export function createOwnerRuntime(
     if (frame.type === 'ready') {
       connectionId = frame.connectionId
       authenticated = frame.authenticated
+      ownerId = frame.authenticated ? (frame.ownerId ?? null) : null
       authentication = frame.authenticated ? 'authenticated' : 'unauthenticated'
       phase = frame.authenticated ? 'ready' : 'idle'
       closed = false
@@ -507,6 +511,9 @@ export function createOwnerRuntime(
     },
     get connectionId() {
       return connectionId
+    },
+    get ownerId() {
+      return ownerId
     },
     connect,
     request,

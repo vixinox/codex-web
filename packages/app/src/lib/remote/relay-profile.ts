@@ -5,7 +5,7 @@ const LOCAL_RELAY_URL = 'ws://127.0.0.1:8787/ws'
  * bootstrap URL or QR payload, where it would become an untrusted routing input.
  */
 export function remoteRelayUrl(): string {
-  const configured = import.meta.env.VITE_CODEX_REMOTE_RELAY_URL?.trim()
+  const configured = import.meta.env.CODEX_REMOTE_RELAY_URL?.trim()
   const value = configured || (import.meta.env.DEV ? LOCAL_RELAY_URL : '')
   if (!value) throw new Error('Remote Relay URL is not configured.')
   let parsed: URL

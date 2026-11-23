@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { AUTH_EXPIRED_EVENT } from '@/lib/auth/auth-expiry'
 import { clearConnectionProfileSession } from '@/lib/remote/device-key-store'
-import { clearLocalOwnerSession } from '@/lib/auth/auth-client'
+import { ownerTargetKind } from '@/lib/owner-ws/target'
 
 export function AuthExpiryHandler() {
   const navigate = useNavigate()
@@ -11,7 +11,12 @@ export function AuthExpiryHandler() {
 
   useEffect(() => {
     const handleAuthExpired = (event: Event) => {
-      if (handlingRef.current || location.pathname === '/login') return
+      if (
+        handlingRef.current ||
+        location.pathname === '/login' ||
+        ownerTargetKind(window.location.origin) === 'local'
+      )
+        return
       handlingRef.current = true
       const detail: unknown = event instanceof CustomEvent ? event.detail : undefined
       const profileId =
@@ -21,9 +26,8 @@ export function AuthExpiryHandler() {
         typeof detail.profileId === 'string'
           ? detail.profileId
           : sessionStorage.getItem('codex-web:active-connection-profile')
-      const cleanup = profileId
-        ? clearConnectionProfileSession(profileId)
-        : Promise.resolve(clearLocalOwnerSession())
+      if (!profileId) return
+      const cleanup = clearConnectionProfileSession(profileId)
       if (profileId && sessionStorage.getItem('codex-web:active-connection-profile') === profileId)
         sessionStorage.removeItem('codex-web:active-connection-profile')
       void cleanup

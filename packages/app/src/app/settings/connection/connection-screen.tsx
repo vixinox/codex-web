@@ -24,10 +24,12 @@ import {
   type ConnectionClient,
   type ConnectionSnapshot,
 } from './connection-model'
+import { ownerTargetKind } from '@/lib/owner-ws/target'
 
-function enrollmentUrl(reference: string) {
-  const url = new URL('/app/enroll', window.location.origin)
+function enrollmentUrl(reference: string, appOrigin: string, next?: 'connection') {
+  const url = new URL('/app/enroll', appOrigin)
   url.searchParams.set('ref', reference)
+  if (next) url.searchParams.set('next', next)
   return url.toString()
 }
 
@@ -41,12 +43,13 @@ export function ConnectionScreen({ client }: { client: ConnectionClient }) {
   const [revision, setRevision] = useState(0)
   const [confirmation, setConfirmation] = useState<{ id: string } | 'all' | null>(null)
   const [enrollment, setEnrollment] = useState<{
-    ticket: string
-    origin: string
+    reference: string
+    appOrigin: string
     expiresAt: string
   } | null>(null)
   const current = useRef(data)
   const pending = useRef(false)
+  const local = ownerTargetKind(window.location.origin) === 'local'
 
   useEffect(() => {
     let active = true
@@ -62,7 +65,7 @@ export function ConnectionScreen({ client }: { client: ConnectionClient }) {
         const image = invitation
           ? current.current?.invitation?.reference === invitation.reference
             ? current.current.invitation.image
-            : await QRCode.toDataURL(enrollmentUrl(invitation.reference), {
+            : await QRCode.toDataURL(enrollmentUrl(invitation.reference, invitation.appOrigin), {
                 margin: 2,
                 width: 240,
                 errorCorrectionLevel: 'Q',
@@ -157,51 +160,56 @@ export function ConnectionScreen({ client }: { client: ConnectionClient }) {
           <SettingsSection title="Passkeys">
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-4 border-b pb-3">
-                <span>Remote origin · configured deployment</span>
-                <Badge variant={snapshot.remotePasskeyAvailable ? 'default' : 'secondary'}>
-                  {snapshot.remotePasskeyAvailable ? 'Configured' : 'Not configured'}
+                <span>Passkey · {snapshot.appOrigin ?? 'Remote access unavailable'}</span>
+                <Badge variant={snapshot.passkeyAvailable ? 'default' : 'secondary'}>
+                  {snapshot.passkeyAvailable ? 'Configured' : 'Not configured'}
                 </Badge>
               </div>
-              {!snapshot.remotePasskeyAvailable ? (
-                <Button disabled={busy} onClick={() => void act(() => client.registerPasskey())}>
-                  <KeyRound data-icon="inline-start" /> Register remote Passkey
-                </Button>
-              ) : null}
-              <div className="flex items-center justify-between gap-4 border-b pb-3">
-                <span>Local origin · localhost</span>
-                <Badge variant={snapshot.localPasskeyAvailable ? 'default' : 'secondary'}>
-                  {snapshot.localPasskeyAvailable ? 'Configured' : 'Not configured'}
-                </Badge>
-              </div>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  void act(async () => setEnrollment(await client.issueLocalEnrollmentTicket()))
-                }
-              >
-                Issue localhost enrollment ticket
-              </Button>
-              {enrollment ? (
-                <div className="flex flex-col gap-2 border-l-2 border-border pl-3 text-sm">
-                  <p>Open {enrollment.origin} to register a local-only Passkey.</p>
-                  <code className="block break-all text-xs">{enrollment.ticket}</code>
-                  <p className="text-xs text-muted-foreground">
-                    Expires {new Date(enrollment.expiresAt).toLocaleTimeString()}
-                  </p>
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(async () => {
-                        await client.registerPasskey(enrollment.ticket)
-                        setEnrollment(null)
-                      })
-                    }
-                  >
-                    Register local Passkey in this browser
+              {!snapshot.passkeyAvailable ? (
+                local ? (
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      {snapshot.appOrigin
+                        ? 'The link opens the remote website. Creating it replaces the current pending sign-in link.'
+                        : 'Remote access is not configured. Set up CODEX_APP_ORIGIN and Relay to create a Passkey.'}
+                    </p>
+                    <Button
+                      disabled={busy || !snapshot.appOrigin}
+                      onClick={() =>
+                        void act(async () => {
+                          const issuedInvitation = await client.issueEnrollment()
+                          const url = enrollmentUrl(
+                            issuedInvitation.reference,
+                            issuedInvitation.appOrigin,
+                            'connection',
+                          )
+                          const opened = window.open(url, '_blank', 'noopener,noreferrer')
+                          if (!opened) setEnrollment(issuedInvitation)
+                        })
+                      }
+                    >
+                      <KeyRound data-icon="inline-start" /> Set up Passkey
+                    </Button>
+                    {enrollment ? (
+                      <a
+                        className="break-all text-sm underline"
+                        href={enrollmentUrl(
+                          enrollment.reference,
+                          enrollment.appOrigin,
+                          'connection',
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open remote Passkey setup
+                      </a>
+                    ) : null}
+                  </>
+                ) : (
+                  <Button disabled={busy} onClick={() => void act(() => client.registerPasskey())}>
+                    <KeyRound data-icon="inline-start" /> Create Passkey
                   </Button>
-                </div>
+                )
               ) : null}
             </div>
           </SettingsSection>
@@ -227,7 +235,9 @@ export function ConnectionScreen({ client }: { client: ConnectionClient }) {
                       disabled={busy}
                       onClick={() =>
                         void act(() =>
-                          navigator.clipboard.writeText(enrollmentUrl(invitation.reference)),
+                          navigator.clipboard.writeText(
+                            enrollmentUrl(invitation.reference, invitation.appOrigin),
+                          ),
                         )
                       }
                     >

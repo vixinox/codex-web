@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { KeyRound, Loader2, LogOut, Radio, Trash2, Wifi } from 'lucide-react'
+import { Loader2, LogOut, Radio, Trash2, Wifi } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { createOwnerRuntime } from '@/lib/owner-ws/owner-runtime'
@@ -17,17 +17,19 @@ import {
 } from '@/lib/remote/device-key-store'
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
 import { presentAppError } from '@/lib/errors/presentation'
+import { ownerTargetKind } from '@/lib/owner-ws/target'
 
 export function LoginScreen() {
   const navigate = useNavigate()
   const location = useLocation()
-  const isLocal = window.location.hostname === 'localhost'
+  const isLocal = ownerTargetKind(window.location.origin) === 'local'
   const [profiles, setProfiles] = React.useState<ConnectionProfileSummary[]>([])
   const [busy, setBusy] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [statuses, setStatuses] = React.useState<Record<string, string>>({})
   const hasLoginLink =
     location.pathname === '/app/enroll' || new URLSearchParams(location.search).has('ref')
+  const next = new URLSearchParams(location.search).get('next')
   const [loginAttempt, setLoginAttempt] = React.useState(0)
 
   const refreshProfiles = React.useCallback(async () => {
@@ -54,7 +56,8 @@ export function LoginScreen() {
     if (
       !reference ||
       !/^[A-Za-z0-9_-]{16,256}$/u.test(reference) ||
-      [...params.keys()].some((key) => key !== 'ref')
+      [...params.keys()].some((key) => !['ref', 'next'].includes(key)) ||
+      (params.has('next') && params.get('next') !== 'connection')
     ) {
       setError('This login link is invalid. Generate a new link from the Owner.')
       setBusy(null)
@@ -65,9 +68,13 @@ export function LoginScreen() {
       .then(async (result) => {
         if (!active) return undefined
         sessionStorage.setItem('codex-web:active-connection-profile', result.profileId)
-        await navigate(`/app?connection=${encodeURIComponent(result.profileId)}`, {
+        const target =
+          next === 'connection'
+            ? '/app/settings/connection'
+            : `/app?connection=${encodeURIComponent(result.profileId)}`
+        await navigate(target, {
           replace: true,
-          state: { remoteOwnerId: result.ownerId, connectionProfileId: result.profileId },
+          state: { connectionProfileId: result.profileId },
         })
         return undefined
       })
@@ -83,7 +90,7 @@ export function LoginScreen() {
     return () => {
       active = false
     }
-  }, [hasLoginLink, location.search, loginAttempt, navigate])
+  }, [hasLoginLink, location.search, loginAttempt, navigate, next])
 
   const connectProfile = async (id: string, testOnly: boolean) => {
     const profile = await loadConnectionProfile(id)
@@ -114,7 +121,7 @@ export function LoginScreen() {
               ? 'Owner is reachable, but the session needs re-authentication.'
               : 'Owner is reachable, but this profile has no active session.',
           )
-        const result = await authenticateWithPasskey(runtime, 'remote')
+        const result = await authenticateWithPasskey(runtime)
         if (!result.ownerId || result.ownerId !== profile.ownerId)
           throw new Error('Owner identity does not match this saved connection.')
         await saveConnectionProfileSession(id, {
@@ -158,29 +165,6 @@ export function LoginScreen() {
         setStatuses((current) => ({ ...current, [key.slice(5)]: message }))
     } finally {
       setBusy(null)
-    }
-  }
-
-  const signInLocal = async () => {
-    const runtime = createOwnerRuntime()
-    try {
-      await runtime.connect({
-        url: `${window.location.origin.replace(/^http/u, 'ws')}/ws`,
-        clientId: 'owner-local-login',
-        capabilities: ['owner'],
-      })
-      const result = await authenticateWithPasskey(runtime, 'local')
-      if (!result.ownerId || !result.token || !result.expiresAt)
-        throw new Error('Owner identity is unavailable.')
-      const { saveLocalOwnerSession } = await import('@/lib/auth/auth-client')
-      saveLocalOwnerSession({
-        token: result.token,
-        ownerId: result.ownerId,
-        expiresAt: result.expiresAt,
-      })
-      await navigate('/app', { replace: true })
-    } finally {
-      runtime.close('local Passkey sign-in complete')
     }
   }
 
@@ -247,26 +231,6 @@ export function LoginScreen() {
               </div>
             )}
           </div>
-        ) : isLocal ? (
-          <Card>
-            <CardContent className="space-y-4 p-5">
-              <p className="text-sm text-muted-foreground">
-                Use a Passkey registered for localhost.
-              </p>
-              <Button
-                className="w-full"
-                disabled={busy !== null}
-                onClick={() => void run('local', signInLocal)}
-              >
-                {busy === 'local' ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <KeyRound className="size-4" />
-                )}
-                Use local Passkey
-              </Button>
-            </CardContent>
-          </Card>
         ) : (
           <div className="space-y-3">
             {profiles.length ? (

@@ -15,7 +15,7 @@ import type { OwnerConnector } from '../remote/connector.js'
 import { createDeviceManagement } from './device-management.js'
 import { OwnerMethodError } from './errors.js'
 import type { OwnerContext, OwnerMethodContext, OwnerTransport } from './session-runtime.js'
-import { createOwnerAuthDomain, WEBAUTHN_PROFILES, type WebAuthnProfiles } from './auth-domain.js'
+import { createOwnerAuthDomain } from './auth-domain.js'
 import { AuthDomainError } from './errors.js'
 import type { Database } from '../database.js'
 import { CodexRpcRequestError } from '../codex/rpc-client.js'
@@ -81,7 +81,6 @@ export type OwnerApplicationServiceDependencies = {
 
 export type OwnerApplicationServiceOptions = {
   trustedOrigins: readonly string[]
-  requireDangerousAccessConfirmation?: boolean
   remoteRelayUrl?: string
   appOrigin?: string
   rpId?: string
@@ -94,27 +93,21 @@ export function createOwnerApplicationServices(
   options: OwnerApplicationServiceOptions,
 ) {
   const authDomain =
-    dependencies.database && dependencies.ownerId
+    dependencies.database && dependencies.ownerId && options.appOrigin && options.rpId
       ? createOwnerAuthDomain(
           dependencies.database,
           dependencies.ownerId,
           () => Date.now(),
           async () =>
             dependencies.remote ? (await dependencies.remote.trust.identity()).trustEpoch : 0,
-          {
-            local: WEBAUTHN_PROFILES.local,
-            remote: {
-              origin: options.appOrigin ?? WEBAUTHN_PROFILES.remote.origin,
-              rpId: options.rpId ?? WEBAUTHN_PROFILES.remote.rpId,
-            },
-          } satisfies WebAuthnProfiles,
+          { origin: options.appOrigin, rpId: options.rpId },
         )
       : undefined
   const devices = createDeviceManagement(
     dependencies.remote,
     authDomain,
     dependencies.ownerId,
-    options.appOrigin ?? WEBAUTHN_PROFILES.remote.origin,
+    options.appOrigin ?? '',
   )
   const threadDomain = createThreadDomain({
     workspace: dependencies.workspace,
@@ -137,41 +130,39 @@ export function createOwnerApplicationServices(
         ownerExists,
         authenticated: context.owner !== null,
         ...(context.owner ? { ownerId: context.owner.ownerId } : {}),
-        ...(authDomain ? { remotePasskeyAvailable: await authDomain.hasPasskey('remote') } : {}),
+        passkeyAvailable: authDomain ? await authDomain.hasPasskey() : false,
+        appOrigin: options.appOrigin ?? null,
       }
     },
 
     async passkeyRegisterOptions(context: OwnerMethodContext, _input: Record<string, unknown>) {
-      const profile = webauthnProfile(context.transport)
+      const allowed = webauthnTransport(context.transport, options.appOrigin)
       log.info('owner.passkey.registration-options-requested', {
-        profile: profile ?? 'unavailable',
+        profile: allowed ? 'remote' : 'unavailable',
         transport: context.transport.kind,
       })
-      if (!authDomain || !profile) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
-      if (profile === 'remote') requireOwner(context)
-      else if (context.owner) requireOwner(context)
-      const ticket = profile === 'local' ? context.enrollmentTicket : undefined
-      return authDomain.registerOptions(profile, authBinding(context), ticket)
+      if (!authDomain || !allowed) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
+      requireOwner(context)
+      return authDomain.registerOptions({
+        ...authBinding(context),
+        origin: options.appOrigin!,
+        rpId: options.rpId!,
+      })
     },
 
     async passkeyRegister(context: OwnerMethodContext, input: Record<string, unknown>) {
-      const profile = webauthnProfile(context.transport)
-      if (profile === 'remote') requireOwner(context)
-      else if (profile !== 'local') throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
-      if (
-        !authDomain ||
-        !profile ||
-        typeof input.challengeId !== 'string' ||
-        !isRecord(input.response)
-      )
+      const allowed = webauthnTransport(context.transport, options.appOrigin)
+      if (!allowed || !authDomain) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
+      requireOwner(context)
+      if (typeof input.challengeId !== 'string' || !isRecord(input.response))
         throw new OwnerMethodError('INVALID_PARAMS')
       try {
         const result = await authDomain.register(input.challengeId, input.response as never, {
           ...authBinding(context),
-          profile,
-          ...(typeof input.ticket === 'string' ? { ticket: input.ticket } : {}),
+          origin: options.appOrigin!,
+          rpId: options.rpId!,
         })
-        log.info('owner.passkey.registration-succeeded', { profile })
+        log.info('owner.passkey.registration-succeeded', { profile: 'remote' })
         return result
       } catch (error) {
         throw new OwnerMethodError('PASSKEY_INVALID', false, { cause: error })
@@ -179,10 +170,14 @@ export function createOwnerApplicationServices(
     },
 
     async passkeyAuthenticationOptions(context: OwnerMethodContext) {
-      const profile = webauthnProfile(context.transport)
-      if (!authDomain || !profile) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
+      const allowed = webauthnTransport(context.transport, options.appOrigin)
+      if (!authDomain || !allowed) throw new OwnerMethodError('WEBAUTHN_ORIGIN_NOT_ALLOWED')
       try {
-        return await authDomain.authenticationOptions(profile, authBinding(context))
+        return await authDomain.authenticationOptions({
+          ...authBinding(context),
+          origin: options.appOrigin!,
+          rpId: options.rpId!,
+        })
       } catch (error) {
         if (error instanceof AuthDomainError) throw new OwnerMethodError(error.code)
         throw error
@@ -190,10 +185,11 @@ export function createOwnerApplicationServices(
     },
 
     async passkeyAuthenticate(context: OwnerMethodContext, input: Record<string, unknown>) {
-      const profile = webauthnProfile(context.transport)
+      const allowed = webauthnTransport(context.transport, options.appOrigin)
       if (
         !authDomain ||
-        !profile ||
+        !allowed ||
+        !context.transport.pairedDeviceId ||
         typeof input.challengeId !== 'string' ||
         !isRecord(input.response)
       )
@@ -204,11 +200,10 @@ export function createOwnerApplicationServices(
           input.response as never,
           {
             ...authBinding(context),
-            profile,
+            origin: options.appOrigin!,
+            rpId: options.rpId!,
           },
-          profile === 'remote' && context.transport.pairedDeviceId
-            ? context.transport.pairedDeviceId
-            : undefined,
+          context.transport.pairedDeviceId,
         )
         await context.authenticate({
           ownerId: dependencies.ownerId!,
@@ -234,24 +229,19 @@ export function createOwnerApplicationServices(
       return devices.redeem(context, input)
     },
 
-    async localEnrollmentTicketIssue(_context: OwnerMethodContext) {
-      if (!authDomain) throw new OwnerMethodError('AUTH_UNAVAILABLE')
-      return authDomain.issueLocalEnrollmentTicket()
-    },
-
     async enrollmentIssue(context: OwnerMethodContext) {
+      if (!options.appOrigin) throw new OwnerMethodError('REMOTE_UNAVAILABLE', true)
       const owner = requireOwner(context)
       const issuer = context.transport.kind === 'local' ? 'owner-local' : 'paired-device'
-      if (issuer === 'paired-device' && authDomain && (await authDomain.hasPasskey('remote'))) {
+      if (issuer === 'paired-device' && authDomain && (await authDomain.hasPasskey())) {
         if (!owner.stepUpAt || Date.now() - owner.stepUpAt > 5 * 60_000)
           throw new OwnerMethodError('STEP_UP_REQUIRED')
       }
-      const { reference, expiresAt } = await devices.issue(issuer, owner.transport.pairedDeviceId)
-      return { reference, expiresAt }
+      return devices.issue(issuer, owner.transport.pairedDeviceId)
     },
     async enrollmentStatus(context: OwnerMethodContext) {
       requireOwner(context)
-      return devices.status()
+      return { ...(await devices.status()), appOrigin: options.appOrigin ?? null }
     },
     async enrollmentCancel(context: OwnerMethodContext) {
       const owner = requireOwner(context)
@@ -405,7 +395,6 @@ export function createOwnerApplicationServices(
         pendingCredentialId: status?.pendingCredentialId ?? null,
         restartRequired: status?.restartRequired ?? false,
         activeTurns: status?.activeTurns ?? 0,
-        dangerousAccessConfirmed: status?.dangerousAccessConfirmed ?? false,
         error: status?.error ?? null,
         currentCredentialId: await dependencies.workspace.getCurrentCredentialId(owner.ownerId),
       }
@@ -470,7 +459,6 @@ export function createOwnerApplicationServices(
       input: {
         operation?: unknown
         credentialId?: unknown
-        confirmDangerousAccess?: unknown
       },
     ) {
       const owner = requireOwner(context)
@@ -480,8 +468,6 @@ export function createOwnerApplicationServices(
         input.operation !== 'start' &&
         input.operation !== 'restart'
       )
-        throw new OwnerMethodError('INVALID_PARAMS')
-      if (options.requireDangerousAccessConfirmation && input.confirmDangerousAccess !== true)
         throw new OwnerMethodError('INVALID_PARAMS')
       if (input.credentialId !== undefined && !safeId(input.credentialId))
         throw new OwnerMethodError('INVALID_CREDENTIAL')
@@ -494,7 +480,6 @@ export function createOwnerApplicationServices(
       if (!method) throw new OwnerMethodError('CODEX_UNAVAILABLE', true)
       try {
         await method.call(dependencies.codex, owner.ownerId, '', credentialId)
-        dependencies.codex.markDangerousAccessConfirmed?.(owner.ownerId)
         await dependencies.workspace.setCurrentCredentialId(owner.ownerId, credentialId)
         return this.codexStatus(context)
       } catch (error) {
@@ -565,11 +550,6 @@ export function createOwnerApplicationServices(
           ? await dependencies.workspace.getProject(owner.ownerId, projectId)
           : null
       if (projectId && !project) throw new OwnerMethodError('PROJECT_NOT_FOUND')
-      if (
-        options.requireDangerousAccessConfirmation &&
-        !dependencies.codex.getStatus?.(owner.ownerId)?.dangerousAccessConfirmed
-      )
-        throw new OwnerMethodError('INVALID_TURN_REQUEST')
       const client = await readyClient(owner.ownerId)
       const catalog = await dependencies.codex.modelCatalog?.(owner.ownerId)
       const selectedModel = catalog?.find((entry) => entry.id === model)
@@ -1053,11 +1033,10 @@ export function createOwnerApplicationServices(
     async ownerSecurityStatus(context: OwnerMethodContext) {
       requireOwner(context)
       const registeredDevices = await devices.listDevices()
-      const remotePasskeyAvailable = authDomain ? await authDomain.hasPasskey('remote') : false
-      const localPasskeyAvailable = authDomain ? await authDomain.hasPasskey('local') : false
+      const passkeyAvailable = authDomain ? await authDomain.hasPasskey() : false
       return {
-        remotePasskeyAvailable,
-        localPasskeyAvailable,
+        passkeyAvailable,
+        appOrigin: options.appOrigin ?? null,
         initialized: true,
         devices: registeredDevices,
         currentDeviceId: context.transport.pairedDeviceId ?? null,
@@ -1108,11 +1087,6 @@ export function createOwnerApplicationServices(
         collaborationMode !== 'default' &&
         collaborationMode !== 'plan') ||
       selection === null
-    )
-      throw new OwnerMethodError('INVALID_TURN_REQUEST')
-    if (
-      options.requireDangerousAccessConfirmation &&
-      !dependencies.codex.getStatus?.(owner.ownerId)?.dangerousAccessConfirmed
     )
       throw new OwnerMethodError('INVALID_TURN_REQUEST')
     const access = await threadDomain.access({
@@ -1180,11 +1154,6 @@ export function createOwnerApplicationServices(
       !part.text.trim() ||
       part.text.length > MAX_INITIAL_MESSAGE_LENGTH ||
       selection === null
-    )
-      throw new OwnerMethodError('INVALID_TURN_REQUEST')
-    if (
-      options.requireDangerousAccessConfirmation &&
-      !dependencies.codex.getStatus?.(owner.ownerId)?.dangerousAccessConfirmed
     )
       throw new OwnerMethodError('INVALID_TURN_REQUEST')
     const access = await threadDomain.access({
@@ -1317,10 +1286,8 @@ function requireLocalOwner(context: OwnerMethodContext) {
   if (context.transport.kind !== 'local') throw new OwnerMethodError('LOCAL_TRANSPORT_REQUIRED')
 }
 
-function webauthnProfile(transport: OwnerTransport): keyof typeof WEBAUTHN_PROFILES | null {
-  if (transport.kind === 'relay' && transport.e2eeVerified === true) return 'remote'
-  if (transport.kind === 'local' && transport.origin === 'http://localhost:5173') return 'local'
-  return null
+function webauthnTransport(transport: OwnerTransport, appOrigin?: string): boolean {
+  return Boolean(appOrigin && transport.kind === 'relay' && transport.e2eeVerified === true)
 }
 
 function authBinding(context: OwnerMethodContext) {

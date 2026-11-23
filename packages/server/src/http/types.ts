@@ -46,14 +46,12 @@ export type CodexBridge = {
     restartRequired: boolean
     activeTurns?: number
     error: string | null
-    dangerousAccessConfirmed?: boolean
   }
   ensureThread?: (userId: string, threadId: string) => Promise<void>
   markThreadLoaded?: (userId: string, threadId: string) => void
   start?: (userId: string, projectId: string, credentialId: string) => Promise<unknown>
   restart?: (userId: string, projectId: string, credentialId: string) => Promise<unknown>
   markCredentialPending?: (userId: string, credentialId: string) => void
-  markDangerousAccessConfirmed?: (userId: string) => void
   stop?: (userId: string) => Promise<void>
   events: {
     latestEventId: (userId: string, threadId?: string) => number

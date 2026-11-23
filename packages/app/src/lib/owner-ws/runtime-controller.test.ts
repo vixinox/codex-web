@@ -28,6 +28,7 @@ function ready(socket: FakeSocket) {
 
     connectionId: 'controller-connection',
     authenticated: true,
+    ownerId: 'owner-1',
     capabilities: ['owner'],
   })
 }
@@ -106,6 +107,7 @@ describe('Owner runtime controller', () => {
       transport: 'connected',
       authentication: 'authenticated',
       runtime: 'ready',
+      ownerId: 'owner-1',
     })
 
     const second = controller.switchTarget({ url: 'ws://two', sessionToken: 'token-2' })

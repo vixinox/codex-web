@@ -9,8 +9,6 @@ export const owner = sqliteTable('owner', {
     .notNull()
     .$defaultFn(() => new Date()),
   runtimeInitializedAt: timestamp('runtime_initialized_at'),
-  remotePasskeyConfiguredAt: timestamp('remote_passkey_configured_at'),
-  localPasskeyConfiguredAt: timestamp('local_passkey_configured_at'),
   currentCredentialId: text('current_credential_id'),
 })
 
@@ -34,18 +32,6 @@ export const passkeyCredential = sqliteTable(
   },
   (table) => [index('passkey_credential_owner_origin_idx').on(table.ownerId, table.origin)],
 )
-
-export const localEnrollmentTicket = sqliteTable('local_enrollment_ticket', {
-  id: text('id').primaryKey(),
-  ownerId: text('owner_id')
-    .notNull()
-    .references(() => owner.id, { onDelete: 'cascade' }),
-  tokenHash: text('token_hash').notNull().unique(),
-  rpId: text('rp_id').notNull(),
-  purpose: text('purpose').notNull(),
-  expiresAt: timestamp('expires_at').notNull(),
-  consumedAt: timestamp('consumed_at'),
-})
 
 export const remoteDevice = sqliteTable(
   'remote_device',
@@ -72,7 +58,9 @@ export const ownerSession = sqliteTable(
     ownerId: text('owner_id')
       .notNull()
       .references(() => owner.id, { onDelete: 'cascade' }),
-    deviceId: text('device_id').references(() => remoteDevice.id, { onDelete: 'cascade' }),
+    deviceId: text('device_id')
+      .notNull()
+      .references(() => remoteDevice.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull().unique(),
     trustEpoch: integer('trust_epoch').notNull(),
     createdAt: timestamp('created_at')
@@ -154,7 +142,6 @@ export const conversationEvent = sqliteTable(
 export const schema = {
   owner,
   passkeyCredential,
-  localEnrollmentTicket,
   remoteDevice,
   ownerSession,
   project,

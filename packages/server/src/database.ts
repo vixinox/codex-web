@@ -66,7 +66,6 @@ function assertCurrentSchema(driver: DatabaseDriver.Database) {
   const missingTables = [
     'owner',
     'passkey_credential',
-    'local_enrollment_ticket',
     'remote_device',
     'owner_session',
     'project',
@@ -83,7 +82,34 @@ function assertCurrentSchema(driver: DatabaseDriver.Database) {
     'domain_events',
   ].filter((table) => tables.has(table))
   const hasLegacyMigrationTable = tables.has('schema_migrations')
-  if (missingTables.length > 0 || legacyTables.length > 0 || hasLegacyMigrationTable) {
+  const legacyTablesPresent = tables.has('local_enrollment_ticket')
+  const ownerColumns = tables.has('owner')
+    ? new Set(
+        (driver.prepare("PRAGMA table_info('owner')").all() as Array<{ name: string }>).map(
+          ({ name }) => name,
+        ),
+      )
+    : new Set<string>()
+  const hasLegacyOwnerColumns =
+    ownerColumns.has('local_passkey_configured_at') ||
+    ownerColumns.has('remote_passkey_configured_at')
+  const sessionDeviceId = tables.has('owner_session')
+    ? (
+        driver.prepare("PRAGMA table_info('owner_session')").all() as Array<{
+          name: string
+          notnull: number
+        }>
+      ).find(({ name }) => name === 'device_id')
+    : undefined
+  const nullableSessionDeviceId = sessionDeviceId !== undefined && sessionDeviceId.notnull !== 1
+  if (
+    missingTables.length > 0 ||
+    legacyTables.length > 0 ||
+    hasLegacyMigrationTable ||
+    legacyTablesPresent ||
+    hasLegacyOwnerColumns ||
+    nullableSessionDeviceId
+  ) {
     throw new Error(
       'Owner database schema is missing current tables or still contains legacy tables. Run `pnpm db:reset` to explicitly recreate it.',
     )

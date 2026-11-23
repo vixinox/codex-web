@@ -80,6 +80,12 @@ function createRuntime(
   return runtime
 }
 
+function markVerifiedRelay(transport: FakeTransport) {
+  transport.kind = 'relay'
+  transport.pairedDeviceId = 'device-1'
+  transport.e2eeVerified = true
+}
+
 test('requires hello first, rejects unsupported fields, and resumes sessions before ready', async () => {
   const transport = new FakeTransport()
   createRuntime(transport, new Map(), {
@@ -103,6 +109,7 @@ test('requires hello first, rejects unsupported fields, and resumes sessions bef
   })
 
   const resumedTransport = new FakeTransport()
+  markVerifiedRelay(resumedTransport)
   createRuntime(resumedTransport, new Map(), {
     resumeSession: async (token) =>
       token === 'valid' ? { ownerId: 'owner-1', sessionId: 's1' } : null,
@@ -120,8 +127,50 @@ test('requires hello first, rejects unsupported fields, and resumes sessions bef
 
     connectionId: 'connection-1',
     authenticated: true,
+    ownerId: 'owner-1',
     capabilities: [],
   })
+})
+
+test('local connections consume only server-provided admission and never resume bearer sessions', async () => {
+  const transport = new FakeTransport()
+  let resumeCalls = 0
+  createRuntime(transport, new Map(), {
+    localAdmission: { ownerId: 'owner-local', sessionId: 'local:connection-1' },
+    resumeSession: async () => {
+      resumeCalls += 1
+      return null
+    },
+  })
+  transport.receive({
+    type: 'hello',
+    clientId: 'client-local',
+    capabilities: [],
+    sessionToken: 'untrusted-local-token',
+  })
+  await waitFor(() => readFrames(transport).some((frame) => frame.type === 'ready'))
+  assert.deepEqual(readFrames(transport)[0], {
+    type: 'ready',
+    connectionId: 'connection-1',
+    authenticated: true,
+    ownerId: 'owner-local',
+    capabilities: [],
+  })
+  assert.equal(resumeCalls, 0)
+
+  const relay = new FakeTransport()
+  relay.kind = 'relay'
+  relay.pairedDeviceId = 'paired-device'
+  relay.e2eeVerified = true
+  createRuntime(relay, new Map(), {
+    localAdmission: { ownerId: 'owner-local', sessionId: 'local:must-not-cross' },
+  })
+  relay.receive({ type: 'hello', clientId: 'client-remote', capabilities: [] })
+  await waitFor(() => readFrames(relay).some((frame) => frame.type === 'ready'))
+  assert.equal(
+    (readFrames(relay)[0] as Extract<OwnerFrame, { type: 'ready' }>).authenticated,
+    false,
+  )
 })
 
 test('rejects removed Conversation RPC aliases with method-not-found', async () => {
@@ -444,6 +493,7 @@ test('rejects invalid session resumption before accessing Owner methods', async 
 
 test('opens and explicitly cancels a stream, then cleans active work on disconnect', async () => {
   const transport = new FakeTransport()
+  markVerifiedRelay(transport)
   let signal: AbortSignal | undefined
   createRuntime(
     transport,
@@ -499,6 +549,7 @@ test('opens and explicitly cancels a stream, then cleans active work on disconne
   assert.equal(signal?.aborted, true)
 
   const invalidTransport = new FakeTransport()
+  markVerifiedRelay(invalidTransport)
   let invalidSignal: AbortSignal | undefined
   createRuntime(
     invalidTransport,
@@ -540,6 +591,7 @@ test('opens and explicitly cancels a stream, then cleans active work on disconne
   assert.equal(invalidSignal?.aborted, true)
 
   const disconnectTransport = new FakeTransport()
+  markVerifiedRelay(disconnectTransport)
   let requestSignal: AbortSignal | undefined
   createRuntime(
     disconnectTransport,
@@ -683,6 +735,7 @@ test('rejects relay transports before hello unless pairing and E2EE are verified
 
 test('keeps session close explicit and closes the socket after the response', async () => {
   const transport = new FakeTransport()
+  markVerifiedRelay(transport)
   createRuntime(
     transport,
     new Map([

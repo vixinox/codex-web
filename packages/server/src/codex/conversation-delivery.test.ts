@@ -26,10 +26,7 @@ test('replays typed Conversation changes through the Owner cursor after reopenin
     port: 3000,
     trustedOrigins: [],
     dataRoot,
-    maxActiveTasksPerUser: 2,
     credentialEncryptionKey: 'test-key',
-    allowedOutboundSchemes: ['https'],
-    allowedOutboundHosts: ['api.example.com'],
   }
   let driver: ReturnType<typeof createDatabase>['driver'] | undefined
   try {

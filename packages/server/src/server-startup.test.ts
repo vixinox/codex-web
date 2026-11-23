@@ -23,11 +23,7 @@ test('logs the database failure reason before exiting', async () => {
             env: {
               ...process.env,
               NODE_ENV: 'test',
-              BETTER_AUTH_SECRET: '12345678901234567890123456789012',
-              BETTER_AUTH_URL: 'http://127.0.0.1:3000',
               CODEX_APP_ORIGIN: 'https://app.codex.test',
-              CODEX_APP_RP_ID: 'app.codex.test',
-              CODEX_CREDENTIAL_ENCRYPTION_KEY: 'test-key',
               CODEX_DATA_ROOT: dataRoot,
               CODEX_EXIT_ON_SERVER_STARTUP_FAILURE: 'true',
             },

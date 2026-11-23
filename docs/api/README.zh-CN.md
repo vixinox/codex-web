@@ -1,12 +1,12 @@
 # API 边界
 
-状态：本文是 Owner 设备邀请认证契约；代码迁移已接入，自动化与手工验收状态见 [`../current-behavior.md`](../current-behavior.md)。
+状态：Owner 设备邀请、远程认证与本机 admission 契约；实施和验收快照见 [`../current-behavior.md`](../current-behavior.md)。
 
 ## Owner WebSocket
 
 Owner 控制使用经过认证的 Owner WebSocket protocol。所有 workspace、Project、Thread、Turn、事件和 Owner 管理方法都在 Owner Gateway 内执行，并按各领域接口返回浏览器；已认证 Owner 的业务内容不经过保密性投影。
 
-远程 admission 只有两类；Owner 本机/CLI 恢复属于本地管理入口，不是远程登录凭据：
+远程 admission 只有两类；Owner 本机/CLI 是受限的本地管理入口，不是远程登录凭据：
 
 1. **一次性链接登录（enrollment）**：消费短期、单次 invitation，验证浏览器设备公钥；首次登记设备，已登记公钥复用 deviceId，为本次登录创建 session。无需配置 Passkey。
 2. **remote Passkey**：针对已知 connection profile 建立候选连接，执行 challenge/verify，成功后签发该设备的 Owner session。
@@ -33,20 +33,21 @@ Owner 控制使用经过认证的 Owner WebSocket protocol。所有 workspace、
 
 session token 只返回一次，服务端只保存哈希。session 受 idle/absolute TTL、设备撤销和 trust epoch 约束。连接测试只能报告 Relay、Owner、E2EE、设备授权和 session 状态，不能改变授权状态。
 
-## WebAuthn origins
+## 本机 admission 与 WebAuthn origin
 
-localhost 与远程 App origin 是独立的 WebAuthn profile：
+本机 Owner WebSocket 只接受通过 loopback peer、精确本地 Host 和 `http://localhost:5173` / `http://127.0.0.1:5173` Origin 检查的连接。服务端为每条通过检查的连接创建短期内存 Owner admission；它不签发 bearer、不写入 session 表，连接关闭即失效。业务方法仍按 Owner 上下文授权。远程 App origin 和 forwarded headers 不扩大本机授权边界。
 
-- 本地默认 `http://localhost:5173` / RP ID `localhost`；
-- 远程使用经过校验的 HTTPS App origin 和匹配 RP ID；
+WebAuthn 只为远程 HTTPS App origin 配置一个 `{ origin, rpId }`：
+
+- RP ID 从已配置的 `CODEX_APP_ORIGIN` hostname 推导；纯本机运行可不配置远程 origin；
 - Relay 只提供 transport，不改变 WebAuthn origin；
-- 本地 Passkey 只在 localhost 入口使用，remote Passkey 只在已知远程 connection profile 上使用。
+- Passkey 只用于已知远程设备的重新认证，不能替代首次设备 enrollment。
 
 `owner.passkey.authentication.verify` 成功返回 `{ ownerId, token, expiresAt }`；登录入口校验 Owner 身份后保存 session，远程登录还须匹配已保存 profile 的 Owner。身份字段为必需，不以缺失身份的响应完成登录。
 
 ## 设备与恢复管理
 
-已认证管理方法只覆盖设备列表、单设备/全部设备撤销、生成/查询/取消 enrollment invitation 和 Passkey 配置。owner.remoteSessions.revokeAll 与 remote.trust.reset 已删除，不提供别名。owner.security.status 增加 currentDeviceId: string | null；邀请状态仅表示有效/无效，有效邀请保留 reference/expiresAt。全部撤销只清理远程设备及关联 session，保留本地认证、Owner identity 与 trust epoch。没有 remote Passkey 时，新增远程设备依赖当前有效的已配对设备 session 或 Owner 本机/CLI 恢复入口。
+已认证管理方法只覆盖设备列表、单设备/全部设备撤销、生成/查询/取消 enrollment invitation 和 Passkey 配置。`owner.security.status` 返回 `passkeyAvailable`、服务端配置的 `appOrigin: string | null`、`devices` 与 `currentDeviceId`；`owner.enrollment.issue/status` 使用该可信 origin 构造链接。全部撤销只清理远程设备及关联 session，保留 Owner identity 与 trust epoch。没有 remote Passkey 时，新增远程设备依赖当前有效的已配对设备 session 或 Owner 本机/CLI 恢复入口。
 
 Owner code、普通 `remote.loginQr` management request 和 fingerprint 人工确认不属于新 API 契约。协议内部可以保留节点路由和 Owner public key 绑定，但不能把它们重新暴露为远程登录输入。
 

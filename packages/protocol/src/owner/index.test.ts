@@ -103,6 +103,25 @@ test('rejects malformed JSON, unsupported fields, unknown frames, and missing fi
   )
 })
 
+test('requires owner identity only on authenticated ready frames', () => {
+  const ready = {
+    type: 'ready',
+    connectionId: 'connection-1',
+    authenticated: true,
+    ownerId: 'owner-1',
+    capabilities: [],
+  }
+  assert.deepEqual(parseOwnerFrame(JSON.stringify(ready)), { ok: true, frame: ready })
+  assert.equal(parseOwnerFrame(JSON.stringify({ ...ready, authenticated: false })).ok, false)
+  assert.equal(parseOwnerFrame(JSON.stringify({ ...ready, ownerId: undefined })).ok, false)
+  const unauthenticated = { ...ready, authenticated: false }
+  delete (unauthenticated as Partial<typeof ready>).ownerId
+  assert.deepEqual(parseOwnerFrame(JSON.stringify(unauthenticated)), {
+    ok: true,
+    frame: unauthenticated,
+  })
+})
+
 test('parses only complete domain event envelopes', () => {
   assert.deepEqual(parseDomainEventEnvelope(validEvent), { ok: true, event: validEvent })
   for (const event of [

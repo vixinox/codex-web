@@ -5,8 +5,8 @@ export type RemoteDevice = {
 }
 
 export type ConnectionSnapshot = {
-  remotePasskeyAvailable: boolean
-  localPasskeyAvailable: boolean
+  passkeyAvailable: boolean
+  appOrigin: string | null
   currentDeviceId: string | null
   devices: RemoteDevice[]
 }
@@ -14,6 +14,7 @@ export type ConnectionSnapshot = {
 export type EnrollmentInvitation = {
   reference: string
   expiresAt: string
+  appOrigin: string
 }
 
 export function parseEnrollmentInvitation(value: unknown): EnrollmentInvitation {
@@ -22,24 +23,26 @@ export function parseEnrollmentInvitation(value: unknown): EnrollmentInvitation 
   const invitation = source
   if (
     Object.keys(invitation).some(
-      (key) => !['reference', 'expiresAt', 'active', 'consumed', 'issuer'].includes(key),
+      (key) =>
+        !['reference', 'expiresAt', 'appOrigin', 'active', 'consumed', 'issuer'].includes(key),
     ) ||
     typeof invitation.reference !== 'string' ||
     !/^[A-Za-z0-9_-]{16,256}$/u.test(invitation.reference) ||
     typeof invitation.expiresAt !== 'string' ||
+    typeof invitation.appOrigin !== 'string' ||
     !Number.isFinite(Date.parse(invitation.expiresAt))
   )
     throw new Error('Invalid enrollment invitation response')
   return {
     reference: invitation.reference,
     expiresAt: invitation.expiresAt,
+    appOrigin: invitation.appOrigin,
   }
 }
 
 export type ConnectionClient = {
   getSnapshot(): Promise<ConnectionSnapshot>
-  registerPasskey(ticket?: string): Promise<void>
-  issueLocalEnrollmentTicket(): Promise<{ ticket: string; origin: string; expiresAt: string }>
+  registerPasskey(): Promise<void>
   revokeDevice(deviceId: string): Promise<void>
   revokeAllDevices(): Promise<void>
   issueEnrollment(): Promise<EnrollmentInvitation>
@@ -50,8 +53,8 @@ export type ConnectionClient = {
 
 export function emptyConnectionSnapshot(): ConnectionSnapshot {
   return {
-    remotePasskeyAvailable: false,
-    localPasskeyAvailable: false,
+    passkeyAvailable: false,
+    appOrigin: null,
     currentDeviceId: null,
     devices: [],
   }

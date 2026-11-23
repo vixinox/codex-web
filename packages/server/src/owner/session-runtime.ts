@@ -18,7 +18,6 @@ export type OwnerTransport = {
   enrollmentReference?: string
   clientPublicKey?: string
   promote?: (deviceId: string, clientToken: string) => void
-  enrollmentTicket?: string
   promoted?: boolean
   send(frame: string | Uint8Array): Promise<void> | void
   close(code?: number, reason?: string): void
@@ -119,7 +118,6 @@ export type OwnerMethodContext = {
   readonly transport: OwnerTransport
   readonly signal: AbortSignal
   readonly requestId: string
-  readonly enrollmentTicket?: string
   authenticate(admission: OwnerAdmission): Promise<void> | void
   unauthenticate(): void
 }
@@ -136,6 +134,7 @@ export type OwnerMethodRegistry = ReadonlyMap<string, OwnerMethodDefinition>
 export type OwnerSessionRuntimeOptions = {
   connectionId: string
   capabilities?: string[]
+  localAdmission?: OwnerAdmission
   maxInFlightRequests?: number
   maxQueuedBytes?: number
   defaultRequestTimeoutMs?: number
@@ -160,10 +159,6 @@ const AUTH_FAILURE: OwnerErrorDto = {
   code: 'owner.auth.unauthorized',
   message: 'Authentication is required.',
   retryable: false,
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 export class OwnerSessionRuntime {
@@ -255,7 +250,13 @@ export class OwnerSessionRuntime {
 
   private async admit(frame: Extract<OwnerFrame, { type: 'hello' }>): Promise<void> {
     this.clientId = frame.clientId
-    if (frame.sessionToken && this.options.resumeSession) {
+    if (this.transport.kind === 'local' && this.options.localAdmission) {
+      this.session = this.options.localAdmission
+    } else if (
+      this.transport.kind === 'relay' &&
+      frame.sessionToken &&
+      this.options.resumeSession
+    ) {
       try {
         this.session = await this.options.resumeSession(frame.sessionToken, this.transport)
       } catch {
@@ -268,6 +269,7 @@ export class OwnerSessionRuntime {
 
       connectionId: this.options.connectionId,
       authenticated: this.session !== null,
+      ...(this.session ? { ownerId: this.session.ownerId } : {}),
       capabilities: this.options.capabilities ?? [],
     })
   }
@@ -345,7 +347,7 @@ export class OwnerSessionRuntime {
 
     const authenticatedAtStart = method.access === 'authenticated' && this.session !== null
     try {
-      const context = this.createMethodContext(controller.signal, requestId, params)
+      const context = this.createMethodContext(controller.signal, requestId)
       const output = await raceAbort(
         Promise.resolve(method.handle(params, context)),
         controller.signal,
@@ -385,11 +387,7 @@ export class OwnerSessionRuntime {
     }
   }
 
-  private createMethodContext(
-    signal: AbortSignal,
-    requestId: string,
-    params: unknown,
-  ): OwnerMethodContext {
+  private createMethodContext(signal: AbortSignal, requestId: string): OwnerMethodContext {
     const owner = () => (this.session ? this.ownerContext() : null)
     return {
       get owner() {
@@ -399,11 +397,6 @@ export class OwnerSessionRuntime {
       connectionId: this.options.connectionId,
       signal,
       requestId,
-      ...(this.transport.enrollmentTicket
-        ? { enrollmentTicket: this.transport.enrollmentTicket }
-        : isRecord(params) && typeof params.ticket === 'string'
-          ? { enrollmentTicket: params.ticket }
-          : {}),
       authenticate: async (admission) => {
         if (
           this.transport.kind === 'relay' &&

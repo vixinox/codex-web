@@ -83,6 +83,7 @@ export type OwnerReadyFrame = {
   type: 'ready'
   connectionId: string
   authenticated: boolean
+  ownerId?: string
   capabilities: string[]
 }
 
@@ -355,9 +356,11 @@ function validateFrame(value: Record<string, unknown>): OwnerProtocolIssue | nul
       return null
     case 'ready':
       if (
-        !hasOnlyKeys(value, ['type', 'connectionId', 'authenticated', 'capabilities']) ||
+        !hasOnlyKeys(value, ['type', 'connectionId', 'authenticated', 'ownerId', 'capabilities']) ||
         !isIdentifier(value.connectionId) ||
         typeof value.authenticated !== 'boolean' ||
+        (value.authenticated && !isIdentifier(value.ownerId)) ||
+        (!value.authenticated && 'ownerId' in value) ||
         !isCapabilities(value.capabilities)
       )
         return failureValue('INVALID_FRAME', 'Ready frame is invalid.')

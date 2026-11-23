@@ -37,7 +37,6 @@ export type CodexStatus = {
   restartRequired: boolean
   activeTurns?: number
   error: string | null
-  dangerousAccessConfirmed?: boolean
 }
 type TurnTask = {
   id: string
@@ -116,7 +115,6 @@ export class CodexManager {
   ) => RpcTransport
   private readonly injectedTransport: boolean
   private readonly runtime: CodexRuntimeManager
-  private readonly active = new Map<string, number>()
   private readonly queues = new Map<string, TurnTask[]>()
   private readonly activeTasks = new Map<string, Set<TurnTask>>()
   private readonly activeScopes = new Map<string, Set<string>>()
@@ -125,7 +123,6 @@ export class CodexManager {
   private readonly activeTurnsByUser = new Map<string, Map<string, ActiveTurn>>()
   private readonly loadedThreads = new Map<string, Set<string>>()
   private readonly stopping = new Set<string>()
-  private readonly dangerousAccessConfirmed = new Set<string>()
 
   constructor(
     config: ServerConfig,
@@ -168,7 +165,6 @@ export class CodexManager {
       pendingCredentialId: null,
       restartRequired: false,
       error: null,
-      dangerousAccessConfirmed: this.dangerousAccessConfirmed.has(userId),
     })
     if (!existing) {
       const starting = this.startProcessWithRuntimeFallback(userId, projectId, credentialId)
@@ -226,7 +222,6 @@ export class CodexManager {
     }
     return {
       ...current,
-      dangerousAccessConfirmed: this.dangerousAccessConfirmed.has(userId),
       activeTurns: Math.max(
         this.activeTasks.get(userId)?.size ?? 0,
         this.activeTurnsByUser.get(userId)?.size ?? 0,
@@ -266,10 +261,6 @@ export class CodexManager {
       pendingCredentialId: credentialId,
       restartRequired: true,
     })
-  }
-
-  markDangerousAccessConfirmed(userId: string) {
-    this.dangerousAccessConfirmed.add(userId)
   }
 
   async start(userId: string, projectId: string, credentialId: string) {
@@ -326,7 +317,6 @@ export class CodexManager {
     const existing = this.instances.get(userId)
     if (!existing) return
     this.instances.delete(userId)
-    this.dangerousAccessConfirmed.delete(userId)
     const current = this.lifecycle.get(userId)
     this.lifecycle.set(userId, {
       status: 'stopped',
@@ -512,20 +502,17 @@ export class CodexManager {
     task.controller.abort(error)
     task.reject(error)
     const active = this.activeTasks.get(userId)
-    if (active?.delete(task))
-      this.active.set(userId, Math.max(0, (this.active.get(userId) ?? 1) - 1))
+    active?.delete(task)
     this.drain(userId)
   }
 
   private drain(userId: string) {
-    const limit = this.config.maxActiveTasksPerUser
     const queue = this.queues.get(userId) ?? []
-    while ((this.active.get(userId) ?? 0) < limit && queue.length) {
+    while (queue.length) {
       const index = queue.findIndex((task) => !this.activeScopes.get(userId)?.has(task.scope))
       if (index < 0) break
       const task = queue.splice(index, 1)[0]
       if (task.settled) continue
-      this.active.set(userId, (this.active.get(userId) ?? 0) + 1)
       const scopes = this.activeScopes.get(userId) ?? new Set<string>()
       scopes.add(task.scope)
       this.activeScopes.set(userId, scopes)
@@ -551,8 +538,7 @@ export class CodexManager {
         )
         .finally(() => {
           if (task.timer) clearTimeout(task.timer)
-          if (activeTasks.delete(task))
-            this.active.set(userId, Math.max(0, (this.active.get(userId) ?? 1) - 1))
+          activeTasks.delete(task)
           const trackedScopes = this.activeScopes.get(userId)
           trackedScopes?.delete(task.scope)
           this.drain(userId)

@@ -18,7 +18,7 @@ const { app } = createRelayApp(
     ownerToken,
     logger,
     maxConnections: positiveInt('RELAY_MAX_CONNECTIONS', 10_000),
-    maxClientsPerNode: positiveInt('RELAY_MAX_CLIENTS_PER_NODE', 8),
+    maxClientsPerNode: positiveInt('RELAY_MAX_CLIENTS_PER_NODE', 100),
     maxFrameBytes: positiveInt('RELAY_MAX_FRAME_BYTES', 2 * 1024 * 1024),
     messagesPerSecond: positiveInt('RELAY_MESSAGES_PER_SECOND', 250),
     maxQueuedBytes: positiveInt('RELAY_MAX_QUEUED_BYTES', 8 * 1024 * 1024),

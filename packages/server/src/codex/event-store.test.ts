@@ -34,10 +34,7 @@ function fixture(context: TestContext) {
     port: 3000,
     trustedOrigins: ['http://localhost:5173'],
     dataRoot,
-    maxActiveTasksPerUser: 2,
     credentialEncryptionKey: 'test-key',
-    allowedOutboundSchemes: ['https'],
-    allowedOutboundHosts: ['api.example.com'],
   }
   prepareOwnerDatabase(config)
   const database = createDatabase(config)

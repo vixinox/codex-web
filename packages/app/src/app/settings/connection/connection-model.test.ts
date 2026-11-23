@@ -8,8 +8,8 @@ import {
 describe('connection model', () => {
   it('starts with an explicit empty safe state', () => {
     expect(emptyConnectionSnapshot()).toEqual({
-      remotePasskeyAvailable: false,
-      localPasskeyAvailable: false,
+      passkeyAvailable: false,
+      appOrigin: null,
       currentDeviceId: null,
       devices: [],
     })
@@ -22,6 +22,7 @@ describe('connection model', () => {
     const invitation = {
       reference: 'enrollment-reference-1234',
       expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      appOrigin: 'https://codex.example',
     }
     expect(parseEnrollmentInvitation(invitation)).toEqual(invitation)
     expect(parseEnrollmentInvitation({ invitation })).toEqual(invitation)

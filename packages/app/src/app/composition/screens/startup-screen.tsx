@@ -45,8 +45,8 @@ const quickStartSteps: readonly QuickStartStep[] = [
       'Run the frontend and Owner bridge in separate terminals, then open the local Web origin.',
     zhDescription: '在不同终端启动前端和 Owner bridge，然后打开本地 Web 地址。',
     commands: ['pnpm dev', 'pnpm server'],
-    note: 'Open http://localhost:5173 and create your local Owner account.',
-    zhNote: '打开 http://localhost:5173 并创建本地 Owner 账户。',
+    note: 'Start Owner and open http://localhost:5173 to go directly to the workspace.',
+    zhNote: '启动 Owner 后打开 http://localhost:5173，即可直接进入工作台。',
   },
 ] as const
 

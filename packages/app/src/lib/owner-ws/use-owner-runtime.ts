@@ -15,11 +15,13 @@ import { loadConnectionProfile, loadConnectionProfileSession } from '@/lib/remot
 import { createRelayOwnerSocket } from '@/lib/remote/relay-owner-socket'
 import { AUTH_EXPIRED_EVENT } from '@/lib/auth/auth-expiry'
 import { presentAppError } from '@/lib/errors/presentation'
+import { ownerTargetKind } from './target'
 
 export type OwnerRuntimeController = {
   status: 'idle' | 'connecting' | 'ready' | 'remote-unavailable' | 'failed'
   error: string | null
   isRemote: boolean
+  ownerId: string | null
   request: <T = unknown>(
     this: void,
     method: string,
@@ -32,15 +34,17 @@ export type OwnerRuntimeController = {
 
 const runtimes = new Map<string, SessionController>()
 const runtimeDisposalTimers = new Map<SessionController, number>()
-export function useOwnerRuntime(
-  sessionToken: string | undefined,
-  connectionProfileId?: string,
-): OwnerRuntimeController {
-  const key = sessionToken
-    ? `local:${sessionToken}`
-    : connectionProfileId
-      ? `remote-profile:${connectionProfileId}`
-      : 'remote-paired'
+
+export function useOwnerRuntime(connectionProfileId?: string): OwnerRuntimeController {
+  const targetKind = ownerTargetKind(window.location.origin)
+  const local = targetKind === 'local'
+  const selectedProfileId = local ? undefined : connectionProfileId
+  const key = local
+    ? `local:${window.location.origin}`
+    : selectedProfileId
+      ? `remote-profile:${selectedProfileId}`
+      : 'remote-unavailable'
+  const active = local || selectedProfileId !== undefined
   const remoteSocketRef = React.useRef<WebSocket | null>(null)
   const remoteSocketBuilderRef = React.useRef<(() => WebSocket) | null>(null)
   const [connectionRevision, setConnectionRevision] = React.useState(0)
@@ -60,8 +64,11 @@ export function useOwnerRuntime(
     return created
   }, [key])
   const [snapshot, setSnapshot] = React.useState(() => ({ ...runtime.state }))
-  const status: OwnerRuntimeController['status'] =
-    snapshot.transport === 'connected'
+  const authenticated =
+    snapshot.transport === 'connected' && snapshot.authentication === 'authenticated'
+  const status: OwnerRuntimeController['status'] = !active
+    ? 'remote-unavailable'
+    : authenticated
       ? 'ready'
       : snapshot.transport === 'connecting' ||
           snapshot.transport === 'reconnecting' ||
@@ -69,96 +76,105 @@ export function useOwnerRuntime(
         ? 'connecting'
         : snapshot.transport === 'failed'
           ? 'failed'
-          : !sessionToken
-            ? 'remote-unavailable'
+          : snapshot.transport === 'connected'
+            ? 'failed'
             : 'idle'
-  const error = status === 'failed' ? snapshot.error : null
+  const error =
+    status === 'failed'
+      ? (snapshot.error ??
+        (local ? 'Local Owner access was rejected.' : 'Remote session is not authenticated.'))
+      : null
 
   React.useEffect(() => {
-    if (!sessionToken && !connectionProfileId && key !== 'remote-paired') return
+    if (!active) return
     const pendingDisposal = runtimeDisposalTimers.get(runtime)
     if (pendingDisposal !== undefined) {
       window.clearTimeout(pendingDisposal)
       runtimeDisposalTimers.delete(runtime)
     }
-    let active = true
-    let revocationHandled = false
+    let live = true
+    let rejectionHandled = false
     const connectionAbort = new AbortController()
+    const rejectRemote = () => {
+      if (rejectionHandled || local || !selectedProfileId) return
+      rejectionHandled = true
+      window.dispatchEvent(
+        new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { profileId: selectedProfileId } }),
+      )
+    }
     const unsubscribe = runtime.subscribe(() => {
-      if (!active) return
-      setSnapshot({ ...runtime.state })
-      if (runtime.state.authentication === 'revoked' && connectionProfileId && !revocationHandled) {
-        revocationHandled = true
-        window.dispatchEvent(
-          new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { profileId: connectionProfileId } }),
-        )
-        return
+      if (!live) return
+      const current = runtime.state
+      setSnapshot({ ...current })
+      if (current.transport === 'connected' && current.authentication === 'authenticated') {
+        setOwnerBridge(runtime)
+      } else {
+        setOwnerBridge(null)
+        if (current.transport === 'connected' && current.authentication === 'unauthenticated')
+          rejectRemote()
       }
-      if (runtime.state.transport === 'connected') setOwnerBridge(runtime)
       if (
-        runtime.state.transport === 'failed' &&
-        runtime.state.authentication !== 'revoked' &&
-        runtime.state.reconnectAttempt === 0
+        current.transport === 'failed' &&
+        current.authentication !== 'revoked' &&
+        current.reconnectAttempt === 0
       ) {
         setOwnerBridge(null)
+        if (runtime.isAuthenticationRejection()) rejectRemote()
         setConnectionRevision((revision) => revision + 1)
       }
     })
     const connect = async () => {
-      if (sessionToken) {
+      if (local) {
         await runtime.connect({
-          url: `${window.location.origin.replace(/^http/, 'ws')}/ws`,
-          sessionToken,
+          url: `${window.location.origin.replace(/^http/u, 'ws')}/ws`,
           clientId: 'owner-app',
           capabilities: ['owner', 'remote-administration'],
         })
+        if (!runtime.state.authentication || runtime.state.authentication !== 'authenticated')
+          throw new Error('Local Owner access was rejected.')
         return
       }
-      if (connectionProfileId) {
-        const profile = await loadConnectionProfile(connectionProfileId)
-        const session = await loadConnectionProfileSession(connectionProfileId)
-        if (
-          !profile?.deviceId ||
-          !profile.pairedClientToken ||
-          profile.trustEpoch === null ||
-          !session
-        )
-          throw new Error('Saved connection is unavailable. Re-enroll this browser.')
-        const socketTarget = {
-          nodeId: profile.nodeId,
-          trustEpoch: profile.trustEpoch,
-          clientToken: profile.pairedClientToken,
-          deviceId: profile.deviceId,
-          publicKey: profile.publicKey,
-          privateKey: profile.privateKey,
-          expectedOwnerPublicKey: profile.ownerPublicKey,
-        }
-        remoteSocketRef.current = createRelayOwnerSocket(profile.relayUrl, socketTarget)
-        remoteSocketBuilderRef.current = () =>
-          createRelayOwnerSocket(profile.relayUrl, socketTarget)
-        await runtime.connect({
-          url: profile.relayUrl,
-          sessionToken: session.token,
-          clientId: 'owner-remote-app',
-          capabilities: ['owner', 'remote-administration'],
-        })
-        await runtime.waitForConnection(connectionAbort.signal)
-        return
+      if (!selectedProfileId) return
+      const profile = await loadConnectionProfile(selectedProfileId)
+      const session = await loadConnectionProfileSession(selectedProfileId)
+      if (
+        !profile?.deviceId ||
+        !profile.pairedClientToken ||
+        profile.trustEpoch === null ||
+        !session
+      )
+        throw new Error('Saved connection is unavailable. Re-enroll this browser.')
+      const socketTarget = {
+        nodeId: profile.nodeId,
+        trustEpoch: profile.trustEpoch,
+        clientToken: profile.pairedClientToken,
+        deviceId: profile.deviceId,
+        publicKey: profile.publicKey,
+        privateKey: profile.privateKey,
+        expectedOwnerPublicKey: profile.ownerPublicKey,
       }
-      return
+      remoteSocketRef.current = createRelayOwnerSocket(profile.relayUrl, socketTarget)
+      remoteSocketBuilderRef.current = () => createRelayOwnerSocket(profile.relayUrl, socketTarget)
+      await runtime.connect({
+        url: profile.relayUrl,
+        sessionToken: session.token,
+        clientId: 'owner-remote-app',
+        capabilities: ['owner', 'remote-administration'],
+      })
+      if (runtime.state.authentication !== 'authenticated') {
+        rejectRemote()
+        throw new Error('Remote session is not authenticated.')
+      }
     }
-    // React StrictMode replays effects in development. Deferring connection start lets the
-    // first setup be cancelled during that replay instead of opening a socket that cleanup
-    // immediately closes before its handshake completes.
     const connectTimer = window.setTimeout(() => {
       void connect()
         .then(() => {
-          if (!active) return undefined
-          setOwnerBridge(runtime)
+          if (live && runtime.state.authentication === 'authenticated') setOwnerBridge(runtime)
           return undefined
         })
         .catch((cause: unknown) => {
-          if (!active) return undefined
+          if (!live) return undefined
+          setOwnerBridge(null)
           if (runtime.state.reconnectAttempt > 0) return undefined
           setSnapshot({
             ...runtime.state,
@@ -168,13 +184,11 @@ export function useOwnerRuntime(
         })
     }, 0)
     return () => {
-      active = false
+      live = false
       window.clearTimeout(connectTimer)
       connectionAbort.abort()
       unsubscribe()
       setOwnerBridge(null)
-      // StrictMode's development-only cleanup is followed immediately by another setup.
-      // Defer destruction for one task so the replay can reuse the live controller.
       const disposalTimer = window.setTimeout(() => {
         runtimeDisposalTimers.delete(runtime)
         if (runtimes.get(key) === runtime) {
@@ -187,7 +201,7 @@ export function useOwnerRuntime(
       }, 0)
       runtimeDisposalTimers.set(runtime, disposalTimer)
     }
-  }, [connectionProfileId, key, runtime, sessionToken, connectionRevision])
+  }, [active, key, local, runtime, selectedProfileId, connectionRevision])
 
   const request = React.useCallback<OwnerRuntimeController['request']>(
     (method, params, options) => runtime.request(method, params, options),
@@ -205,7 +219,8 @@ export function useOwnerRuntime(
   return {
     status,
     error,
-    isRemote: key === 'remote-paired' || key.startsWith('remote-profile:'),
+    isRemote: !local,
+    ownerId: authenticated ? snapshot.ownerId : null,
     request,
     openStream,
     close,
