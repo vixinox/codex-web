@@ -1,11 +1,20 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
 const repoRoot = runGit(['rev-parse', '--show-toplevel']).trim()
-const stagedPaths = parseGitPaths(runGit(['ls-files', '-z']))
-const baselinePaths = parseTreePaths(runGit(['ls-tree', '-r', '--name-only', '-z', 'HEAD']))
+const stagedEntries = parseIndexEntries(runGit(['ls-files', '--stage', '-z']))
+const baselineEntries = parseTreeEntries(runGit(['ls-tree', '-r', '-z', 'HEAD']))
+const baselinePaths = baselineEntries.map(({ path }) => path)
 const stagedFiles = parseStagedFiles(
   runGit(['diff', '--cached', '--name-status', '--diff-filter=ACMR', '-z']),
 ).map((file) => ({
@@ -20,8 +29,26 @@ const stagedRoot = join(temporaryRoot, 'staged')
 const baselineRoot = join(temporaryRoot, 'baseline')
 
 try {
-  writeSnapshot(stagedRoot, stagedPaths, (path) => readIndexBlob(path))
-  writeSnapshot(baselineRoot, baselinePaths, (path) => readHeadBlob(path))
+  const stagedBlobs = readBlobs(stagedEntries)
+  writeSnapshot(stagedRoot, stagedEntries, stagedBlobs)
+  writeSnapshot(baselineRoot, baselineEntries, readBlobs(baselineEntries))
+  const stagedBlobByPath = new Map(
+    stagedEntries.map(({ path, oid }) => [path, stagedBlobs.get(oid)]),
+  )
+  const worktreeDifferenceCount = stagedFiles.filter((file) => {
+    const stagedBlob = stagedBlobByPath.get(file.path)
+    if (!stagedBlob) return false
+    try {
+      return !readFileSync(resolve(repoRoot, file.path)).equals(stagedBlob)
+    } catch {
+      return true
+    }
+  }).length
+  if (worktreeDifferenceCount > 0) {
+    console.log(
+      `lint:staged checks the Git index snapshot; ${worktreeDifferenceCount} staged file(s) differ from the working tree.`,
+    )
+  }
   linkNodeModules(stagedRoot)
   linkNodeModules(baselineRoot)
   const stagedSnapshotFiles = stagedFiles
@@ -60,13 +87,13 @@ try {
   rmSync(temporaryRoot, { force: true, recursive: true })
 }
 
-function writeSnapshot(snapshotRoot, paths, readBlob) {
+function writeSnapshot(snapshotRoot, entries, blobs) {
   mkdirSync(snapshotRoot, { recursive: true })
   const snapshotFiles = []
 
-  for (const path of paths) {
-    const content = readBlob(path)
-    if (content === undefined) continue
+  for (const { path, oid } of entries) {
+    const content = blobs.get(oid)
+    if (!content) continue
 
     const destination = resolve(snapshotRoot, path)
     if (
@@ -184,27 +211,35 @@ function printDiagnostic(diagnostic) {
   console.error(`${displayPath}${location}: ${diagnostic.severity}${code}: ${diagnostic.message}`)
 }
 
-function readGitBlob(revision) {
-  const result = spawnSync('git', ['show', revision], {
+function readBlobs(entries) {
+  const objectIds = [...new Set(entries.map(({ oid }) => oid))]
+  if (objectIds.length === 0) return new Map()
+  const result = spawnSync('git', ['cat-file', '--batch'], {
     cwd: repoRoot,
+    input: `${objectIds.join('\n')}\n`,
     encoding: null,
+    maxBuffer: 1024 * 1024 * 1024,
   })
-
   if (result.error) throw result.error
-  if (result.status !== 0)
-    throw new Error(`Unable to read staged file ${revision}: ${String(result.stderr)}`)
+  if (result.status !== 0) throw new Error(`Unable to read Git objects: ${String(result.stderr)}`)
 
-  return result.stdout
-}
-
-function readIndexBlob(path) {
-  const revision = `:${path}`
-  return gitSucceeds(['cat-file', '-e', revision]) ? readGitBlob(revision) : undefined
-}
-
-function readHeadBlob(path) {
-  const revision = `HEAD:${path}`
-  return gitSucceeds(['cat-file', '-e', revision]) ? readGitBlob(revision) : undefined
+  const blobs = new Map()
+  let offset = 0
+  for (const expectedOid of objectIds) {
+    const headerEnd = result.stdout.indexOf(10, offset)
+    if (headerEnd < 0) throw new Error('Git returned an incomplete object header.')
+    const [oid, type, sizeText] = result.stdout.toString('ascii', offset, headerEnd).split(' ')
+    const size = Number(sizeText)
+    if (oid !== expectedOid || type !== 'blob' || !Number.isSafeInteger(size))
+      throw new Error(`Unexpected Git object response for ${expectedOid}.`)
+    const contentStart = headerEnd + 1
+    const contentEnd = contentStart + size
+    if (result.stdout[contentEnd] !== 10)
+      throw new Error(`Git object ${expectedOid} was truncated.`)
+    blobs.set(oid, result.stdout.subarray(contentStart, contentEnd))
+    offset = contentEnd + 1
+  }
+  return blobs
 }
 
 function runGit(args) {
@@ -214,11 +249,6 @@ function runGit(args) {
   if (result.status !== 0) throw new Error(result.stderr.trim())
 
   return result.stdout
-}
-
-function gitSucceeds(args) {
-  const result = spawnSync('git', args, { cwd: repoRoot, stdio: 'ignore' })
-  return result.status === 0
 }
 
 function parseStagedFiles(output) {
@@ -244,7 +274,7 @@ function parseStagedFiles(output) {
   return files
 }
 
-function findMovedBaselinePath(path, baselinePaths) {
+function findMovedBaselinePath(path, availablePaths) {
   const candidates = []
 
   if (path.startsWith('packages/app/')) {
@@ -269,16 +299,29 @@ function findMovedBaselinePath(path, baselinePaths) {
       `packages/remote-protocol/src/${path.slice('packages/protocol/src/relay/'.length)}`,
     )
 
-  return candidates.find((candidate) => baselinePaths.includes(candidate))
+  return candidates.find((candidate) => availablePaths.includes(candidate))
 }
 
-function parseGitPaths(output) {
-  return output.split('\0').filter(Boolean)
-}
-
-function parseTreePaths(output) {
+function parseIndexEntries(output) {
   return output
     .split('\0')
     .filter(Boolean)
-    .map((entry) => entry.slice(entry.indexOf('\t') + 1))
+    .map((entry) => {
+      const tab = entry.indexOf('\t')
+      const [mode, oid, stage] = entry.slice(0, tab).split(' ')
+      return { mode, oid, stage, path: entry.slice(tab + 1) }
+    })
+    .filter(({ stage }) => stage === '0')
+}
+
+function parseTreeEntries(output) {
+  return output
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => {
+      const tab = entry.indexOf('\t')
+      const [mode, type, oid] = entry.slice(0, tab).split(' ')
+      return { mode, type, oid, path: entry.slice(tab + 1) }
+    })
+    .filter(({ type }) => type === 'blob')
 }

@@ -1,95 +1,13 @@
 import type { ServerConfig } from '../config.js'
-import type { DomainEventEnvelope } from '@codex-web/protocol/owner'
 import type { WorkspaceService } from '../workspace.js'
-import type { RuntimeModel } from '../codex/model-catalog.js'
+import type { CodexOwnerPort } from '../codex/owner-port.js'
 import type { OwnerConnector } from '../remote/connector.js'
-
-export type CodexBridge = {
-  modelCatalog?: (userId: string) => Promise<RuntimeModel[]>
-  get(
-    userId: string,
-    projectId: string,
-    credentialId: string,
-  ): Promise<{
-    request(
-      method: string,
-      params?: Record<string, unknown>,
-      signal?: AbortSignal,
-    ): Promise<unknown>
-  }>
-  getReady?: (userId: string) => Promise<{
-    request(
-      method: string,
-      params?: Record<string, unknown>,
-      signal?: AbortSignal,
-    ): Promise<unknown>
-  }>
-  enqueueTurn?: (
-    userId: string,
-    run: (signal: AbortSignal) => Promise<unknown>,
-    timeoutMs?: number,
-    taskId?: string,
-    scope?: string,
-  ) => Promise<unknown>
-  cancelQueuedTurn?: (userId: string, taskId?: string) => boolean
-  respondToServerRequest?: (
-    userId: string,
-    threadId: string,
-    requestId: number | string,
-    result: unknown,
-  ) => number | string | void
-  getStatus?: (userId: string) => {
-    status: string
-    projectId: string | null
-    activeCredentialId: string | null
-    pendingCredentialId: string | null
-    restartRequired: boolean
-    activeTurns?: number
-    error: string | null
-  }
-  ensureThread?: (userId: string, threadId: string) => Promise<void>
-  markThreadLoaded?: (userId: string, threadId: string) => void
-  start?: (userId: string, projectId: string, credentialId: string) => Promise<unknown>
-  restart?: (userId: string, projectId: string, credentialId: string) => Promise<unknown>
-  markCredentialPending?: (userId: string, credentialId: string) => void
-  stop?: (userId: string) => Promise<void>
-  events: {
-    latestEventId: (userId: string, threadId?: string) => number
-    isCursorExpired?: (
-      userId: string,
-      threadId: string | undefined,
-      afterId: number,
-    ) => Promise<boolean>
-    subscribeFrom?: (
-      userId: string,
-      threadId: string | undefined,
-      afterId: number,
-      listener: (event: { id: number; message: DomainEventEnvelope }) => void,
-    ) => Promise<() => void>
-    threadHistory?: (
-      userId: string,
-      threadId: string,
-    ) => Promise<Array<{ id: number; message: DomainEventEnvelope }>>
-    isHealthy?: () => boolean
-    captureThreadSnapshot?: (
-      userId: string,
-      threadId: string,
-    ) => Promise<{ history: Array<{ id: number; message: DomainEventEnvelope }>; sequence: number }>
-    isCursorAhead?: (userId: string, threadId: string | undefined, sequence: number) => boolean
-    subscribe(
-      userId: string,
-      threadId: string | undefined,
-      afterId: number,
-      listener: (event: { id: number; message: DomainEventEnvelope }) => void,
-    ): () => unknown
-  }
-}
 
 export type AppDependencies = {
   ownerId: string
   database?: import('../database.js').Database
   workspace: WorkspaceService & { hasOwner?: () => Promise<boolean> }
-  codex: CodexBridge
+  codex: CodexOwnerPort
   remote?: OwnerConnector
 }
 

@@ -98,15 +98,6 @@ export function createRelayOwnerSocket(url: string, target: RelayTarget) {
       void startHandshake()
       return
     }
-    if (frame.type === 'relay.client.connected') {
-      // Older test relays may notify the client explicitly. The real relay sends relay.ready to
-      // the client and relay.client.connected only to the Owner, so keep this as a compatibility
-      // fallback without allowing a duplicate handshake.
-      connectionId = frame.connectionId
-      if (!target.nodeId) relayNodeId = frame.nodeId
-      void startHandshake()
-      return
-    }
     if (frame.type !== 'relay.forward' || frame.connectionId !== connectionId) return
     const payload = parseFrame(frame.payload)
     if (!payload) return

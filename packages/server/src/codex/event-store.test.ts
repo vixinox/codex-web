@@ -12,8 +12,7 @@ import type {
 } from '@codex-web/conversation'
 import type { DomainEventEnvelope } from '@codex-web/protocol/owner'
 
-import type { ServerConfig } from '../config.js'
-import { createDatabase, prepareOwnerDatabase } from '../database.js'
+import { openEventStoreTestDatabase } from './event-store-test-fixture.js'
 import { conversationEvent, owner } from '../db/schema.js'
 import { log } from '../logger.js'
 import { EventHub } from './event-hub.js'
@@ -24,23 +23,13 @@ const createdAt = '2026-01-01T00:00:00.000Z'
 
 function fixture(context: TestContext) {
   const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-conversation-events-'))
-  let driver: ReturnType<typeof createDatabase>['driver'] | undefined
+  const { db, driver } = openEventStoreTestDatabase(path.join(dataRoot, 'owner.sqlite'))
   context.after(() => {
-    driver?.close()
+    driver.close()
     rmSync(dataRoot, { recursive: true, force: true })
   })
-  const config: ServerConfig = {
-    host: '127.0.0.1',
-    port: 3000,
-    trustedOrigins: ['http://localhost:5173'],
-    dataRoot,
-    credentialEncryptionKey: 'test-key',
-  }
-  prepareOwnerDatabase(config)
-  const database = createDatabase(config)
-  driver = database.driver
-  database.db.insert(owner).values({ id: ownerId }).run()
-  return { ...database, store: new SqliteEventStore(database.db) }
+  db.insert(owner).values({ id: ownerId }).run()
+  return { db, driver, store: new SqliteEventStore(db) }
 }
 
 function event(id: number, conversationId = 'thread-a', applicationSequence = id) {

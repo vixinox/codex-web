@@ -1,13 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
-import { createWriteStream, existsSync } from 'node:fs'
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
-import { gunzipSync } from 'node:zlib'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 
 import type { ServerConfig } from '../config.js'
 import { log } from '../logger.js'
+import { RuntimePackage } from './runtime/package.js'
+import { RuntimeReleaseClient } from './runtime/release.js'
 import type { CodexCommand } from './stdio-transport.js'
 
 // Node's native fetch does not consume HTTP(S)_PROXY unless this opt-in is set.
@@ -24,32 +22,15 @@ if (
   log.info('codex.runtime.proxy-enabled')
 }
 
-const GITHUB_API = 'https://api.github.com/repos/openai/codex/releases'
-
-type ReleaseAsset = {
-  name: string
-  browser_download_url: string
-  digest?: string | null
-}
-
-type GitHubRelease = {
-  tag_name: string
-  draft: boolean
-  prerelease: boolean
-  assets: ReleaseAsset[]
-}
-
 import {
   CodexRuntimeError,
   emptyManifest,
-  isPathWithin,
   isSafeVersion,
   releaseVersion,
   safeManifest,
   targetFor,
   type CandidateEntry,
   type PlatformTarget,
-  type RuntimeEntry,
   type CodexRuntimeManifest,
 } from './runtime-policy.js'
 
@@ -86,7 +67,8 @@ export class CodexRuntimeManager {
   private readonly target: PlatformTarget
   private manifest: CodexRuntimeManifest | null = null
   private checking: Promise<CodexRuntimeStatus> | null = null
-  private readonly request: typeof fetch
+  private readonly releases: RuntimeReleaseClient
+  private readonly package: RuntimePackage
 
   constructor(
     config: ServerConfig,
@@ -94,10 +76,11 @@ export class CodexRuntimeManager {
     platform = process.platform,
     architecture = process.arch,
   ) {
-    this.request = request
     this.root = resolve(config.dataRoot, 'runtime')
     this.manifestPath = join(this.root, 'manifest.json')
     this.target = targetFor(platform, architecture)
+    this.releases = new RuntimeReleaseClient(request)
+    this.package = new RuntimePackage(this.root, this.target)
   }
 
   async status(): Promise<CodexRuntimeStatus> {
@@ -112,7 +95,7 @@ export class CodexRuntimeManager {
     if (
       manifest.active &&
       isSafeVersion(manifest.active.version) &&
-      (await this.validEntry(manifest.active))
+      (await this.package.validEntry(manifest.active))
     ) {
       try {
         const latest = await this.check()
@@ -130,7 +113,7 @@ export class CodexRuntimeManager {
         log.warn('codex.runtime.latest-check-failed', { errorType: errorType(error) })
       }
       const active = await this.readManifest()
-      if (active.active && (await this.validEntry(active.active))) {
+      if (active.active && (await this.package.validEntry(active.active))) {
         log.info('codex.runtime.cache-selected', { version: active.active.version })
         return { ...active.active }
       }
@@ -172,7 +155,7 @@ export class CodexRuntimeManager {
 
   async resolveCommand(): Promise<CodexCommand> {
     const manifest = await this.readManifest()
-    if (!manifest.active || !(await this.validEntry(manifest.active)))
+    if (!manifest.active || !(await this.package.validEntry(manifest.active)))
       throw new CodexRuntimeError(
         'CODEX_RUNTIME_REQUIRED',
         'Download and verify a Codex App Server release before starting Codex',
@@ -191,7 +174,7 @@ export class CodexRuntimeManager {
   async install(): Promise<CodexRuntimeStatus> {
     const manifest = await this.readManifest()
     log.info('codex.runtime.release-lookup-started')
-    const release = await this.releaseFor(undefined)
+    const release = await this.releases.releaseFor(undefined)
     const releaseVersionValue = releaseVersion(release)
     if (!releaseVersionValue)
       throw new CodexRuntimeError(
@@ -204,7 +187,7 @@ export class CodexRuntimeManager {
         'CODEX_RUNTIME_UNSUPPORTED',
         `The ${releaseVersionValue} release has no ${this.target.id} App Server asset`,
       )
-    const expectedHash = await this.expectedHash(release, asset)
+    const expectedHash = await this.releases.expectedHash(release, asset)
     log.info('codex.runtime.asset-selected', {
       version: releaseVersionValue,
       platform: this.target.id,
@@ -215,7 +198,7 @@ export class CodexRuntimeManager {
       await mkdir(staging, { recursive: true })
       const archivePath = join(staging, asset.name)
       log.info('codex.runtime.download-started', { version: releaseVersionValue })
-      const actualHash = await this.download(
+      const actualHash = await this.releases.download(
         asset.browser_download_url,
         archivePath,
         releaseVersionValue,
@@ -228,7 +211,7 @@ export class CodexRuntimeManager {
         )
       await rm(destination, { recursive: true, force: true })
       await mkdir(destination, { recursive: true })
-      const executablePath = await this.extractPackage(archivePath, destination)
+      const executablePath = await this.package.extractPackage(archivePath, destination)
       log.info('codex.runtime.verification-started', { version: releaseVersionValue })
       const executableHash = createHash('sha256')
         .update(await readFile(executablePath))
@@ -247,7 +230,7 @@ export class CodexRuntimeManager {
       manifest.candidate = candidate
       await this.writeManifest(manifest)
       try {
-        await this.smokeVerify(candidate)
+        await this.package.smokeVerify(candidate)
         candidate.verificationStatus = 'passed'
         log.info('codex.runtime.verification-passed', { version: releaseVersionValue })
       } catch (error) {
@@ -272,7 +255,7 @@ export class CodexRuntimeManager {
     if (
       !candidate ||
       candidate.verificationStatus !== 'passed' ||
-      !(await this.validEntry(candidate))
+      !(await this.package.validEntry(candidate))
     )
       throw new CodexRuntimeError(
         'CODEX_RUNTIME_ACTIVATION_FAILED',
@@ -289,7 +272,7 @@ export class CodexRuntimeManager {
 
   async rollback(): Promise<CodexRuntimeStatus> {
     const manifest = await this.readManifest()
-    if (!manifest.previous || !(await this.validEntry(manifest.previous)))
+    if (!manifest.previous || !(await this.package.validEntry(manifest.previous)))
       throw new CodexRuntimeError(
         'CODEX_RUNTIME_ACTIVATION_FAILED',
         'No verified runtime is available to roll back to',
@@ -312,7 +295,7 @@ export class CodexRuntimeManager {
   private async checkInternal(): Promise<CodexRuntimeStatus> {
     const manifest = await this.readManifest()
     try {
-      const release = await this.releaseFor(undefined)
+      const release = await this.releases.releaseFor(undefined)
       const version = releaseVersion(release)
       if (!version)
         throw new CodexRuntimeError(
@@ -350,247 +333,6 @@ export class CodexRuntimeManager {
     }
     await this.writeManifest(manifest)
     return this.project(manifest)
-  }
-
-  private async extractPackage(source: string, destination: string) {
-    const buffer = gunzipSync(await readFile(source))
-    let offset = 0
-    const extracted = new Set<string>()
-    while (offset + 512 <= buffer.length) {
-      const header = buffer.subarray(offset, offset + 512)
-      if (header.every((byte) => byte === 0)) break
-      const name = tarString(header, 0, 100)
-      const prefix = tarString(header, 345, 155)
-      const rawEntryName = (prefix ? `${prefix}/${name}` : name).replaceAll('\\', '/')
-      const size = tarNumber(header.subarray(124, 136))
-      const type = String.fromCharCode(header[156] || 0)
-      const contentOffset = offset + 512
-      const nextOffset = contentOffset + Math.ceil(size / 512) * 512
-      if (nextOffset > buffer.length)
-        throw new Error('Codex runtime archive contains a truncated entry')
-      const segments = rawEntryName.split('/')
-      if (
-        !rawEntryName ||
-        rawEntryName.startsWith('/') ||
-        rawEntryName.startsWith('\\') ||
-        /^[A-Za-z]:(?:[\\/]|$)/.test(rawEntryName) ||
-        segments.includes('..')
-      )
-        throw new Error('Codex runtime archive contains an unsafe entry')
-      const entryName = segments.filter((segment) => segment && segment !== '.').join('/')
-      if (!entryName) throw new Error('Codex runtime archive contains an invalid entry name')
-      if (type === 'x' || type === 'g') {
-        offset = nextOffset
-        continue
-      }
-      const outputPath = join(destination, ...entryName.split('/'))
-      if (!isPathWithin(outputPath, destination))
-        throw new Error('Codex runtime archive contains an unsafe entry')
-      if (type === '5') {
-        await mkdir(outputPath, { recursive: true })
-      } else if (type === '0' || type === '\0') {
-        if (extracted.has(entryName))
-          throw new Error('Codex runtime archive contains a duplicate entry')
-        await mkdir(dirname(outputPath), { recursive: true })
-        await writeFile(outputPath, buffer.subarray(contentOffset, contentOffset + size), {
-          flag: 'wx',
-          mode: 0o700,
-        })
-        await chmod(outputPath, 0o700).catch(() => undefined)
-        extracted.add(entryName)
-      } else {
-        throw new Error('Codex runtime archive contains an unsupported entry type')
-      }
-      offset = nextOffset
-    }
-    const metadataPath = join(destination, 'codex-package.json')
-    let metadata: unknown
-    try {
-      metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
-    } catch {
-      throw new Error('Codex runtime package has invalid metadata')
-    }
-    if (
-      !metadata ||
-      typeof metadata !== 'object' ||
-      (metadata as Record<string, unknown>).layoutVersion !== 1 ||
-      (metadata as Record<string, unknown>).variant !== 'codex-app-server' ||
-      (metadata as Record<string, unknown>).entrypoint !== `bin/${this.target.executableName}` ||
-      (metadata as Record<string, unknown>).resourcesDir !== 'codex-resources' ||
-      (metadata as Record<string, unknown>).pathDir !== 'codex-path'
-    )
-      throw new Error('Codex runtime package metadata does not match the selected target')
-    const missing = this.target.requiredFiles.filter((relativePath) => {
-      const filePath = join(destination, ...relativePath.split('/'))
-      return !existsSync(filePath)
-    })
-    if (missing.length) throw new Error(`Codex runtime package is missing ${missing.join(', ')}`)
-    return join(destination, 'bin', this.target.executableName)
-  }
-  private async releaseFor(version?: string): Promise<GitHubRelease> {
-    const endpoint = version ? `${GITHUB_API}/tags/rust-v${version}` : `${GITHUB_API}/latest`
-    const response = await this.requestWithDiagnostics(
-      endpoint,
-      {
-        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'codex-web-runtime' },
-        signal: AbortSignal.timeout(20_000),
-      },
-      'GitHub release lookup',
-    )
-    if (!response.ok) throw new Error(`GitHub release lookup failed (${response.status})`)
-    const release = (await response.json()) as GitHubRelease
-    if (release.draft || release.prerelease || !releaseVersion(release))
-      throw new Error('GitHub did not return a stable Codex release')
-    return release
-  }
-
-  private async expectedHash(release: GitHubRelease, asset: ReleaseAsset) {
-    const fromDigest = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest ?? '')?.[1]?.toLowerCase()
-    if (fromDigest) {
-      log.info('codex.runtime.digest-from-release-metadata')
-      return fromDigest
-    }
-    const sums = release.assets.find((entry) => entry.name === 'codex-package_SHA256SUMS')
-    if (!sums) throw new Error('Official release did not provide a checksum for this asset')
-    log.info('codex.runtime.digest-manifest-required')
-    const response = await this.requestWithDiagnostics(
-      this.downloadUrl(sums.browser_download_url),
-      {
-        headers: { 'User-Agent': 'codex-web-runtime' },
-        signal: AbortSignal.timeout(20_000),
-      },
-      'Official release checksum download',
-    )
-    if (!response.ok) throw new Error('Could not download official release checksums')
-    const text = await response.text()
-    const line = text.split(/\r?\n/).find((value) => value.trim().endsWith(`  ${asset.name}`))
-    const match = /^([a-f0-9]{64})\s+/.exec(line?.trim() ?? '')
-    if (!match) throw new Error('Official release checksums did not include the selected asset')
-    return match[1].toLowerCase()
-  }
-
-  private async download(url: string, outputPath: string, version: string) {
-    const response = await this.requestWithDiagnostics(
-      this.downloadUrl(url),
-      {
-        headers: { Accept: 'application/octet-stream', 'User-Agent': 'codex-web-runtime' },
-        redirect: 'follow',
-        signal: AbortSignal.timeout(120_000),
-      },
-      'Codex runtime download',
-    )
-    if (!response.ok || !response.body)
-      throw new Error(`Codex runtime download failed (${response.status})`)
-    await mkdir(dirname(outputPath), { recursive: true })
-    const hash = createHash('sha256')
-    const stream = createWriteStream(outputPath, { flags: 'wx', mode: 0o600 })
-    const total = Number(response.headers.get('content-length')) || null
-    const interactive = process.stderr.isTTY
-    const startedAt = Date.now()
-    let downloaded = 0
-    let lastRenderedAt = 0
-    const render = (complete = false) => {
-      if (!interactive || (!complete && Date.now() - lastRenderedAt < 100)) return
-      lastRenderedAt = Date.now()
-      const elapsed = Math.max((Date.now() - startedAt) / 1000, 0.001)
-      const rate = downloaded / elapsed
-      const progress = total ? Math.min(downloaded / total, 1) : null
-      const width = 28
-      const filled =
-        progress === null
-          ? Math.floor((downloaded / 1_000_000) % (width + 1))
-          : Math.round(progress * width)
-      const bar = `${'='.repeat(Math.max(0, filled - 1))}${filled > 0 ? '>' : ''}${' '.repeat(width - filled)}`
-      const percentage =
-        progress === null ? ' --.-%' : `${(progress * 100).toFixed(1).padStart(5)}%`
-      process.stderr.write(
-        `\r\x1b[2K[INFO   ] Downloading Codex App Server ${version} [${bar}] ${percentage} ${formatBytes(downloaded)}${total ? `/${formatBytes(total)}` : ''} at ${formatBytes(rate)}/s`,
-      )
-      if (complete) process.stderr.write('\n')
-    }
-    try {
-      const reader = response.body.getReader()
-      while (true) {
-        const next = await reader.read()
-        if (next.done) break
-        hash.update(next.value)
-        downloaded += next.value.byteLength
-        render()
-        if (!stream.write(next.value))
-          await new Promise<void>((resolveDrain) => stream.once('drain', resolveDrain))
-      }
-      await new Promise<void>((resolveEnd, reject) => {
-        stream.once('error', reject)
-        stream.end(resolveEnd)
-      })
-      render(true)
-      return hash.digest('hex')
-    } catch (error) {
-      if (interactive) process.stderr.write('\r\x1b[2K\n')
-      stream.destroy()
-      await rm(outputPath, { force: true }).catch(() => undefined)
-      throw error
-    }
-  }
-
-  private async requestWithDiagnostics(url: string, init: RequestInit, operation: string) {
-    try {
-      const response = await this.request(url, init)
-      if (response.url && response.url !== url)
-        log.info('codex.runtime.download-redirected', {
-          operation,
-          host: new URL(response.url).hostname,
-        })
-      return response
-    } catch (error) {
-      const host = new URL(url).hostname
-      throw new Error(`${operation} failed for ${host}: ${networkError(error)}`, { cause: error })
-    }
-  }
-
-  private downloadUrl(value: string) {
-    const url = new URL(value)
-    if (url.protocol !== 'https:' || !['github.com', 'api.github.com'].includes(url.hostname))
-      throw new Error('Release asset URL is not an official GitHub HTTPS URL')
-    return url.toString()
-  }
-
-  private async smokeVerify(entry: RuntimeEntry) {
-    if (!(await this.validEntry(entry)))
-      throw new Error('Downloaded App Server executable failed integrity validation')
-    const home = join(tmpdir(), `codex-web-runtime-${randomUUID()}`)
-    await mkdir(home, { recursive: true })
-    try {
-      const versionOutput = await run(entry.executablePath, ['--version'], { CODEX_HOME: home })
-      if (!versionOutput.includes(entry.version))
-        throw new Error('App Server version did not match the selected release')
-      await verifyJsonRpc(entry.executablePath, entry.version, home)
-    } finally {
-      await rm(home, { recursive: true, force: true }).catch(() => undefined)
-    }
-  }
-
-  private async validEntry(entry: RuntimeEntry) {
-    if (
-      entry.platform !== this.target.id ||
-      entry.assetName !== this.target.assetName ||
-      !isPathWithin(entry.executablePath, this.root) ||
-      !existsSync(entry.executablePath)
-    )
-      return false
-    const executable = await stat(entry.executablePath).catch(() => null)
-    if (!executable?.isFile()) return false
-    const packageRoot = dirname(dirname(entry.executablePath))
-    const expectedExecutable = join(packageRoot, 'bin', this.target.executableName)
-    if (resolve(entry.executablePath) !== resolve(expectedExecutable)) return false
-    for (const relativePath of this.target.requiredFiles) {
-      const file = await stat(join(packageRoot, ...relativePath.split('/'))).catch(() => null)
-      if (!file?.isFile()) return false
-    }
-    const hash = createHash('sha256')
-      .update(await readFile(entry.executablePath))
-      .digest('hex')
-    return hash === entry.sha256
   }
 
   private async readManifest() {
@@ -643,116 +385,6 @@ export class CodexRuntimeManager {
   }
 }
 
-function tarString(buffer: Buffer, start: number, length: number) {
-  return buffer
-    .subarray(start, start + length)
-    .toString('utf8')
-    .replace(/\0.*$/, '')
-    .trim()
-}
-
-function tarNumber(buffer: Buffer) {
-  const text = buffer.toString('ascii').replace(/\0.*$/, '').trim()
-  const parsed = Number.parseInt(text || '0', 8)
-  if (!Number.isSafeInteger(parsed) || parsed < 0)
-    throw new Error('Codex runtime archive has an invalid entry size')
-  return parsed
-}
-
 function safeMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Codex runtime operation failed'
-}
-
-function networkError(error: unknown) {
-  if (!(error instanceof Error)) return 'unknown network error'
-  const cause = error.cause
-  if (cause && typeof cause === 'object') {
-    const details = cause as { code?: unknown; message?: unknown }
-    if (typeof details.code === 'string') return `${error.message} (${details.code})`
-  }
-  return error.message
-}
-
-function formatBytes(value: number) {
-  if (value < 1024) return `${value.toFixed(0)} B`
-  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`
-  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`
-  return `${(value / 1024 ** 3).toFixed(2)} GiB`
-}
-
-function run(executable: string, args: string[], env: NodeJS.ProcessEnv) {
-  return new Promise<string>((resolveOutput, reject) => {
-    const child = spawn(executable, args, { env: { ...process.env, ...env }, windowsHide: true })
-    let output = ''
-    let error = ''
-    const timer = setTimeout(() => child.kill(), 10_000)
-    child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()))
-    child.stderr.on('data', (chunk: Buffer) => (error += chunk.toString()))
-    child.on('error', reject)
-    child.on('exit', (code) => {
-      clearTimeout(timer)
-      if (code === 0) resolveOutput(output)
-      else reject(new Error(`App Server version check failed: ${error || code}`))
-    })
-  })
-}
-
-function verifyJsonRpc(executable: string, version: string, home: string) {
-  return new Promise<void>((resolveVerified, reject) => {
-    const child = spawn(executable, ['--listen', 'stdio://'], {
-      env: { ...process.env, CODEX_HOME: home },
-      windowsHide: true,
-      stdio: 'pipe',
-    })
-    let buffer = ''
-    let initialized = false
-    const timer = setTimeout(
-      () => finish(new Error('App Server protocol smoke test timed out')),
-      15_000,
-    )
-    const finish = (error?: Error) => {
-      clearTimeout(timer)
-      child.kill()
-      if (error) reject(error)
-      else resolveVerified()
-    }
-    child.on('error', (error) => finish(error))
-    child.stderr.on('data', () => undefined)
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString()
-      for (;;) {
-        const newline = buffer.indexOf('\n')
-        if (newline < 0) return
-        const line = buffer.slice(0, newline).trim()
-        buffer = buffer.slice(newline + 1)
-        if (!line) continue
-        let message: Record<string, unknown>
-        try {
-          message = JSON.parse(line) as Record<string, unknown>
-        } catch {
-          finish(new Error('App Server protocol smoke test received non-JSON stdout'))
-          return
-        }
-        if (message.id === 1) {
-          const result = message.result as Record<string, unknown> | undefined
-          const userAgent = result?.userAgent
-          if (typeof userAgent !== 'string' || !userAgent.includes(version)) {
-            finish(new Error('App Server initialize response did not match the selected release'))
-            return
-          }
-          initialized = true
-          child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`)
-          child.stdin.write(`${JSON.stringify({ method: 'account/read', id: 2, params: {} })}\n`)
-        }
-        if (initialized && message.id === 2 && ('result' in message || 'error' in message)) finish()
-      }
-    })
-    child.stdin.write(
-      `${JSON.stringify({
-        method: 'initialize',
-        id: 1,
-        params: { clientInfo: { name: 'codex_web', title: 'Codex Web', version: '0.0.1' } },
-      })}\n`,
-    )
-  })
 }

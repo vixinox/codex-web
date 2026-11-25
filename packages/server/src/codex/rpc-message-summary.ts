@@ -79,7 +79,9 @@ function summarizeValue(value: unknown, depth: number, state: SummaryState): str
 function summarizeKey(value: string) {
   if (SENSITIVE_KEY.test(value) || /[A-Za-z]:[\\/]|^(?:\\\\|\/)/.test(value))
     return '[sensitive-key]'
+  // Control characters are removed so RPC keys remain single-line diagnostics.
   const safe = value
+    // oxlint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?')
     .slice(0, MAX_KEY_LENGTH)
   return safe || '[empty-key]'

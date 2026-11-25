@@ -34,7 +34,7 @@ export type ThreadAccessResult =
 export type ThreadAccessDependencies = {
   workspace: Pick<WorkspaceService, 'getProject' | 'listProjectLocations' | 'getUserRoot'>
   codex: {
-    getReady?: (userId: string) => Promise<ThreadClient>
+    getReady: (userId: string) => Promise<ThreadClient>
   }
 }
 
@@ -49,7 +49,6 @@ function threadCwd(value: unknown) {
 export function createThreadAccess(dependencies: ThreadAccessDependencies) {
   return {
     access: async (request: ThreadAccessRequest): Promise<ThreadAccessResult> => {
-      if (!dependencies.codex.getReady) return { kind: 'codex_start_required' }
       let client: ThreadClient
       try {
         client = await dependencies.codex.getReady(request.userId)

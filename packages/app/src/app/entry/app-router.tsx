@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router'
+import { Route, Routes } from 'react-router'
 import {
   CandidateRoute,
   ConnectionRoute,
@@ -21,8 +21,6 @@ export function AppRouter() {
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/app/enroll" element={<LoginRoute />} />
       <Route path="/app/settings/connection" element={<ConnectionRoute />} />
-      <Route path="/owner/manage" element={<Navigate to="/app/settings/connection" replace />} />
-      <Route path="/app/manage" element={<Navigate to="/app/settings/connection" replace />} />
       <Route path="/app/*" element={<CandidateRoute />} />
       <Route path="/403" element={<ForbiddenPage />} />
       <Route path="/500" element={<ServerErrorPage />} />

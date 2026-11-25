@@ -12,8 +12,7 @@ import {
   type EventIdentity,
 } from '@codex-web/conversation'
 import { isConversationChange, parseOwnerStreamEvent } from '@codex-web/protocol/owner'
-import type { ServerConfig } from '../config.js'
-import { createDatabase, prepareOwnerDatabase } from '../database.js'
+import { openEventStoreTestDatabase } from './event-store-test-fixture.js'
 import { conversationEvent, owner } from '../db/schema.js'
 import { adaptCodexNotification } from './conversation-adapter.js'
 import { EventHub } from './event-hub.js'
@@ -21,17 +20,10 @@ import { SqliteEventStore } from './event-store.js'
 
 test('replays typed Conversation changes through the Owner cursor after reopening SQLite', async () => {
   const dataRoot = mkdtempSync(path.join(tmpdir(), 'codex-conversation-delivery-'))
-  const config: ServerConfig = {
-    host: '127.0.0.1',
-    port: 3000,
-    trustedOrigins: [],
-    dataRoot,
-    credentialEncryptionKey: 'test-key',
-  }
-  let driver: ReturnType<typeof createDatabase>['driver'] | undefined
+  const databasePath = path.join(dataRoot, 'owner.sqlite')
+  let driver: ReturnType<typeof openEventStoreTestDatabase>['driver'] | undefined
   try {
-    prepareOwnerDatabase(config)
-    const database = createDatabase(config)
+    const database = openEventStoreTestDatabase(databasePath)
     driver = database.driver
     database.db.insert(owner).values({ id: 'owner-conversation' }).run()
     const hub = new EventHub(new SqliteEventStore(database.db))
@@ -69,7 +61,7 @@ test('replays typed Conversation changes through the Owner cursor after reopenin
     driver.close()
     driver = undefined
 
-    const reopened = createDatabase(config)
+    const reopened = openEventStoreTestDatabase(databasePath)
     driver = reopened.driver
     const store = new SqliteEventStore(reopened.db)
     const restored = new EventHub(store)

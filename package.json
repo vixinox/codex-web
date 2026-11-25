@@ -14,12 +14,17 @@
     "build": "pnpm --recursive --if-present build",
     "preview": "pnpm --filter @codex-web/app preview",
     "typecheck": "pnpm --recursive --if-present typecheck",
-    "lint": "oxlint . --quiet",
+    "lint": "oxlint . --quiet --max-warnings=10000",
+    "lint:architecture": "oxlint packages/server/src --config .oxlintrc.architecture.json --quiet --max-warnings=10000",
     "lint:staged": "node scripts/lint-staged-warnings.mjs",
+    "quality:report": "node scripts/quality-timing.mjs --mode report",
+    "quality:check": "node scripts/quality-timing.mjs --mode check --commands lint,typecheck,test",
+    "quality:calibrate": "node scripts/quality-timing.mjs --mode calibrate",
     "format": "oxfmt --write \"**/*.{ts,tsx}\"",
     "format:check": "oxfmt --check \"**/*.{ts,tsx}\"",
-    "test": "pnpm test:server && pnpm test:protocol && pnpm test:relay && pnpm test:conversation && pnpm test:telemetry && pnpm test:frontend",
-    "test:core": "pnpm test:server && pnpm test:protocol && pnpm test:relay",
+    "test": "pnpm --recursive --parallel --workspace-concurrency=3 --if-present test && pnpm test:tools",
+    "test:core": "pnpm --recursive --parallel --workspace-concurrency=3 --filter @codex-web/server --filter @codex-web/protocol --filter @codex-web/relay test",
+    "test:tools": "node --test scripts/*.test.mjs",
     "test:server": "pnpm --filter @codex-web/server test",
     "test:protocol": "pnpm --filter @codex-web/protocol test",
     "test:relay": "pnpm --filter @codex-web/relay test",
@@ -30,6 +35,6 @@
   "devDependencies": {
     "oxfmt": "0.64.0",
     "oxlint": "^1.82.0",
-    "oxlint-tsgolint": "^7.0.2001"
+    "oxlint-tsgolint": "^7.0.2008"
   }
 }

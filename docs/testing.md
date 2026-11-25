@@ -59,6 +59,10 @@
 
 日常开发运行受影响包的测试，例如 `pnpm test:server`、`pnpm test:protocol` 或 `pnpm test:frontend`。`pnpm test:core` 是核心 Server/Protocol/Relay 快速入口，不代表全仓通过。
 
+质量命令的耗时由 `pnpm quality:report` 观测，由 `pnpm quality:check` 在里程碑检查时阻断明显回归。观测与基线覆盖 `lint`、`typecheck`、`test:tools`、`test:core` 和 `test`；里程碑门禁串行运行 `lint`、`typecheck` 和全量 `test`，避免重复执行后两者已涵盖的工具/核心测试。日常增量开发仍直接运行受影响包的原命令。首次使用或工具链/机器性能发生有证据的变化时运行 `pnpm quality:calibrate --reason "<reason>"`，该命令先预热，再对每个命令串行采样三次并写入提交的 `quality/timing-baseline.json`。基线不会自动滚动。里程碑检查要求基线存在且格式有效。
+
+门禁使用墙钟时间：超过绝对上限，或比同环境基线慢 50% 以上且至少多 5 秒，`quality:check` 才失败；较小变化只报告。底层命令的失败始终失败并保留其退出码。基线缺失或运行环境（Node/pnpm、OS、CPU、内存等）不一致时只报告“未建立耗时验收”，不套用异机阈值；基线格式损坏则直接失败。`.quality/` 下只保留本机最近 20 份报告，不进入版本库。
+
 提交里程碑前运行：
 
 ```text
@@ -66,6 +70,7 @@ pnpm test
 pnpm typecheck
 pnpm exec oxfmt --check <touched-ts-files>
 pnpm lint:staged
+pnpm quality:check
 ```
 
 没有实际 `.integration.ts` 测试文件时，不得保留空的 integration 命令或把命令成功当作集成验证。

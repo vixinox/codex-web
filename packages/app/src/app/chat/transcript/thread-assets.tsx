@@ -547,8 +547,11 @@ function formatErrorValue(value: unknown, indent = ''): string {
 
 function formatErrorScalar(value: unknown) {
   if (value === null) return 'None'
-  if (typeof value === 'string') return value
-  return String(value)
+  if (typeof value === 'string') return value.slice(0, 2000)
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint')
+    return String(value)
+  if (value === undefined) return 'Unknown'
+  return '[Unsupported value]'
 }
 
 function humanizeErrorKey(key: string) {

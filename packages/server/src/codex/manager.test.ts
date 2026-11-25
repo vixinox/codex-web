@@ -8,6 +8,7 @@ import test, { after } from 'node:test'
 import type { ServerConfig } from '../config.js'
 import type { WorkspaceService } from '../workspace.js'
 import { CodexManager } from './manager.js'
+import { CodexRuntimeManager } from './runtime-manager.js'
 import type { RpcTransport } from './rpc-client.js'
 import type { JsonRpcMessage } from './stdio-transport.js'
 import { log } from '../logger.js'
@@ -65,6 +66,36 @@ const workspace = {
     apiKey: 'secret',
   }),
 } as unknown as WorkspaceService
+
+test('startup completion waits for runtime manifest bookkeeping', async () => {
+  let release!: () => void
+  let entered!: () => void
+  const bookkeeping = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const runtime = new CodexRuntimeManager(config)
+  runtime.markRestarted = async () => {
+    entered()
+    await bookkeeping
+  }
+  const manager = new CodexManager(config, workspace, () => new AutoTransport(), runtime)
+  let settled = false
+  const startup = manager.get('bookkeeping-user', 'project', 'credential').then((client) => {
+    settled = true
+    return client
+  })
+  try {
+    await started
+    assert.equal(settled, false)
+  } finally {
+    release()
+    await startup
+    await manager.shutdown()
+  }
+})
 
 test('shares one process per user and restarts after exit', async () => {
   const transports: AutoTransport[] = []

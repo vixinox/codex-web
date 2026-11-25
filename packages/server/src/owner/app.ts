@@ -1,7 +1,7 @@
 import type { ServerConfig } from '../config.js'
 import { createHttpServer } from '../http/server-base.js'
 import type { AppDependencies } from '../http/types.js'
-import { createOwnerApplicationServices } from './application-services.js'
+import { createOwnerApplicationRuntime } from './runtime.js'
 import { registerHealthRoutes } from '../http/health-routes.js'
 import { registerOwnerWebSocket } from './websocket.js'
 import {
@@ -16,7 +16,7 @@ export async function buildOwnerServer(config: ServerConfig, dependencies: AppDe
     enforceOriginChecks: config.enforceOriginChecks,
   })
   const context = { config, dependencies }
-  const services = createOwnerApplicationServices(dependencies, {
+  const runtime = createOwnerApplicationRuntime(dependencies, {
     trustedOrigins: config.trustedOrigins,
     remoteRelayUrl: config.remoteRelayUrl,
     appOrigin: config.appOrigin,
@@ -24,12 +24,12 @@ export async function buildOwnerServer(config: ServerConfig, dependencies: AppDe
   })
   const ipc = await startOwnerIpcServer(
     config.dataRoot,
-    createOwnerIpcManagementDispatcher(services),
+    createOwnerIpcManagementDispatcher({ localManagement: runtime.localManagement }),
     OWNER_IPC_MANAGEMENT_COMMANDS,
   )
   app.addHook('onClose', async () => ipc.close())
   app.addHook('onListen', async () => ipc.markReady())
   await registerHealthRoutes(app, context)
-  await registerOwnerWebSocket(app, { ...context, services })
-  return Object.assign(app, { ownerServices: services })
+  await registerOwnerWebSocket(app, { ...context, runtime })
+  return app
 }

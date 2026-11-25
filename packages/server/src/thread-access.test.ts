@@ -55,7 +55,14 @@ test('rejects a root access for a project-owned thread', async () => {
 })
 
 test('returns start-required without a ready client', async () => {
-  const access = createThreadAccess({ workspace, codex: {} })
+  const access = createThreadAccess({
+    workspace,
+    codex: {
+      getReady: async () => {
+        throw new Error('CODEX_START_REQUIRED')
+      },
+    },
+  })
   assert.deepEqual(
     await access.access({
       userId: 'user-id',

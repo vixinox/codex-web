@@ -15,7 +15,7 @@ export async function registerHealthRoutes(app: FastifyInstance, { dependencies 
   }))
 
   app.get('/ready', async (_request, reply) => {
-    const eventStoreHealthy = dependencies.codex.events.isHealthy?.() ?? true
+    const eventStoreHealthy = dependencies.codex.events.isHealthy()
     const ready = eventStoreHealthy
     if (!ready) reply.status(503)
     return {

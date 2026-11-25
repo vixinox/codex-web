@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "calibratedAt": "2026-11-25T11:03:43.107Z",
+  "reason": "initial local baseline 2026-11-25",
+  "environment": {
+    "node": "v24.19.0",
+    "pnpm": "12.4.1",
+    "platform": "win32",
+    "osPlatform": "win32",
+    "release": "10.0.22631",
+    "arch": "x64",
+    "cpuModel": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "logicalCpus": 20,
+    "memoryGiB": 32
+  },
+  "commands": {
+    "lint": {
+      "baselineMs": 1271,
+      "absoluteLimitMs": 10000,
+      "samplesMs": [
+        1262,
+        1271,
+        1274
+      ]
+    },
+    "typecheck": {
+      "baselineMs": 1367,
+      "absoluteLimitMs": 10000,
+      "samplesMs": [
+        1319,
+        1367,
+        1595
+      ]
+    },
+    "test:tools": {
+      "baselineMs": 4456,
+      "absoluteLimitMs": 10000,
+      "samplesMs": [
+        4303,
+        4456,
+        4531
+      ]
+    },
+    "test:core": {
+      "baselineMs": 7632,
+      "absoluteLimitMs": 16000,
+      "samplesMs": [
+        7570,
+        7632,
+        7907
+      ]
+    },
+    "test": {
+      "baselineMs": 15589,
+      "absoluteLimitMs": 32000,
+      "samplesMs": [
+        15551,
+        15589,
+        16089
+      ]
+    }
+  }
+}

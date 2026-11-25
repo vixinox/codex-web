@@ -110,14 +110,18 @@ export function sanitizeLogFields(fields: LogFields): LogFields {
 }
 
 export function sanitizeText(value: string) {
-  return value
-    .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, '$1[redacted]')
-    .replace(/(api[_-]?key|bearer|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
-    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
-    .replace(/[A-Za-z]:\\[^\r\n]*/g, '[path]')
-    .replace(/(?:^|\s)(?:\/[^\s]+){2,}/g, ' [path]')
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?')
-    .slice(0, 500)
+  return (
+    value
+      .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, '$1[redacted]')
+      .replace(/(api[_-]?key|bearer|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+      .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+      .replace(/[A-Za-z]:\\[^\r\n]*/g, '[path]')
+      .replace(/(?:^|\s)(?:\/[^\s]+){2,}/g, ' [path]')
+      // Control characters are removed before text reaches log output.
+      // oxlint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?')
+      .slice(0, 500)
+  )
 }
 
 function isLogFieldValue(value: unknown): value is LogFieldValue {

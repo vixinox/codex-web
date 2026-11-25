@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "oxc", "import", "promise"],
+  "overrides": [
+    {
+      "files": [
+        "packages/server/src/owner/application-services.ts",
+        "packages/server/src/owner/runtime.ts",
+        "packages/server/src/owner/application/**/*.ts",
+        "packages/server/src/owner/event-services.ts",
+        "packages/server/src/owner/session-runtime.ts",
+        "packages/server/src/owner/session/**/*.ts",
+        "packages/server/src/codex/owner-port.ts",
+        "packages/server/src/codex/manager.ts",
+        "packages/server/src/codex/process/**/*.ts",
+        "packages/server/src/codex/runtime-manager.ts",
+        "packages/server/src/codex/runtime/**/*.ts",
+        "packages/server/src/remote/connector.ts",
+        "packages/server/src/remote/sessions/**/*.ts"
+      ],
+      "rules": {
+        "max-lines": ["error", { "max": 450, "skipBlankLines": false, "skipComments": false }]
+      }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.integration.ts", "**/fixtures/**", "**/generated/**"],
+      "rules": { "max-lines": "off" }
+    }
+  ]
+}

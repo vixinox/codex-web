@@ -10,6 +10,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.quality/
 .data/
 /docs/vendor
 /docs/diagrams

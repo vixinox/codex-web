@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["./.oxlintrc.architecture.json"],
   "plugins": ["typescript", "oxc", "import", "promise"],
   "categories": {
     "correctness": "error",

@@ -6,140 +6,31 @@ import {
 } from '@codex-web/protocol/owner'
 import type { OwnerErrorDto } from '@codex-web/telemetry/errors'
 import { log } from '../logger.js'
-import { OwnerMethodError, projectOwnerError } from './errors.js'
+import { OwnerMethodError } from './errors.js'
+import { isStreamResult, projectError, abortError, raceAbort } from './session/request.js'
+import type {
+  OwnerAdmission,
+  OwnerContext,
+  OwnerMethodContext,
+  OwnerMethodRegistry,
+  OwnerSessionRuntimeOptions,
+  OwnerStream,
+  OwnerTransport,
+} from './session/contracts.js'
+import { OrderedOwnerSender } from './session/ordered-sender.js'
 export { OwnerMethodError } from './errors.js'
-
-export type OwnerTransport = {
-  kind: 'local' | 'relay'
-  origin?: string
-  pairedDeviceId?: string
-  e2eeVerified?: boolean
-  enrollmentCandidate?: boolean
-  enrollmentReference?: string
-  clientPublicKey?: string
-  promote?: (deviceId: string, clientToken: string) => void
-  promoted?: boolean
-  send(frame: string | Uint8Array): Promise<void> | void
-  close(code?: number, reason?: string): void
-  onMessage(listener: (frame: string | Uint8Array) => void): () => void
-  onClose(listener: (reason?: string) => void): () => void
-}
-
-export class VirtualOwnerTransport implements OwnerTransport {
-  readonly kind = 'relay' as const
-  pairedDeviceId: string
-  readonly e2eeVerified = true
-  clientPublicKey?: string
-  promote?: (deviceId: string, clientToken: string) => void
-  promoted = false
-  enrollmentCandidate = false
-  enrollmentReference?: string
-  private readonly sendFrame: (frame: string | Uint8Array) => void
-  private readonly closeTransport: (code?: number, reason?: string) => void
-  private readonly messageListeners = new Set<(frame: string | Uint8Array) => void>()
-  private readonly closeListeners = new Set<(reason?: string) => void>()
-  private closed = false
-
-  constructor(
-    pairedDeviceId: string,
-    send: (frame: string | Uint8Array) => void,
-    close: (code?: number, reason?: string) => void,
-  ) {
-    this.pairedDeviceId = pairedDeviceId
-    this.sendFrame = send
-    this.closeTransport = close
-  }
-
-  send(frame: string | Uint8Array) {
-    if (this.closed) return
-    this.sendFrame(frame)
-  }
-
-  close(code?: number, reason?: string) {
-    if (this.closed) return
-    this.closed = true
-    this.closeTransport(code, reason)
-    for (const listener of this.closeListeners) listener(reason)
-    this.messageListeners.clear()
-    this.closeListeners.clear()
-  }
-
-  onMessage(listener: (frame: string | Uint8Array) => void) {
-    if (this.closed) return () => undefined
-    this.messageListeners.add(listener)
-    return () => this.messageListeners.delete(listener)
-  }
-
-  onClose(listener: (reason?: string) => void) {
-    if (this.closed) {
-      listener()
-      return () => undefined
-    }
-    this.closeListeners.add(listener)
-    return () => this.closeListeners.delete(listener)
-  }
-
-  receive(frame: string | Uint8Array) {
-    if (this.closed) return
-    for (const listener of this.messageListeners) listener(frame)
-  }
-}
-
-export type OwnerContext = {
-  ownerId: string
-  sessionId: string
-  sessionToken?: string
-  stepUpAt?: number
-  clientId: string
-  connectionId: string
-  transport: { kind: OwnerTransport['kind']; pairedDeviceId?: string }
-}
-
-export type OwnerAdmission = {
-  ownerId: string
-  sessionId: string
-  sessionToken?: string
-  stepUpAt?: number
-}
-
-export type OwnerStream = {
-  meta?: unknown
-  run(emit: (event: unknown) => Promise<void>, signal: AbortSignal): Promise<void> | void
-}
-
-export type OwnerStreamResult = {
-  result?: unknown
-  stream: OwnerStream
-}
-
-export type OwnerMethodContext = {
-  readonly owner: OwnerContext | null
-  readonly connectionId: string
-  readonly transport: OwnerTransport
-  readonly signal: AbortSignal
-  readonly requestId: string
-  authenticate(admission: OwnerAdmission): Promise<void> | void
-  unauthenticate(): void
-}
-
-export type OwnerMethodDefinition = {
-  access: 'public' | 'local' | 'authenticated'
-  timeoutMs?: number
-  closeAfterResponse?: boolean
-  handle(params: unknown, context: OwnerMethodContext): unknown
-}
-
-export type OwnerMethodRegistry = ReadonlyMap<string, OwnerMethodDefinition>
-
-export type OwnerSessionRuntimeOptions = {
-  connectionId: string
-  capabilities?: string[]
-  localAdmission?: OwnerAdmission
-  maxInFlightRequests?: number
-  maxQueuedBytes?: number
-  defaultRequestTimeoutMs?: number
-  resumeSession?: (token: string, transport: OwnerTransport) => Promise<OwnerAdmission | null>
-}
+export type {
+  OwnerAdmission,
+  OwnerContext,
+  OwnerMethodContext,
+  OwnerMethodDefinition,
+  OwnerMethodRegistry,
+  OwnerSessionRuntimeOptions,
+  OwnerStream,
+  OwnerStreamResult,
+  OwnerTransport,
+} from './session/contracts.js'
+export { VirtualOwnerTransport } from './session/virtual-transport.js'
 
 type RequestState = {
   controller: AbortController
@@ -170,8 +61,7 @@ export class OwnerSessionRuntime {
   private readonly activeStreams = new Map<string, StreamState>()
   private removeMessageListener: (() => void) | undefined
   private removeCloseListener: (() => void) | undefined
-  private sendQueue: Promise<void> = Promise.resolve()
-  private queuedBytes = 0
+  private readonly sender: OrderedOwnerSender
   private session: OwnerAdmission | null = null
   private clientId: string | undefined
   private started = false
@@ -185,6 +75,11 @@ export class OwnerSessionRuntime {
     this.transport = transport
     this.methods = methods
     this.options = options
+    this.sender = new OrderedOwnerSender(
+      transport,
+      options.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES,
+      (code, reason) => this.shutdown(code, reason),
+    )
   }
 
   start(): void {
@@ -520,20 +415,7 @@ export class OwnerSessionRuntime {
     }
     const parsed = parseOwnerFrame(encoded)
     if (!parsed.ok) throw new TypeError(parsed.error.message)
-    if (this.queuedBytes + bytes > (this.options.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES)) {
-      this.shutdown(1013, 'BACKPRESSURE_LIMIT_EXCEEDED')
-      return
-    }
-
-    this.queuedBytes += bytes
-    const queued = this.sendQueue
-      .then(() => (this.closed ? undefined : this.transport.send(encoded)))
-      .catch(() => this.shutdown(1011, 'SEND_FAILED'))
-      .finally(() => {
-        this.queuedBytes -= bytes
-      })
-    this.sendQueue = queued
-    await queued
+    await this.sender.send(encoded, bytes)
   }
 
   private async rejectConnection(code: string, message: string, closeCode: number): Promise<void> {
@@ -545,6 +427,7 @@ export class OwnerSessionRuntime {
   private shutdown(code?: number, reason?: string): void {
     if (this.closed) return
     this.closed = true
+    this.sender.close()
     this.removeMessageListener?.()
     this.removeCloseListener?.()
     for (const request of this.activeRequests.values()) {
@@ -558,51 +441,4 @@ export class OwnerSessionRuntime {
     this.activeStreams.clear()
     this.transport.close(code, reason)
   }
-}
-
-function isStreamResult(value: unknown): value is OwnerStreamResult {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    'stream' in value &&
-    typeof value.stream === 'object' &&
-    value.stream !== null &&
-    'run' in value.stream &&
-    typeof value.stream.run === 'function'
-  )
-}
-
-function projectError(
-  error: unknown,
-  abortCode: 'REQUEST_TIMEOUT' | 'REQUEST_CANCELLED' | undefined,
-  detailed: boolean,
-): OwnerErrorDto {
-  if (abortCode)
-    return projectOwnerError(new OwnerMethodError(abortCode, abortCode === 'REQUEST_TIMEOUT'))
-  return projectOwnerError(error, detailed)
-}
-
-function abortError(code?: RequestState['abortCode']): Error {
-  return new OwnerMethodError(code ?? 'REQUEST_CANCELLED', code === 'REQUEST_TIMEOUT')
-}
-
-function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortError())
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(abortError())
-    const cleanup = () => signal.removeEventListener('abort', onAbort)
-    signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(
-      (value) => {
-        cleanup()
-        resolve(value)
-        return value
-      },
-      (error: unknown) => {
-        cleanup()
-        reject(error)
-        return undefined
-      },
-    )
-  })
 }

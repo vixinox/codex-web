@@ -43,6 +43,8 @@ test('streams a domain event envelope through Owner WS events.subscribe', async 
         events: {
           latestEventId: () => 0,
           isCursorExpired: async () => false,
+          isCursorAhead: (_ownerId: string, _threadId: string | undefined, sequence: number) =>
+            sequence > 0,
           subscribeFrom: async (
             _ownerId: string,
             _threadId: string | undefined,
@@ -281,6 +283,10 @@ test('typed Conversation commands require Owner and thread authorization before 
         getProject: async () => null,
       } as never,
       codex: {
+        modelCatalog: async () => [{ id: 'test-model', reasoningEfforts: [{ id: 'medium' }] }],
+        enqueueTurn: async (_ownerId: string, run: (signal: AbortSignal) => Promise<unknown>) =>
+          run(new AbortController().signal),
+        ensureThread: async () => undefined,
         getReady: async () => ({
           request: async (method: string, params: Record<string, unknown>) => {
             if (method === 'thread/read') return { thread: { id: params.threadId, cwd: root } }
@@ -303,7 +309,16 @@ test('typed Conversation commands require Owner and thread authorization before 
         respondToServerRequest: (...args: unknown[]) => {
           mutations.push(args)
         },
-        events: {},
+        events: {
+          latestEventId: () => 0,
+          isCursorExpired: async () => false,
+          isCursorAhead: () => false,
+          subscribeFrom: async () => () => undefined,
+          threadHistory: async () => [],
+          isHealthy: () => true,
+          captureThreadSnapshot: async () => ({ history: [], sequence: 0 }),
+          subscribe: () => () => undefined,
+        },
       } as never,
     },
     { trustedOrigins: [] },

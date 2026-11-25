@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { MessageContent } from '@/app/chat/content/message-content'
 import { repairInterruptedCodeFence } from './markdown-repair'
-import { transcriptDebug } from './transcript-debug'
 
 type MarkdownBlock = { id: string; text: string }
 
@@ -58,12 +57,6 @@ export function splitCompleteMarkdownBlocks(text: string, flush = false) {
       current = ''
     }
   }
-  transcriptDebug({
-    phase: 'split',
-    blockCount: blocks.length,
-    pendingLength: current.length,
-    preview: false,
-  })
   return { blocks, pending: current }
 }
 
@@ -136,11 +129,9 @@ const MarkdownBlockView = React.memo(function MarkdownBlockView({
       onCompleteRef.current?.()
       return undefined
     }
-    transcriptDebug({ phase: 'animation', elementCount: 1, settled: false })
     if (!alreadyStarted && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       animatedBlockIdRef.current = block.id
       animatedBlocks?.add(block.id)
-      transcriptDebug({ phase: 'animation', elementCount: 1, settled: true })
       onCompleteRef.current?.()
       return undefined
     }
@@ -154,7 +145,6 @@ const MarkdownBlockView = React.memo(function MarkdownBlockView({
     const handleEnd = (event: AnimationEvent) => {
       if (event.animationName !== 'native-markdown-enter') return
       root.classList.remove('native-markdown-enter')
-      transcriptDebug({ phase: 'animation', elementCount: 1, settled: true })
       onCompleteRef.current?.()
     }
     root.addEventListener('animationend', handleEnd)

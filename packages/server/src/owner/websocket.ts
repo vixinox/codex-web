@@ -4,9 +4,7 @@ import type { WebSocket } from '@fastify/websocket'
 import { isIP } from 'node:net'
 
 import type { ServerConfig } from '../config.js'
-import { createOwnerApplicationServices } from './application-services.js'
-import type { OwnerApplicationServices } from './application-services.js'
-import { createOwnerMethodRegistry } from './methods.js'
+import type { OwnerApplicationRuntime } from './runtime.js'
 import type { AppDependencies } from '../http/types.js'
 import { OwnerSessionRuntime, type OwnerTransport } from './session-runtime.js'
 import type { OwnerAdmission } from './session-runtime.js'
@@ -16,12 +14,12 @@ const LOCAL_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'] as cons
 type OwnerWebSocketOptions = {
   config: ServerConfig
   dependencies: AppDependencies
-  services?: OwnerApplicationServices
+  runtime: OwnerApplicationRuntime
 }
 
 export async function registerOwnerWebSocket(
   app: FastifyInstance,
-  { config, dependencies, services: providedServices }: OwnerWebSocketOptions,
+  { config, dependencies, runtime }: OwnerWebSocketOptions,
 ) {
   await app.register(websocket, {
     options: {
@@ -30,17 +28,10 @@ export async function registerOwnerWebSocket(
     },
   })
 
-  const services =
-    providedServices ??
-    createOwnerApplicationServices(dependencies, {
-      trustedOrigins: config.trustedOrigins,
-      remoteRelayUrl: config.remoteRelayUrl,
-    })
-  const registry = createOwnerMethodRegistry(services)
   dependencies.remote?.configureRemoteSessions(
-    registry,
-    (token, transport) => services.resumeSession(token, transport),
-    services.isDeviceAuthorized,
+    runtime.registry,
+    runtime.resumeSession,
+    runtime.isDeviceAuthorized,
   )
 
   app.get('/ws', { websocket: true }, (socket, request) => {
@@ -66,12 +57,12 @@ export async function registerOwnerWebSocket(
           return undefined
         }
         const localAdmission: OwnerAdmission = { ownerId, sessionId: `local:${connectionId}` }
-        const runtime = new OwnerSessionRuntime(transport, registry, {
+        const session = new OwnerSessionRuntime(transport, runtime.registry, {
           connectionId,
           capabilities: ['owner', 'credentials', 'projects', 'codex'],
           localAdmission,
         })
-        runtime.start()
+        session.start()
         return undefined
       })
       .catch(() => socket.close(1011, 'OWNER_UNAVAILABLE'))

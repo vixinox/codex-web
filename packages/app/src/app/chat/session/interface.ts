@@ -40,8 +40,8 @@ export type ThreadSessionSnapshot = ThreadSessionPresentation
 export type ThreadSession = {
   readonly key: string
   readonly state: ThreadSessionPresentation
-  subscribe(listener: () => void): () => void
-  getSnapshot(): ThreadSessionSnapshot
+  subscribe(this: void, listener: () => void): () => void
+  getSnapshot(this: void): ThreadSessionSnapshot
   getConversation(): ConversationState | null
   replaceConversation(snapshot: ConversationSnapshot): void
   applyConversationChange(change: ConversationChange): void

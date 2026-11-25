@@ -229,3 +229,25 @@ test('partial persistence failure disconnects access and removal can be retried'
   await f.manager.revokeDevice(device.deviceId)
   assert.equal(f.authorized.size, 0)
 })
+
+test('trust-file removal failure still revokes application authorization and disconnects the device', async () => {
+  const f = fixture()
+  const invitation = await f.manager.issue('cli')
+  const device = await f.manager.redeem(f.candidate(invitation.reference), {
+    reference: invitation.reference,
+  })
+  const revoke = f.remote.revokeDevice
+  f.remote.revokeDevice = async () => {
+    throw new Error('trust persistence unavailable')
+  }
+  await assert.rejects(f.manager.revokeDevice(device.deviceId), /trust persistence unavailable/)
+  assert.equal(f.authorized.size, 0)
+  assert.equal(f.connected.size, 0)
+  assert.equal(f.peers.size, 1)
+  assert.deepEqual(await f.manager.listDevices(), [])
+  f.remote.revokeDevice = revoke
+  await f.manager.revokeDevice(device.deviceId)
+  await f.manager.revokeDevice(device.deviceId)
+  assert.equal(f.peers.size, 0)
+  assert.equal((await f.remote.trust.identity()).ownerPublicKey, 'owner-key')
+})

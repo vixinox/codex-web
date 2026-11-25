@@ -4,7 +4,25 @@ import WebSocket from 'ws'
 
 import type { ServerConfig } from '../config.js'
 import { createHttpServer } from '../http/server-base.js'
+import type { OwnerApplicationRuntime } from './runtime.js'
 import { isLoopbackPeer, registerOwnerWebSocket } from './websocket.js'
+
+function createTestRuntime(): OwnerApplicationRuntime {
+  return {
+    registry: new Map([
+      [
+        'owner.status',
+        {
+          access: 'public',
+          handle: async () => ({ ownerExists: true, authenticated: true, ownerId: 'owner-local' }),
+        },
+      ],
+    ]),
+    resumeSession: async () => null,
+    isDeviceAuthorized: async () => false,
+    localManagement: {} as OwnerApplicationRuntime['localManagement'],
+  }
+}
 
 test('recognizes IPv4, IPv4-mapped IPv6, and IPv6 loopback peers only', () => {
   for (const address of ['127.0.0.1', '127.14.2.3', '::1', '::ffff:127.0.0.1'])
@@ -19,6 +37,7 @@ test('local websocket admits a trusted origin and serves owner.status', async ()
     enforceOriginChecks: true,
   })
   await registerOwnerWebSocket(app, {
+    runtime: createTestRuntime(),
     config: {
       port: 3000,
       trustedOrigins: ['http://localhost:5173', 'https://app.remote.test'],
@@ -58,6 +77,7 @@ test('local websocket admits a trusted origin and serves owner.status', async ()
 test('local websocket rejects an untrusted origin before protocol admission', async () => {
   const app = await createHttpServer()
   await registerOwnerWebSocket(app, {
+    runtime: createTestRuntime(),
     config: { trustedOrigins: ['http://localhost:5173'] } as ServerConfig,
     dependencies: {
       auth: { api: {} } as never,
@@ -89,6 +109,7 @@ test('does not expand local admission to remote trusted origins or spoofed hosts
   ]) {
     const app = await createHttpServer()
     await registerOwnerWebSocket(app, {
+      runtime: createTestRuntime(),
       config: {
         port: 3000,
         trustedOrigins: [

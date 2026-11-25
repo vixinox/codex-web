@@ -1,6 +1,5 @@
 import type { ChatBlock, ChatTurnPresentation, ChatUserInputRequest } from '../model/types'
 import { splitCompleteMarkdownBlocks } from './streaming-assistant'
-import { transcriptDebug } from './transcript-debug'
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
 
@@ -37,14 +36,6 @@ export function visibleTurnContent(
       finalPlan: hasFinalPlan ? finalPlan : undefined,
     }),
   }
-  transcriptDebug({
-    phase: 'render',
-    turnId: turn.id,
-    status: turn.status,
-    blockCount: visibleBlocks.length,
-    visible: hasContent,
-    revision: `length:${result.revision.length}`,
-  })
   return result
 }
 

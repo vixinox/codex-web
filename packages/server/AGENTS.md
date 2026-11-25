@@ -1,0 +1,11 @@
+# Server module maintenance
+
+- Preserve the existing single-Owner security, wire, persistence and runtime contracts documented in the root instructions and `PROJECT.md`.
+- Owner use cases belong in `src/owner/application/`. `application-services.ts` only composes their dependencies; `methods.ts` maps wire methods and `runtime.ts` exposes the shared WebSocket/Relay/IPC seam. Do not add domain implementations to these composition modules.
+- Codex process lifecycle and process identity belong to `CodexManager`; notification-derived activity and pending Interactions belong to `src/codex/process/events.ts`; startup configuration/authentication belong to `process/startup.ts`; task queues belong to `TurnScheduler`. Do not mirror their mutable state.
+- Runtime manifest transitions belong to `CodexRuntimeManager`. Release I/O, package integrity and smoke verification belong to `src/codex/runtime/`; those helpers do not mutate manifests.
+- Relay socket/reconnect/heartbeat state belongs to `OwnerConnector`; client handshake, keys, sequence counters and revocation fencing belong to `RemoteClientSessions`. Owner admission/request/stream state belongs to `OwnerSessionRuntime`; encoded output queue capacity belongs to `OrderedOwnerSender`.
+- Require the Codex capabilities consumed by Owner. A stopped or unavailable runtime is a method result/error, not an absent method. Inject narrow dependency objects, and keep one authoritative cleanup path for each owned resource.
+- Run `pnpm lint:architecture` after changing the selected module clusters. The scoped oxlint `max-lines` budget is 450 physical lines including comments and blanks; tests, fixtures and generated files are excluded. New files in the selected directories inherit the budget.
+- Split by cohesive responsibility and state ownership before a module exceeds its budget. Do not hide logic in composition modules, add forwarding-only layers, compress formatting, or use inline lint suppression to satisfy the budget. A justified exception needs an exact-path finite ceiling in the architecture config and a rationale in the active architecture specification.
+- Test behavior through the module interface. Reuse existing lifecycle/security/contract tests when moving implementation; add tests for uncovered behavior, not import paths or private state layout.

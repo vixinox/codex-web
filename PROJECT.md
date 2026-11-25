@@ -26,6 +26,7 @@
 - Credential 加密密钥在所有运行模式下统一从 `CODEX_DATA_ROOT/.credential-encryption-key` 读取，首次使用自动生成并持久化，不支持环境变量覆盖；备份和恢复 Credential 时必须保留对应密钥。
 - 远程能力采用 Paseo 基准的 pnpm monorepo：`packages/app`、`packages/server`、`packages/relay` 和 `packages/protocol`。Owner Gateway 是身份、业务、Agent、Thread、事件和历史的唯一边界；远程端通过 Relay 的 E2EE transport 接入同一个 Owner session runtime。`@codex-web/protocol/owner` 与 `@codex-web/protocol/relay` 在同一 package 内保持显式职责隔离。Relay 只维护内存连接路由、协议版本和连接生命周期，不保存账户、设备、事件或业务正文；设备 enrollment invitation 负责远程浏览器的路由和登录；首次使用登记设备，已登记设备复用身份，Owner attach 使用 Owner 与 Relay 共享的部署 admission secret，设备身份仍由 Owner trust store 和 E2EE 握手验证。产品限定为单个 Owner 节点及其远程控制端，不建立 Relay 账户体系或多节点管理体系。
 - `@codex-web/telemetry` 提供跨运行时日志接口和错误模型；浏览器仅依赖显式 browser-safe error export，Node/Bun logger adapters 与内部诊断错误不属于 Owner/Relay wire protocol。各 transport 边界负责将内部错误显式映射为公开错误 DTO。
+- Server 的 Owner application 按用例域组合，Owner-facing Codex port 由 Codex 集成模块定义必需能力。进程生命周期、通知驱动的 Interaction/Turn 状态、runtime manifest、Relay socket、E2EE client session 和 Owner request/stream 分别保持唯一状态所有者；维护规则见 `packages/server/AGENTS.md`，选定模块的规模约束由 scoped oxlint 配置执行。
 
 ## 不可逆决策
 

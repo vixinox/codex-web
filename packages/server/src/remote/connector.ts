@@ -1,34 +1,14 @@
 import { randomUUID } from 'node:crypto'
 
-import {
-  decryptPayload,
-  deriveSessionKey,
-  encryptPayload,
-  importPrivateKey,
-  importPublicKey,
-  type SessionKey,
-} from '@codex-web/protocol/relay/crypto'
-import {
-  encodeFrame,
-  isEncryptedFrame,
-  isHandshakeFrame,
-  parseFrame,
-  RELAY_PROTOCOL_VERSION,
-  type ConnectionCloseFrame,
-  type EncryptedFrame,
-  type RelayForwardFrame,
-} from '@codex-web/protocol/relay'
+import { encodeFrame, parseFrame, RELAY_PROTOCOL_VERSION } from '@codex-web/protocol/relay'
 import WebSocket from 'ws'
 
 import type { ServerConfig } from '../config.js'
 import { log } from '../logger.js'
-import {
-  OwnerSessionRuntime,
-  VirtualOwnerTransport,
-  type OwnerMethodRegistry,
-} from '../owner/session-runtime.js'
+import { OwnerSessionRuntime, type OwnerMethodRegistry } from '../owner/session-runtime.js'
 import { RemoteTrustStore } from './trust-store.js'
 import { signAdmissionToken } from './admission-token.js'
+import { RemoteClientSessions } from './sessions/index.js'
 
 export type ConnectorTransport = {
   send(data: string): void
@@ -51,25 +31,6 @@ type RelayWebSocket = ConnectorTransport &
 
 type RelayWebSocketFactory = (url: string) => RelayWebSocket
 
-type ClientSession = {
-  key: SessionKey
-  lastReceiveSequence: number
-  sendSequence: number
-  sendQueue: Promise<void>
-  closing?: boolean
-  publicKey: string
-  deviceId: string
-  transport: VirtualOwnerTransport
-  runtime: OwnerSessionRuntime
-  createdAt: number
-}
-
-/** Per-relay-connection handshake state. A connection holds exactly one of these for its lifetime. */
-type ConnectionState =
-  | { phase: 'awaiting_handshake' }
-  | { phase: 'handshaking' }
-  | { phase: 'open'; session: ClientSession }
-
 const RELAY_READY_TIMEOUT_MS = 10_000
 const RELAY_HEARTBEAT_INTERVAL_MS = 10_000
 const RELAY_STALE_TIMEOUT_MS = 30_000
@@ -90,17 +51,9 @@ export class OwnerConnector {
   private heartbeatTimer?: ReturnType<typeof setInterval>
   private reconnectAttempt = 0
   private readonly connectionId = randomUUID()
-  private readonly connections = new Map<string, ConnectionState>()
-  private readonly connectedClientIds = new Map<string, string>()
-  private readonly connectedEnrollmentReferences = new Map<string, string>()
   private enrollmentReference?: { reference: string; expiresAt: number }
-  private runtimeRegistry?: OwnerMethodRegistry
-  private authorizeDevice?: (deviceId: string) => Promise<boolean>
-  private resumeSession?: NonNullable<
-    ConstructorParameters<typeof OwnerSessionRuntime>[2]['resumeSession']
-  >
   private inboundRelayMessages: Promise<void> = Promise.resolve()
-  private revocationRevision = 0
+  private readonly clients: RemoteClientSessions
 
   private readonly config: ServerConfig
   readonly trust: RemoteTrustStore
@@ -116,6 +69,7 @@ export class OwnerConnector {
   ) {
     this.config = config
     this.trust = trust
+    this.clients = new RemoteClientSessions(trust, (frame) => this.sendRelayFrame(frame))
     this.webSocketFactory = webSocketFactory
     this.heartbeatIntervalMs = heartbeat.intervalMs ?? RELAY_HEARTBEAT_INTERVAL_MS
     this.staleTimeoutMs = heartbeat.staleTimeoutMs ?? RELAY_STALE_TIMEOUT_MS
@@ -132,7 +86,7 @@ export class OwnerConnector {
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     this.clearRelayTimers()
-    await this.closeAllConnections('owner_shutdown')
+    await this.clients.closeAllConnections('owner_shutdown')
     this.enrollmentReference = undefined
     this.detachTransport()
     this.socket?.close?.(1000, 'owner_shutdown')
@@ -227,9 +181,7 @@ export class OwnerConnector {
     >,
     authorizeDevice?: (deviceId: string) => Promise<boolean>,
   ) {
-    this.authorizeDevice = authorizeDevice
-    this.runtimeRegistry = registry
-    this.resumeSession = resumeSession
+    this.clients.configureRemoteSessions(registry, resumeSession, authorizeDevice)
   }
 
   async listDevices() {
@@ -237,28 +189,20 @@ export class OwnerConnector {
   }
 
   async revokeDevice(deviceId: string, reason = 'device_revoked') {
-    this.revocationRevision += 1
+    this.clients.invalidateHandshakes()
     const publicKey = await this.trust.revokePeer(deviceId)
     await this.disconnectDevice(deviceId, reason, publicKey ?? undefined)
     return Boolean(publicKey)
   }
 
   async revokeAllDevices(reason = 'device_revoked') {
-    this.revocationRevision += 1
+    this.clients.invalidateHandshakes()
     await this.trust.clearPeers()
     await this.disconnectDevice(undefined, reason)
   }
 
   async disconnectDevice(deviceId?: string, reason = 'access_unavailable', publicKey?: string) {
-    const ids = [...this.connections].flatMap(([id, state]) =>
-      state.phase === 'open' &&
-      (!deviceId ||
-        state.session.deviceId === deviceId ||
-        (publicKey && state.session.publicKey === publicKey))
-        ? [id]
-        : [],
-    )
-    await Promise.all(ids.map((id) => this.closeConnection(id, reason)))
+    return this.clients.disconnectDevice(deviceId, reason, publicKey)
   }
 
   sendFrame(frame: string) {
@@ -331,7 +275,7 @@ export class OwnerConnector {
       this.clearRelayTimers()
       this.detachTransport()
       this.enrollmentReference = undefined
-      this.teardownAllConnections('relay_disconnected', false)
+      this.clients.teardownAllConnections('relay_disconnected', false)
       this.scheduleReconnect()
     }
   }
@@ -397,7 +341,7 @@ export class OwnerConnector {
     const frame = parseFrame(data)
     if (!frame) return
     if (frame.type === 'relay.forward') {
-      await this.handleForward(frame)
+      await this.clients.handleForward(frame)
       return
     }
     if (frame.type === 'relay.ready') {
@@ -431,273 +375,20 @@ export class OwnerConnector {
         this.socket?.close?.(1008, 'invalid_client_binding')
         return
       }
-      this.connectedClientIds.set(frame.connectionId, candidateId)
-      if (enrollmentCandidate && typeof frame.reference === 'string')
-        this.connectedEnrollmentReferences.set(frame.connectionId, frame.reference)
-      this.connections.set(frame.connectionId, { phase: 'awaiting_handshake' })
+      this.clients.attach(
+        frame.connectionId,
+        candidateId,
+        enrollmentCandidate && typeof frame.reference === 'string' ? frame.reference : undefined,
+      )
       return
     }
     if (frame.type === 'relay.client.disconnected') {
-      this.connectedClientIds.delete(frame.connectionId)
-      this.connectedEnrollmentReferences.delete(frame.connectionId)
-      this.teardownConnection(frame.connectionId, 'peer_disconnected')
+      this.clients.detach(frame.connectionId)
     }
-  }
-
-  private async handleForward(frame: RelayForwardFrame) {
-    // Always act on the live state: earlier awaits in this handler must not resurrect a
-    // connection that another message already tore down.
-    const state = this.connections.get(frame.connectionId)
-    if (!state) return
-    const payload = parseFrame(frame.payload)
-    if (!payload) return
-    if (isHandshakeFrame(payload)) {
-      if (state.phase !== 'awaiting_handshake') {
-        // A repeat handshake would overwrite an established session (or race a pending one).
-        this.teardownConnection(frame.connectionId, 'duplicate_handshake')
-        return
-      }
-      this.connections.set(frame.connectionId, { phase: 'handshaking' })
-      await this.handleHandshake(frame.connectionId, payload)
-      return
-    }
-    if (!isEncryptedFrame(payload)) return
-    if (state.phase !== 'open') {
-      this.teardownConnection(frame.connectionId, 'handshake_required')
-      return
-    }
-    await this.handleEncrypted(frame.connectionId, state.session, payload)
-  }
-
-  private async handleHandshake(
-    connectionId: string,
-    frame: Extract<ReturnType<typeof parseFrame>, { type: 'handshake' }>,
-  ) {
-    const revocationRevision = this.revocationRevision
-    const identity = await this.trust.identity()
-    const attachedDeviceId = this.connectedClientIds.get(connectionId)
-    const deviceId = await this.trust.deviceId(frame.clientPublicKey)
-    const enrollmentCandidate = attachedDeviceId === 'enrollment'
-    if (
-      frame.nodeId !== identity.nodeId ||
-      frame.trustEpoch !== identity.trustEpoch ||
-      (!enrollmentCandidate && (!deviceId || attachedDeviceId !== deviceId)) ||
-      !this.runtimeRegistry ||
-      !this.resumeSession
-    ) {
-      log.warn('owner.remote.handshake-rejected', {
-        clientType: enrollmentCandidate ? 'enrollment' : 'paired',
-      })
-      this.teardownConnection(connectionId, 'unauthorized_client')
-      return
-    }
-    let key: SessionKey
-    try {
-      key = await deriveSessionKey(
-        await importPrivateKey(identity.privateKey),
-        await importPublicKey(frame.clientPublicKey),
-        sessionKeyContext(
-          identity.nodeId,
-          identity.trustEpoch,
-          identity.ownerPublicKey,
-          frame.clientPublicKey,
-        ),
-      )
-    } catch {
-      this.teardownConnection(connectionId, 'handshake_failed')
-      return
-    }
-    if (
-      !enrollmentCandidate &&
-      ((await this.trust.deviceId(frame.clientPublicKey)) !== deviceId ||
-        (this.authorizeDevice && !(await this.authorizeDevice(deviceId!))))
-    ) {
-      this.teardownConnection(connectionId, 'unauthorized_client')
-      return
-    }
-    if (revocationRevision !== this.revocationRevision) {
-      this.teardownConnection(connectionId, 'unauthorized_client')
-      return
-    }
-    if (this.connections.get(connectionId)?.phase !== 'handshaking') return
-    const transport = new VirtualOwnerTransport(
-      deviceId ?? 'enrollment',
-      (ownerFrame) => void this.sendEncrypted(connectionId, ownerFrame),
-      (code, reason) => this.requestConnectionClose(connectionId, code, reason),
-    )
-    transport.clientPublicKey = frame.clientPublicKey
-    if (enrollmentCandidate) {
-      transport.enrollmentCandidate = true
-      const enrollmentReference = this.connectedEnrollmentReferences.get(connectionId)
-      if (enrollmentReference) transport.enrollmentReference = enrollmentReference
-      transport.promote = (promotedDeviceId) => {
-        transport.pairedDeviceId = promotedDeviceId
-        transport.promoted = true
-      }
-    }
-    const runtime = new OwnerSessionRuntime(transport, this.runtimeRegistry, {
-      connectionId,
-      resumeSession: this.resumeSession,
-    })
-    const session: ClientSession = {
-      key,
-      lastReceiveSequence: 0,
-      sendSequence: 0,
-      sendQueue: Promise.resolve(),
-      publicKey: frame.clientPublicKey,
-      deviceId: deviceId ?? 'enrollment',
-      transport,
-      runtime,
-      createdAt: Date.now(),
-    }
-    this.connections.set(connectionId, { phase: 'open', session })
-    // Key confirmation: the client only trusts the channel once it decrypts this record under the
-    // context-bound session key, which proves the Owner derived the same key.
-    await this.sendEncrypted(
-      connectionId,
-      encodeFrame({
-        type: 'handshake.ok',
-        version: RELAY_PROTOCOL_VERSION,
-        nodeId: identity.nodeId,
-        trustEpoch: identity.trustEpoch,
-        ownerPublicKey: identity.ownerPublicKey,
-        clientPublicKey: frame.clientPublicKey,
-      }),
-    )
-    runtime.start()
-    await this.trust.markSeen(frame.clientPublicKey)
-  }
-
-  private async handleEncrypted(
-    connectionId: string,
-    client: ClientSession,
-    frame: EncryptedFrame,
-  ) {
-    if (frame.sequence !== client.lastReceiveSequence + 1) return
-    let plaintext: string
-    try {
-      plaintext = await decryptPayload(client.key, frame)
-    } catch {
-      this.teardownConnection(connectionId, 'invalid_encrypted_frame')
-      return
-    }
-    if (this.connections.get(connectionId)?.phase !== 'open') return
-    if (
-      !client.transport.enrollmentCandidate &&
-      this.authorizeDevice &&
-      !(await this.authorizeDevice(client.deviceId))
-    ) {
-      await this.closeConnection(connectionId, 'device_revoked')
-      return
-    }
-    if (this.connections.get(connectionId)?.phase !== 'open') return
-    client.lastReceiveSequence = frame.sequence
-    client.transport.receive(plaintext)
-  }
-
-  private async sendEncrypted(connectionId: string, ownerFrame: string | Uint8Array) {
-    const state = this.connections.get(connectionId)
-    if (state?.phase !== 'open') return
-    const session = state.session
-    const send = session.sendQueue.then(async () => {
-      const current = this.connections.get(connectionId)
-      if (current?.phase !== 'open' || current.session !== session) return undefined
-      const plaintext =
-        typeof ownerFrame === 'string' ? ownerFrame : new TextDecoder().decode(ownerFrame)
-      const encrypted = await encryptPayload(session.key, plaintext, ++session.sendSequence)
-      this.sendRelayPayload(connectionId, encodeFrame(encrypted))
-      return undefined
-    })
-    session.sendQueue = send.catch(() => undefined)
-    await send
-  }
-
-  private requestConnectionClose(connectionId: string, closeCode?: number, reason?: string) {
-    if (!this.connections.has(connectionId)) return
-    void this.closeConnection(connectionId, reason ?? 'connection_closed', closeCode)
-  }
-
-  /**
-   * Ends one remote connection: notify the peer through its encrypted channel when one exists,
-   * tell the relay to drop the routing slot, then release the runtime and key material.
-   */
-  private async closeConnection(connectionId: string, code: string, closeCode = 1000) {
-    const state = this.connections.get(connectionId)
-    if (state?.phase === 'open' && state.session.closing) return
-    if (state?.phase === 'open') state.session.closing = true
-    // Notify the peer first so it can report a real reason, then drop the relay slot. The relay
-    // close is what actually terminates the client socket.
-    try {
-      await this.sendEncrypted(
-        connectionId,
-        encodeFrame({
-          type: 'connection.close',
-          version: RELAY_PROTOCOL_VERSION,
-          code,
-        } satisfies ConnectionCloseFrame),
-      )
-    } finally {
-      this.teardownConnection(connectionId, code, closeCode)
-    }
-  }
-
-  private teardownConnection(connectionId: string, reason?: string, closeCode = 1008) {
-    const state = this.connections.get(connectionId)
-    if (!state) {
-      this.connectedClientIds.delete(connectionId)
-      return
-    }
-    this.connections.delete(connectionId)
-    this.connectedClientIds.delete(connectionId)
-    this.connectedEnrollmentReferences.delete(connectionId)
-    if (state.phase === 'open') {
-      // The peer can only observe the teardown while its session key is still live, so tell the
-      // relay to drop the routing slot before releasing the encrypted channel below.
-      this.sendClose(connectionId, reason ?? 'connection_closed')
-      state.session.transport.close(closeCode, reason)
-      return
-    }
-    // A connection that never completed its handshake has no encrypted channel, so the peer can
-    // only learn about the teardown from the relay closing that routing slot.
-    this.sendClose(connectionId, reason ?? 'connection_rejected')
-  }
-
-  private async closeAllConnections(code: string) {
-    const connectionIds = [...this.connections.keys()]
-    await Promise.all(connectionIds.map((connectionId) => this.closeConnection(connectionId, code)))
-  }
-
-  private teardownAllConnections(reason: string, notify: boolean) {
-    for (const connectionId of [...this.connections.keys()]) {
-      if (notify) this.sendClose(connectionId, reason)
-      this.teardownConnection(connectionId, reason)
-    }
-    this.connections.clear()
-    this.connectedClientIds.clear()
-  }
-
-  private sendRelayPayload(connectionId: string, payload: string) {
-    const frame: RelayForwardFrame = {
-      type: 'relay.forward',
-      version: RELAY_PROTOCOL_VERSION,
-      connectionId,
-      payload,
-    }
-    this.sendRelayFrame(frame)
   }
 
   private sendRelayFrame(frame: Parameters<typeof encodeFrame>[0]) {
     this.transport?.send(encodeFrame(frame))
-  }
-
-  private sendClose(connectionId: string, code: string) {
-    const frame: ConnectionCloseFrame = {
-      type: 'connection.close',
-      version: RELAY_PROTOCOL_VERSION,
-      code,
-    }
-    const out = this.sendRelayPayload(connectionId, encodeFrame(frame))
-    return out
   }
 }
 
@@ -708,15 +399,6 @@ export function createRelayForwardFrame(connectionId: string, payload: string) {
     connectionId,
     payload,
   })
-}
-
-function sessionKeyContext(
-  nodeId: string,
-  trustEpoch: number,
-  ownerKey: string,
-  clientKey: string,
-) {
-  return `codex-web-relay/v1/${nodeId}/${trustEpoch}/${ownerKey}/${clientKey}`
 }
 
 function signRelayToken(secret: string, claims: Record<string, string | number>) {

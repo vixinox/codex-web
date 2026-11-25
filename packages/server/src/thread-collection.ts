@@ -18,13 +18,12 @@ export type ThreadCollectionResult =
 
 export type ThreadCollectionDependencies = {
   workspace: Pick<WorkspaceService, 'getProject' | 'listProjectLocations' | 'getUserRoot'>
-  codex: { getReady?: (userId: string) => Promise<ThreadClient> }
+  codex: { getReady: (userId: string) => Promise<ThreadClient> }
 }
 
 export function createThreadCollection(dependencies: ThreadCollectionDependencies) {
   return {
     list: async (request: ThreadCollectionRequest): Promise<ThreadCollectionResult> => {
-      if (!dependencies.codex.getReady) return { kind: 'codex_start_required' }
       const project = request.projectId
         ? await dependencies.workspace.getProject(request.userId, request.projectId)
         : null
