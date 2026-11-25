@@ -1,6 +1,6 @@
 # API 边界
 
-状态：Owner 设备邀请、远程认证与本机 admission 契约；实施和验收快照见 [`../current-behavior.md`](../current-behavior.md)。
+本文定义 Owner WebSocket 与 Relay 相关的应用契约。本机与远程访问边界见[Owner 远程架构](../owner-remote-architecture.md)；这里不复述实现计划或历史验收状态。
 
 ## Owner WebSocket
 

@@ -1,6 +1,6 @@
 # Owner 远程架构
 
-状态：2026-11-23，设备管理能力已收敛为添加、查询和移除。自动化与手工验收状态见 [`current-behavior.md`](./current-behavior.md)。本文是 Owner 远程控制、设备信任和登录入口的规范性总览。
+本文是 Owner 远程控制、设备信任和登录入口的现行规范性总览。实现位置可从[系统架构](architecture.md)进入；方法和 wire shape 以[API 契约](api/README.zh-CN.md)为准。
 
 ## 适用范围与边界
 
@@ -67,7 +67,7 @@ Owner code 和 fingerprint 不再是用户认证概念。Relay 可能仍需要�
 
 ## 当前迁移边界
 
-旧 Owner code、fingerprint、first-session 和普通 login QR 实现只作为历史基线；当前源码已切换到设备 enrollment 与多 connection profile 模型。最终自动化和用户手工浏览器验收结果见 [`current-behavior.md`](./current-behavior.md)。不得重新扩展旧的管理 QR 或 Owner code 登录流程。
+旧 Owner code、fingerprint、first-session 和普通 login QR 不属于当前设备 enrollment 与多 connection profile 模型。不得重新扩展旧的管理 QR 或 Owner code 登录流程。
 
 ## 设备生命周期实现约束
 

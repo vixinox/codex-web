@@ -13,7 +13,7 @@ App Server 已经提供多 agent 协作的结构化可观测数据：协作工�
 来源与限制：
 
 - [协议入口](../app-server/README.md) 指定已审阅 schema 为 `0.167.0`，但受管 runtime 使用动态 stable release。本文不把 schema 快照等同于实际运行中的版本。
-- [官方文档存档](../vendor/codex-app-server.md) 是文档依据；[0.167.0 schema](../vendor/codex-app-server/0.167.0/) 是字段、枚举及请求联合的依据。没有运行 live runtime，本次没有验证实际模型、账号与 feature flag 是否启用某个工具。
+- [官方文档存档](https://learn.chatgpt.com/docs/app-server.md) 是文档依据；[0.167.0 schema](https://github.com/openai/codex/tree/rust-v0.167.0/codex-rs/app-server-protocol/schema/json) 是字段、枚举及请求联合的依据。没有运行 live runtime，本次没有验证实际模型、账号与 feature flag 是否启用某个工具。
 - 文档和导出 schema 有可见差异。例如文档第 1301 行仍使用 `collabToolCall` 简写及单个 receiver，schema 的实际 tag 是 `collabAgentToolCall`，使用 `receiverThreadIds[]` / `agentsStates`，并增加 `subAgentActivity`。消费数据应以已验证 schema 和 runtime 响应为准。
 - 某些类型出现在 `definitions` 中，却不在请求的顶层 `properties` 中。不能因为存在类型就自行发送对应参数。
 
@@ -35,7 +35,7 @@ App Server 已经提供多 agent 协作的结构化可观测数据：协作工�
 | `interruptAgent` | 发起中断 agent | 中断活动、目标及结果、中断原因的可用信息 | 是否仅中断当前 Turn、是否关闭目标、是否递归作用于后代 |
 | `listAgents` | 请求查看 agent 列表 | 参与者列表、最近已知状态、导航入口 | 是否包含完整树、过滤/分页规则、是否可视为持续在线状态订阅 |
 
-共同 payload 是 `ThreadItem` 中的 `collabAgentToolCall` 分支（[schema](../vendor/codex-app-server/0.167.0/v2/ThreadReadResponse.json)，第 1924–2006 行）：
+共同 payload 是 `ThreadItem` 中的 `collabAgentToolCall` 分支（[schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadReadResponse.json)，第 1924–2006 行）：
 
 - 必需：`id`、`type`、`tool`、`status`、`senderThreadId`、`receiverThreadIds`、`agentsStates`。
 - 可选/可空：`prompt`、`model`、`reasoningEffort`。
@@ -49,7 +49,7 @@ App Server 已经提供多 agent 协作的结构化可观测数据：协作工�
 
 ### 1.2 四种子 agent 活动
 
-`SubAgentActivityKind` 是 `started | interacted | interrupted | completed`（同一 [schema](../vendor/codex-app-server/0.167.0/v2/ThreadReadResponse.json)，第 1038 行）。`subAgentActivity` ThreadItem 提供：
+`SubAgentActivityKind` 是 `started | interacted | interrupted | completed`（同一 [schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadReadResponse.json)，第 1038 行）。`subAgentActivity` ThreadItem 提供：
 
 - 必需：`id`、`agentPath`、`agentThreadId`、`kind`、`type`。
 - 可选：`model`、`reasoningEffort`；描述明确：创建活动中的 model 是**已解析模型**，旧记录及其他活动可能不含该字段。
@@ -59,7 +59,7 @@ App Server 已经提供多 agent 协作的结构化可观测数据：协作工�
 
 ### 1.3 树状亲缘与交互关系是两套关系
 
-`Thread` 包含 `parentThreadId`、`sessionId`、`agentNickname`、`agentRole`，`source.subAgent.thread_spawn` 包含 `parent_thread_id`、`depth`、可选 `agent_path` / `agent_nickname` / `agent_role`（同一 [schema](../vendor/codex-app-server/0.167.0/v2/ThreadReadResponse.json)，第 1047–1365 行）。
+`Thread` 包含 `parentThreadId`、`sessionId`、`agentNickname`、`agentRole`，`source.subAgent.thread_spawn` 包含 `parent_thread_id`、`depth`、可选 `agent_path` / `agent_nickname` / `agent_role`（同一 [schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadReadResponse.json)，第 1047–1365 行）。
 
 - `parentThreadId` 只在子 agent 线程设置；`sessionId` 用于属于同一 session tree 的线程。
 - `forkedFromId` 表示 fork 来源，不能直接当作 agent 委派父节点。
@@ -74,7 +74,7 @@ App Server 已经提供多 agent 协作的结构化可观测数据：协作工�
 
 ### 2.1 已在请求联合中可见的通用能力
 
-依据 [ClientRequest.json](../vendor/codex-app-server/0.167.0/ClientRequest.json) 的 `oneOf[].properties.method`：
+依据 [ClientRequest.json](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/ClientRequest.json) 的 `oneOf[].properties.method`：
 
 | 能力 | RPC / 通知 | 对 UI 的意义与边界 |
 | --- | --- | --- |
@@ -93,7 +93,7 @@ App Server 已经提供多 agent 协作的结构化可观测数据：协作工�
 | 生命周期管理 | `thread/unsubscribe`、`thread/archive`、`thread/delete` | unsubscribe 是当前连接退订；归档/删除有持久化与后代影响，不能混为 closeAgent |
 | 能力发现 | `model/list`、`experimentalFeature/list` | 模型 multiAgentVersion 可为 disabled/v1/v2 或缺失；flag 列表用于识别实际可用能力 |
 
-`ThreadStatus` 为 `notLoaded | idle | systemError | active`；active 附 `waitingOnApproval` / `waitingOnUserInput` flags（[schema](../vendor/codex-app-server/0.167.0/v2/ThreadStatusChangedNotification.json)）。这又是独立于 collab 状态和 Turn 状态的一层。`notLoaded` 不是 agent 已失败/已删除。
+`ThreadStatus` 为 `notLoaded | idle | systemError | active`；active 附 `waitingOnApproval` / `waitingOnUserInput` flags（[schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadStatusChangedNotification.json)）。这又是独立于 collab 状态和 Turn 状态的一层。`notLoaded` 不是 agent 已失败/已删除。
 
 `thread/read` 不订阅；start/resume 后读取 transport 上的生命周期事件（官方文档第 480 行、1245 行）。所以“点开子线程并实时看输出”不仅是渲染一个嵌套 transcript，还涉及加载/订阅生命周期、授权、快照与增量衔接。
 
@@ -196,11 +196,11 @@ App Server 已经提供多 agent 协作的结构化可观测数据：协作工�
 ## 主要一手依据
 
 - [App Server 协议入口](../app-server/README.md)。
-- [官方 App Server 文档存档](../vendor/codex-app-server.md)：实验能力 270–294；threads 480 起；子线程过滤 696–697；事件 1245 起；items 1291–1315。
-- [ThreadReadResponse schema](../vendor/codex-app-server/0.167.0/v2/ThreadReadResponse.json)：CollabAgentState/Status/Tool/CallStatus 207–258；SubAgentActivityKind/Source 1038–1120；Thread 1148–1365；collab 与 sub activity item 1924–2056；Turn 2530 起。
-- [ClientRequest schema](../vendor/codex-app-server/0.167.0/ClientRequest.json)：以实际请求 method 联合确认直接可调用 RPC；内部 collab tool enum 不属于该联合。
-- [ThreadListParams schema](../vendor/codex-app-server/0.167.0/v2/ThreadListParams.json)、[ThreadReadParams schema](../vendor/codex-app-server/0.167.0/v2/ThreadReadParams.json)、[ThreadResumeParams schema](../vendor/codex-app-server/0.167.0/v2/ThreadResumeParams.json)。
-- [TurnStartParams schema](../vendor/codex-app-server/0.167.0/v2/TurnStartParams.json)、[TurnSteerParams schema](../vendor/codex-app-server/0.167.0/v2/TurnSteerParams.json)、[TurnInterruptParams schema](../vendor/codex-app-server/0.167.0/v2/TurnInterruptParams.json)。
-- [ThreadStatusChangedNotification schema](../vendor/codex-app-server/0.167.0/v2/ThreadStatusChangedNotification.json)、[ThreadSettingsUpdatedNotification schema](../vendor/codex-app-server/0.167.0/v2/ThreadSettingsUpdatedNotification.json)。
-- [ModelListResponse schema](../vendor/codex-app-server/0.167.0/v2/ModelListResponse.json)、[ThreadTokenUsageUpdatedNotification schema](../vendor/codex-app-server/0.167.0/v2/ThreadTokenUsageUpdatedNotification.json)。
-- 当前项目架构：[PROJECT.md](../../PROJECT.md)、[API 边界](../api/README.zh-CN.md)、[前端边界](../frontend/README.zh-CN.md)。
+- [官方 App Server 文档存档](https://learn.chatgpt.com/docs/app-server.md)：实验能力 270–294；threads 480 起；子线程过滤 696–697；事件 1245 起；items 1291–1315。
+- [ThreadReadResponse schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadReadResponse.json)：CollabAgentState/Status/Tool/CallStatus 207–258；SubAgentActivityKind/Source 1038–1120；Thread 1148–1365；collab 与 sub activity item 1924–2056；Turn 2530 起。
+- [ClientRequest schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/ClientRequest.json)：以实际请求 method 联合确认直接可调用 RPC；内部 collab tool enum 不属于该联合。
+- [ThreadListParams schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadListParams.json)、[ThreadReadParams schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadReadParams.json)、[ThreadResumeParams schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadResumeParams.json)。
+- [TurnStartParams schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/TurnStartParams.json)、[TurnSteerParams schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/TurnSteerParams.json)、[TurnInterruptParams schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/TurnInterruptParams.json)。
+- [ThreadStatusChangedNotification schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadStatusChangedNotification.json)、[ThreadSettingsUpdatedNotification schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadSettingsUpdatedNotification.json)。
+- [ModelListResponse schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ModelListResponse.json)、[ThreadTokenUsageUpdatedNotification schema](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/app-server-protocol/schema/json/v2/ThreadTokenUsageUpdatedNotification.json)。
+- 当前项目架构：[系统全景](../architecture.md)、[API 边界](../api/README.zh-CN.md)、[前端边界](../frontend/README.zh-CN.md)。

@@ -1,6 +1,6 @@
 # 前端边界与数据流
 
-状态：本文是本机入口、远程设备邀请和 connection profile 的前端契约；实现和验收快照见 [`../current-behavior.md`](../current-behavior.md)。
+本文定义浏览器入口、connection profile、Conversation 消费和 UI-facing 状态的边界。系统全景见[系统架构](../architecture.md)，认证契约见[Owner 远程架构](../owner-remote-architecture.md)。
 
 ## 登录入口
 
@@ -48,7 +48,7 @@ Owner event envelope 由 `@codex-web/protocol/owner` 共享 parser 校验，应�
 
 可信 E2EE device_revoked 关闭必须保留撤销原因、停止自动/手工重连，只清理当前 profile session 并回到登录。普通网络失败不认定撤销成功；session 过期和本地存储损坏继续按既有认证流程处理。所有远程设备丢失时，页面提示通过 Owner 本机或 CLI 生成新的登录链接。
 
-## Owner 内容与接口简化（Task 05）
+## Owner 内容与接口边界
 
 Conversation → presentation → renderer 保留，展示模型重构另开任务。展示转换不再清空秘密问答答案；输入控件的 isSecret 行为保留。Skills 使用稳定 name/path，前端不保存临时授权 handle；发送时服务端重新校验当前 cwd 目录。Skills scope 直接使用 user/repo/system/admin，不保留 project→repo 兼容转换。
 
@@ -64,8 +64,8 @@ Vite 开发入口 `/__dev/ui` 使用合成 Conversation 数据并复用正式 re
 
 ## Composer Queue 与 Steer
 
-运行中发送默认进入当前线程单条内存 Queue，保存完整草稿、skills、代码卡片和发送配置；新输入不覆盖已有 Queue。队列经 `ComposerInput.leadingContent` 展示，与新对话 ProjectPicker 互斥。Edit 仅在草稿为空时恢复内容，Delete 删除，Steer 向绑定 active Turn 追加输入。
+运行中发送默认进入当前线程单条内存 Queue，保存完整草稿、skills、代码卡片和发送配置；新输入不覆盖已有 Queue。手动 compact 请求受理前后均视为运行中；在 Turn/item 事件到达前先将 Queue 保持为待绑定，识别 `contextCompaction` 所属 Turn 后绑定，等待整个 Turn 结束才自动发送。压缩 item 完成不代表 Turn 完成，压缩期间不可 Steer。Queue 经 `ComposerInput.leadingContent` 展示，与新对话 ProjectPicker 互斥。Edit 仅在草稿为空时恢复内容，Delete 删除，Steer 向可 steer 的绑定 active Turn 追加输入。
 
-仅当前线程已同步、无活动或待处理 Interaction，且绑定 Turn 正常完成后自动调用一次 `turn.start`。失败、停止和提交异常保留并暂停，Edit 取回重发；结果不确定不自动重试。切换线程保留但不后台调度；刷新、关闭或退出 Owner 清空。
+仅当前线程已同步、无活动或待处理 Interaction，且绑定 Turn 正常完成后自动调用一次 `turn.start`。Queue 保留并发/投递锁，但不展示独立 sending 阶段；成功复用普通发送的 pending transcript，失败经 Composer 显示并保留消息。失败、停止和提交异常保留并暂停，Edit 取回重发；结果不确定不自动重试。切换线程保留但不后台调度；刷新、关闭或退出 Owner 清空。
 
 有效邀请展示期间每三秒查询状态；页面隐藏暂停、恢复可见立即查询，卸载清理 timer/listener。消费成功收起二维码并刷新列表；邀请结束时收起二维码并刷新设备列表。网络查询失败不表示邀请结束。复制链接是辅助动作，默认不展示长 URL。移除操作须确认；全部移除明确包括当前远程设备，之后可在运行 Owner 的本机使用 CLI 生成新登录链接。设备友好命名不在本轮范围。

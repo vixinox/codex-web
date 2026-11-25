@@ -1,115 +1,49 @@
 # Transcript 渲染架构
 
-> 本文保留 renderer 行为说明。数据入口已按 [Conversation 规格](../impl/conversation-model/development-spec.md) 切换到共享领域模型和 `conversation-presentation.ts`；下文 native DTO/reducer/旧文件名属于迁移前说明。presentation/renderer 的独立层次仍保留，[05](../impl/conversation-model/05-owner-filter-removal-and-simplification.md) 已移除业务内容脱敏及问答答案清空规则。
-
-本文档描述当前 Chat transcript 的真实前端实现。它记录数据边界、状态归一化、组件职责和流式渲染行为；协议字段的完整定义仍以 [API 契约](../api/README.zh-CN.md) 和 `packages/app/src/app/chat/native` 为准。
+本文记录当前 Chat transcript 的数据边界、状态归一化和 renderer 职责。Owner wire contract 以[API 契约](../api/README.zh-CN.md)为准；本文只说明前端消费路径。
 
 ## 总体路径
 
-Transcript 遵循单向数据流：
-
 ```text
-Owner WS snapshot/stream
+Owner threads.read snapshot + watermark / conversation.change stream
         |
         v
 useThreadDetailController
         |
         v
-ThreadSession (native state + reducer)
+ThreadSessionRegistry / ThreadSession
         |
         v
-toChatThreadPresentation / toChatTurnPresentation
+shared Conversation state + applyConversationDelivery
         |
         v
-ChatThreadPresentation
+conversation-presentation.ts -> ChatThreadPresentation
         |
         v
-ThreadAssets
-  └─ SessionThreadTurn / ThreadTurn
-       ├─ UserContent
-       ├─ WorkSummary + Collapsible
-       ├─ ThreadBlock[]
-       │    ├─ StreamingAssistant -> MessageContent
-       │    ├─ ActivityRow / ActivityBatch
-       │    ├─ FileActivityBlock
-       │    └─ article/error/user
-       ├─ QuestionnaireSummary / PendingStatus
-       ├─ final plan
-       └─ error / copy actions
+ThreadAssets -> ThreadTurn -> ThreadBlock / activity renderers
 ```
 
-页面和 renderer 只接收 `ChatThreadPresentation`、`ChatTurnPresentation` 及其子类型，不直接读取 native DTO、Owner WS payload、Owner method 或宿主机信息。
+页面与 renderer 消费 UI-facing presentation model，不解析 Owner method、wire envelope 或 Codex App Server DTO。跨端的 Conversation types 和 reducer 位于 `packages/conversation`；App 的具体转换和会话资源归 App 所有。
 
-## 数据进入与归一化
+## 数据进入与会话状态
 
-`useThreadDetailController` 负责 Thread 的生命周期，而不是渲染：
+- `use-thread-detail-controller.ts` 请求 `threads.read`，取得 snapshot/watermark，并从同一游标开始订阅 `conversation.change`。
+- `thread-session-store.ts` 中的 `ThreadSessionRegistry` 管理 Thread session 生命周期、引用与数量上限；单个 session 保存共享 Conversation state 和当前展示快照。
+- `conversation-state.ts` 将 Owner delivery 交给共享 Conversation reducer；事件 identity/application sequence 用于顺序和去重。
+- 网络断开或 cursor reset 时 controller 重新读取权威 snapshot 并重建订阅，不在旧内容上重复追加历史事件。
+- Composer 草稿和控制器生命周期由相邻的 composer/session 模块管理，不属于 renderer。
 
-1. 等待 Owner WS availability，读取安全 Thread snapshot 和 `eventCursor`。
-2. 将 snapshot 的 `historyEvents` 重放到 session，再以 `replayAfterId` 建立 Owner WS stream。
-3. Owner WS stream 按事件 ID 去重；断线恢复时先读取 status，必要时重新 hydrate snapshot。
-4. 未知或格式错误事件转换为 protocol error，由 reducer 记录，不能让 transcript 崩溃。
+## Presentation 与 renderer
 
-`thread-session-store.ts` 保存每个 Thread 的 native 状态和可变 presentation 缓存。完整 hydrate 时按原生 turn 顺序同步；局部事件只重新投影受影响的 turn，并更新 `turnOrder`、`latestUserBlockId`、busy、compaction 和 user-input 等派生状态。session snapshot 通过 `useThreadSessionSnapshot` 提供稳定的 React 订阅结果。
+`conversation-presentation.ts` 将共享 Conversation snapshot/turn/activity/message 转换为页面模型，包括可展示的 user content、activity group、plan、markdown 和 error 状态。新增共享 Conversation 成员时，先扩展协议 parser/reducer 与该投影，再由 renderer 展示对应 UI。
 
-`thread-presentation.ts` 是 native DTO 到 UI model 的唯一主要适配层：
+`ThreadAssets` 是消息列表容器和滚动协调器，按稳定 turn identity 呈现 session 内容。`ThreadTurn` 组织 user、处理中间活动、最终 assistant response、问答状态和错误；`ThreadBlock` 按 presentation block 类型分派到 markdown、活动、文件变更及轻量文章组件。格式化 helper 留在 transcript 子模块，避免容器组件拥有协议语义。
 
-- 安全化 model/reasoning effort、状态、时间和 token usage；effort 能力由当前 runtime model catalog 决定。
-- 将原生 item 归一为 `ChatBlock`：user、assistant、activity、context-compaction article、error。
-- 按连续 activity kind 聚合为 activity block，并补充 command、file diff、状态、输出和展示字段；业务内容与路径保留原值。
-- 从原生 plan 和 diff 生成 `ChatPlanPresentation` 与 diff 统计。
-- 将用户输入中的 text、skill、mention、image、audio 转换为 `ChatUserContent`，并移除注入的 skill marker。
-- 将问答请求和已回答/已 resolved 事件归一为 questionnaire summary；renderer 不解释 bridge 事件。
+流式 Markdown 保留未闭合尾部，只有完整 block 才进入展示；terminal turn 收尾时再 flush 合法尾部。完成内容不在重渲染时重新播放进入动画。滚动规则区分用户正在底部跟随与向上阅读两种状态。
 
-## ThreadAssets 容器
+## 修改与验证
 
-`ThreadAssets` 是 transcript 的列表容器和滚动协调器：
-
-- 使用 session 的 `turnOrder` 渲染 turn；没有 session 时使用传入 presentation 的 turn 数组。
-- session 模式下每个 turn 由 `SessionThreadTurn` 按 ID 读取，避免父组件为每个 WS 增量重建全部 turn 对象。
-- 只把最后一个 turn 的 `retryState` 和 pending questionnaire 传入。
-- 监听实际可滚动父节点的 scroll/resize。用户位于底部时保持自动滚动；用户向上阅读时锁定位置。
-- 新 user block、compacting、retry 或 `lockEpoch` 请求会重新获取底部锁定并滚动到底部。
-- 通过 `sameTurnShape` 比较 thread/turn identity，在 session 模式下避免仅因 metadata 变化而重排 transcript。
-- 空列表显示新对话占位；独立的 `compacting` 状态在尚无 compaction turn 时显示 `LiveRow`。
-
-## ThreadTurn 的展示规则
-
-`ThreadTurn` 将一个 presentation turn 切成稳定的视觉区域：
-
-1. 第一条 user block 渲染为右对齐气泡，并提供复制文本和时间。
-2. 其余非 final assistant blocks 进入 process 区域。reasoning summary activity 在 renderer 前过滤。
-3. process 区域按原有 block 顺序渲染，并放入可折叠容器；turn 工作中自动展开，完成后默认收起。
-4. `WorkSummary` 根据 turn 状态、耗时、活动和 compaction 状态显示摘要。只有存在可展开详情时才显示折叠触发器。
-5. questionnaire summary 只渲染一次；pending questionnaire 在工作中的 turn 下显示等待回答状态。
-6. 最后的 `assistant` final block 单独渲染，避免与过程消息混在工作详情中。
-7. final plan 渲染 explanation、markdown text 或步骤列表；turn error 以 alert 展示。
-8. 完成的 turn 在存在 assistant 文本时提供复制响应和时间。
-
-`visibleTurnContent` 根据已提交的完整 markdown block、article、非 reasoning activity、questionnaire 和 final plan 计算可见内容、revision 和 trailing assistant。未闭合的 assistant 尾部始终留在 pending，直到终态 flush；`Thinking` 只在工作中且尚未收到 assistant 文本时显示，因此 activity-only turn 保留提示，而纯文本输出开始后直接移除，不依赖 assistant block 动画完成状态。
-
-turn 进入 terminal 状态时，`StreamingAssistant` 只 flush 尚未提交的合法尾部。预览文本和 flush 后的 block 使用相同位置与 block identity，不会因为 `animate` 从 true 切换为 false 而重新播放历史内容。
-
-## ThreadBlock 与活动渲染
-
-`ThreadBlock` 只做 `ChatBlock` 到视觉组件的分派：
-
-- assistant 使用 `StreamingAssistant`，完成文本交给 `MessageContent`。
-- article 使用轻量的 context-compaction 行。
-- error 使用 alert 行；user 使用紧凑气泡。
-- activity block 按 kind 选择普通 activity 行、批量折叠、命令输出、文件变更和 diff 展示。
-- 多活动 block 在仍有 running activity 时自动展开；完成后允许用户折叠。
-- command、file path、diff header 和 markdown 等展示细节由 transcript 下的专用 helper 处理，避免把格式化逻辑放进容器组件。
-
-`TranscriptCollapsibleContent` 统一折叠动画和高度约束，使 process、问答详情、活动批次和文件详情使用同一行为。
-
-assistant Markdown block 在 turn 进行中按完整 Markdown 边界提交：已经闭合的 block 立即进入 transcript 并以整块透明度淡入，未闭合的 pending 尾部继续留在内存中，不展示 broken Markdown。turn 进入终态时只 flush 尚未提交的最后 block；历史 completed turn 直接显示，不重复播放进入动画。`MarkdownBlockView` 每收到一个新 block 执行一次原生 CSS opacity enter，代码块、表格和普通文字使用相同的整块行为。reduced-motion 下直接完成。
-
-开发环境可通过 `[transcript]` console 日志观察 event、turn、split、render 和 animation 阶段。日志只包含 ID、状态、数量、长度和布尔值，不包含正文、原始 payload、路径、凭据或 workspace 信息。
-
-## 修改边界与验证
-
-- 新增协议字段时，先在 native reducer/presentation adapter 中完成白名单化，再让 renderer 消费 UI model。
-- 不在 `ThreadAssets` 或 `ThreadBlock` 中解析 Owner method、原生 item 或服务端错误 payload。
-- 影响 renderer、CSS 或布局时运行 `pnpm typecheck`、触及文件的 `oxfmt --check`，并进行手工浏览器回归。
-- 影响 reducer、projection、Owner WS stream 或 session 时运行对应定向测试，再运行 `pnpm typecheck` 和 `oxfmt --check`。
-- 不新增 React DOM、Playwright 或截图测试，除非任务明确要求。
+- 不让 renderer 解析服务端 DTO、Owner method 或 event cursor；转换责任留在 controller、共享 reducer 和 presentation 层。
+- 影响纯状态转换或投影时运行对应 App focused test；影响 controller、transport 或 security projection 时运行相关测试。
+- 影响 renderer、CSS 或布局时运行 `pnpm typecheck`、触及 TypeScript 文件的 `oxfmt --check`，并进行手工浏览器回归。
+- 不新增 React DOM、Playwright、截图或视觉自动化测试，除非用户明确要求。

@@ -1,6 +1,6 @@
 # Server module maintenance
 
-- Preserve the existing single-Owner security, wire, persistence and runtime contracts documented in the root instructions and `PROJECT.md`.
+- Preserve the existing single-Owner security, wire, persistence and runtime contracts documented in the root instructions, [`docs/architecture.md`](../../docs/architecture.md), [`docs/owner-remote-architecture.md`](../../docs/owner-remote-architecture.md), and [`docs/api/README.zh-CN.md`](../../docs/api/README.zh-CN.md).
 - Owner use cases belong in `src/owner/application/`. `application-services.ts` only composes their dependencies; `methods.ts` maps wire methods and `runtime.ts` exposes the shared WebSocket/Relay/IPC seam. Do not add domain implementations to these composition modules.
 - Codex process lifecycle and process identity belong to `CodexManager`; notification-derived activity and pending Interactions belong to `src/codex/process/events.ts`; startup configuration/authentication belong to `process/startup.ts`; task queues belong to `TurnScheduler`. Do not mirror their mutable state.
 - Runtime manifest transitions belong to `CodexRuntimeManager`. Release I/O, package integrity and smoke verification belong to `src/codex/runtime/`; those helpers do not mutate manifests.

@@ -1,6 +1,6 @@
 # 工作台入口设计说明
 
-状态：设计已确认，待页面实施。最后核对：2026-11-23。
+状态：未实施的页面设计提案。文内“当前实现”是编写时观察到的状态，不是当前实现契约；实施前须按源码重新核对。
 
 本文规定登录页与链接处理页的目标体验。文中的“当前实现”来自当前工作区源码；“目标设计”用于后续页面改造，不表示已经实现或通过浏览器验收。本轮仅更新本文档。
 
@@ -29,13 +29,12 @@
 
 ### 2.1 依据
 
-- [Owner 远程架构](owner-remote-architecture.md)：身份、设备信任与登录链接流程的规范边界。
-- [当前行为](current-behavior.md)：已有实现与尚待验收事项的快照。
-- [前端边界](frontend/README.zh-CN.md)：数据流、主题和错误呈现约束。
-- [登录页源码](../packages/app/src/app/composition/screens/login-screen.tsx)：远程连接与登录链接；本机直接进入工作台。
-- [路由源码](../packages/app/src/app/entry/route-components.tsx)：入口跳转与链接兑换。
-- [会话失效处理](../packages/app/src/app/entry/auth-expiry-handler.tsx)：清理受影响的 session 并返回登录页。
-- [连接设置源码](../packages/app/src/app/settings/connection/connection-screen.tsx)：Passkey、登录链接与设备管理入口。
+- [Owner 远程架构](../owner-remote-architecture.md)：身份、设备信任与登录链接流程的现行规范。
+- [前端边界](../frontend/README.zh-CN.md)：数据流、主题和错误呈现约束。
+- [登录页源码](../../packages/app/src/app/composition/screens/login-screen.tsx)：远程连接与登录链接；本机直接进入工作台。
+- [路由源码](../../packages/app/src/app/entry/route-components.tsx)：入口跳转与链接兑换。
+- [会话失效处理](../../packages/app/src/app/entry/auth-expiry-handler.tsx)：清理受影响的 session 并返回登录页。
+- [连接设置源码](../../packages/app/src/app/settings/connection/connection-screen.tsx)：Passkey、登录链接与设备管理入口。
 
 源码用于核对当前 UI，不代替架构契约。后续实施前应重新核对相关源码，尤其是并行开发中的连接设置。
 
