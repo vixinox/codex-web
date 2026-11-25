@@ -20,6 +20,7 @@
     "quality:report": "node scripts/quality-timing.mjs --mode report",
     "quality:check": "node scripts/quality-timing.mjs --mode check --commands lint,typecheck,test",
     "quality:calibrate": "node scripts/quality-timing.mjs --mode calibrate",
+    "schema:update": "node scripts/update-app-server-schema.mjs",
     "format": "oxfmt --write \"**/*.{ts,tsx}\"",
     "format:check": "oxfmt --check \"**/*.{ts,tsx}\"",
     "test": "pnpm --recursive --parallel --workspace-concurrency=3 --if-present test && pnpm test:tools",
